@@ -92,8 +92,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2134 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 461 instrumented test methods — uses Orchestrator
+./gradlew testDebugUnitTest                        # 2144 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 467 instrumented test methods — uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -122,7 +122,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2134 tests across 238 reported test suites
+### Unit tests (`app/src/test/`) - 2144 tests across 240 reported test suites
 
 Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineConfigResolverTest` (3), `MachineProfileRepositoryTest` (6), `MachineProfileTest` (8), `OrcaProfileBundleImporterTest` (7), `OrcaProfileResolverTest` (5), `Phase2GeometryLiteralGuardTest` (1), `PrinterWizardViewModelTest` (9), `ProfileCacheTest` (7), and `VendorCatalogClientTest` (8).
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
@@ -140,7 +140,8 @@ Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineCo
 - `data/SliceJobMappingResolutionTest.kt` (10) — historical job export mapping: legacy physical rows, single-colour selected slot, canonical-wide CSV, blank/malformed fallbacks, physical/canonical G-code tool-space rows
 - `data/PlateTypeTest.kt` (21) — PlateType.bedTempFor per-material presets, fromName, case-insensitivity
 - `data/SlicingOverridesTest.kt` (108) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, B24 stale config, B31 brim_type, F30/F31 plus F41/F42/F43 override/file-value coverage, F57/F58 primeTowerWidth + wipeTowerRotationAngle, B53 computeTogglePrimeTower, B71 nozzle temp extruderTemps + nozzleTemps slice-time override, B79 resolveInto supportType/supportAngle, B100 buildProfileOverrides layer_height omitted for USE_FILE mode, B105 single-slot nozzle_temperature/filament_type 1-element guard, B125 support_filament emitted/omitted for Bambu file depending on OverrideMode, B125 sibling per-field OVERRIDE respected when supports=USE_FILE
-- `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution, stale skirt-loop import normalization, F76 legacy cookie key import regression
+- `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution, stale skirt-loop import normalization, F76 legacy cookie key import regression, and v4 schema import into the current multi-printer shape
+- `data/Phase7MigrationFixtureTest.kt` (4) — Released-v4 printer and settings-backup fixtures preserve printer identity, active selection, credentials, presets, and Snapmaker U1 fallback
 - `data/SessionStateTest.kt` (16) — F89 session-resume schema: toJson/fromJson round-trip (basic fields, FloatArray positions, empty/multi additionalFiles, all-nullables-null), malformed JSON returns null, missing version returns null, unknown future schema version returns null, past schema version returns null, missing required modelName/rawInputPath returns null, odd-length customObjectPositions array returns null, G-code tool-space round-trip/default
 - `bambu/ThreeMfParserTest.kt` (12) - 3MF data model construction, isMultiPlate detection, hasPaintSupports field (B57)
 - `bambu/BambuSanitizerTest.kt` (25) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard, group recentering
@@ -155,7 +156,8 @@ Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineCo
 - `model/CopyArrangeCalculatorTest.kt` (42) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance, B109 computeRotatedFootprint (5 rotation cases), B109 v2.2.6 effectivePlacementFootprint (6 cases: mesh-AABB priority, scale handling, null fallback, fallback applies scale, zero-rotation shortcut, Dragon-Scale-class divergence proof), F77 buildMultiObjectPositions (5 cases: empty, single, two-in-row, row-wrap, row-height tracking), F92 autoArrange (5 cases: two-object no-tower, reserved wipe-tower keep-out, overflow-never-off-bed, single-object clear-of-reserved, row-wrap)
 - `ui/SendPreparingBannerTest.kt` (4) — F94 structural guard: PrinterViewModel `SendingState.Preparing` + `beginSendPreparing`/`reportSendError`; PrinterScreen Preparing card arm; ≥3 `beginSendPreparing()` + ≥3 `reportSendError(` calls across the MainActivity send sites
 - `ui/UploadOnlyUxTest.kt` (6) — Upload Only confirmation dialog wiring, sliced-material display, physical tool-space threading for mix G-code, button label guard
-- `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
+- `UpgradeDetectorTest.kt` (18) — APK upgrade detection logic, version/timestamp comparison, transient-file clearing, and preservation of DataStore, diagnostics, jobs, and machine profiles
+- `UpgradeSoakScriptTest.kt` (4) — Upgrade-soak launch component, adb error handling, seed-to-candidate ordering, and failure-safe device cleanup
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 - `MergeThreeMfInfoTest.kt` (49) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates), B60 hasPaintSupports preservation, B82 per-plate layer-tool secondary colour matching (palette-match = real, off-palette = artefact)
 - `printer/PrinterRepositoryTest.kt` (2) — upload filename sanitization and unique suffix generation
@@ -223,9 +225,9 @@ Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineCo
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 461 test methods across 73 classes
+### Instrumented tests (`app/src/androidTest/`) - 467 test methods across 77 Kotlin files
 
-This heading records an anchored source inventory, not a completed full-device run. The command `rg -n '^\s*@Test\b' app/src/androidTest` finds 461 annotations across 73 Kotlin files. Phase 6 supplied the 197-test native smoke baseline. Phase 7 executed all four tests in `MachineBedSizeTest`, `SingleExtruderMachineTest`, and `MarlinFlavorTest`, plus the one-test `PrinterWizardToSliceTest` flow. The wizard test validates the profile, saves it, reloads it from DataStore, slices a real fixture, and uploads only to an on-device loopback server. It does not start a print. The pending release gate is the unfiltered confidence run with the 17-class smoke set and wizard scenario.
+This heading records an anchored source inventory, not a completed full-device run. The command `rg -n '^\s*@Test\b' app/src/androidTest` finds 467 annotations across 77 Kotlin files. The final unfiltered confidence run passed 201 tests across the configured 17-class smoke set, all seven U1 E2E scenarios, and the one-test `PrinterWizardToSliceTest` add-on. The wizard test validates the profile, saves it, reloads it from DataStore, slices a real fixture, and uploads only to an on-device loopback server. It does not start a print. The v4.0.4-to-v5.0.0 release-APK soak also passed both process-reset exits, migrated-state checks, native U1 slices, and generic-profile persistence.
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath

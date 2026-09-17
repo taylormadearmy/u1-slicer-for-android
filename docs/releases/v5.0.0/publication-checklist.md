@@ -12,7 +12,7 @@ Do not run the public-action section until the user explicitly authorizes public
    .\scripts\run-confidence-check.ps1
    ```
 
-   This runs the configured 17-class instrumented smoke set and the wizard add-on. A new full 461-method device run is not an extra release gate.
+   This runs the configured 17-class instrumented smoke set and the wizard add-on. A new full 467-method device run is not an extra release gate.
 4. Build from a clean state to avoid the Play Protect packaging-cache issue:
 
    ```powershell

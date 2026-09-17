@@ -718,13 +718,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) §v2.1.0.
 
 ### A2: v5.0.0 multi-printer via Orca profiles (GitHub #152)
-- **Status**: IMPLEMENTED. Release candidate awaiting the remaining Phase 7 validation and publication. The current public release remains v4.0.4.
+- **Status**: IMPLEMENTED. The v5.0.0 release candidate is fully validated locally and awaits publication authorization. The current public release remains v4.0.4.
 - **Implemented**: one `MachineProfile` pipeline resolves Orca-native JSON, persists a profile ID per printer, and drives geometry, 1 to 4 physical slots, Klipper or Marlin G-code, and capability-gated Moonraker, OctoPrint, or PrusaLink upload. The built-in Snapmaker U1 remains the default.
 - **Catalogue and imports**: the pinned `taylormadearmy/OrcaSlicer` v2.2.4 source index contains 326 models across 56 usable vendors. The wizard shows the eligible subset after rectangular-FDM, physical-slot, and firmware checks, validates before save, and caches resolved profiles for offline use. It also imports `.orca_printer` bundles.
 - **Native provenance**: `snapmaker_authored_profile` enables `profile_keys[]` for app-authored embeds. A `PRINT_START` check remains only as a scoped fallback for old Snapmaker-family files. `ProfileKeyCoverageTest` guards every key written by `applyConfigToPrusa()`.
 - **Separate Bambu path**: existing Bambu support remains dedicated and opt-in for this release candidate.
 - **Deferred follow-ups**: delta and circular beds, shared-extruder multi-material machines, SDCP and Duet transports, Bambu machine-path convergence, more than four physical extruders, and generalized ColorMix and Smart Paint mix encoding. Draft issue bodies live under [`docs/releases/v5.0.0/issues/`](docs/releases/v5.0.0/issues/).
-- **Validation boundary**: fresh-install profile persistence passed the wizard E2E. Upgrade persistence remains a Phase 7.3 check and is not yet claimed.
+- **Validation**: the final JVM suite passed 2,144 tests across 240 suites. The unfiltered confidence run passed 201 smoke tests, all seven U1 E2E scenarios, and the wizard-to-slice-and-upload-only scenario. A released-v4.0.4-to-v5.0.0 release-APK soak preserved the multi-printer fixture and generic machine profile across both the upgrade restart and same-version reinstall.
 - **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) and [`docs/architecture/machine-profile-pipeline.md`](docs/architecture/machine-profile-pipeline.md).
 
 ### A3: Clipper post-upgrade native failure — APPARENTLY RESOLVED

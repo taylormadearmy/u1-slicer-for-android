@@ -21,10 +21,10 @@ Scope: master plan Tasks 7.1–7.4 only. Starting commit 7f1acf6b on feature/a2-
 - [x] Run focused tests and JVM suite, review and commit. Check master Task 7.3 only after passing.
 
 ## Task 7.4: Local v5.0.0 release candidate
-- [ ] Set versionName 5.0.0 and versionCode 500 in a focused version commit.
-- [ ] Build with clean assembleRelease, stage u1-slicer-orca-v5.0.0.apk and record SHA-256.
-- [ ] Set ANDROID_SERIAL=NF12209000455, then run the exact unfiltered .\scripts\run-confidence-check.ps1. Preserve full evidence outside app/build before another clean build.
-- [ ] Confirm final counts, migration tests, screenshot, clean worktree and pinned clean Orca; record every commit and exact evidence.
+- [x] Set versionName 5.0.0 and versionCode 500 in a focused version commit.
+- [x] Build with clean assembleRelease, stage u1-slicer-orca-v5.0.0.apk and record SHA-256.
+- [x] Set ANDROID_SERIAL=NF12209000455, then run the exact unfiltered .\scripts\run-confidence-check.ps1. Preserve full evidence outside app/build before another clean build.
+- [x] Confirm final counts, migration tests, screenshot, clean worktree and pinned clean Orca; record every commit and exact evidence.
 - [ ] Stop with candidate ready and exact publication commands. Task 7.4 stays open until explicit publication authorization and same-turn release/backlog/docs/issue synchronization.
 
 All device commands target only NF12209000455. No physical prints, no print=true against a real host. No push, public tag, release or public issue changes before authorization. Treat any failure as a regression to investigate; never weaken assertions. Tasks execute in order, with bounded subagents and serial device/build ownership.
