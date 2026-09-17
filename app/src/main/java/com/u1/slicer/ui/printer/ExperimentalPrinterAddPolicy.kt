@@ -7,16 +7,5 @@ internal enum class AddPrinterChoice {
     ORCA_IMPORT,
 }
 
-internal sealed interface AddPrinterNextStep {
-    data object Proceed : AddPrinterNextStep
-    data object RequireAcknowledgement : AddPrinterNextStep
-}
-
-internal fun addPrinterNextStep(
-    choice: AddPrinterChoice,
-    acknowledged: Boolean,
-): AddPrinterNextStep = if (choice == AddPrinterChoice.SNAPMAKER_U1 || acknowledged) {
-    AddPrinterNextStep.Proceed
-} else {
-    AddPrinterNextStep.RequireAcknowledgement
-}
+internal fun visibleAddPrinterChoices(experimentalEnabled: Boolean): List<AddPrinterChoice> =
+    if (experimentalEnabled) AddPrinterChoice.entries else listOf(AddPrinterChoice.SNAPMAKER_U1)

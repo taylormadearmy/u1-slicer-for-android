@@ -41,13 +41,13 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 
 ### Bambu support
 
-Bambu support is disabled by default. Enable it in Settings and explicitly accept the early-beta warning before adding or selecting a Bambu printer. Real-hardware print validation has been completed on H2D and A1 Mini; the other supported targets have configuration, protocol, native slicing, artifact and regression coverage but have not been physically tested by the developer. Firmware and LAN-mode requirements vary by printer generation.
+Bambu support is disabled by default. Open **Settings > Printers > Add**, then enable **Experimental printer support** to show the Bambu LAN route. Real-hardware print validation has been completed on H2D and A1 Mini; the other supported targets have configuration, protocol, native slicing, artifact and regression coverage but have not been physically tested by the developer. Firmware and LAN-mode requirements vary by printer generation.
 
 ### Add another printer
 
-Open **Settings**, select **Add** under **Printers**, and choose an OrcaSlicer manufacturer or import an `.orca_printer` bundle. The wizard resolves inherited Orca JSON, validates the machine before saving it, and caches the resolved profile for offline use. Each printer keeps its own profile and physical slot count.
+Open **Settings**, select **Add** under **Printers**, and choose **Snapmaker U1**. To add another model, enable **Experimental printer support** in the Add Printer dialog. This reveals Bambu LAN, the OrcaSlicer catalogue, and `.orca_printer` import. The wizard resolves inherited Orca JSON, validates the machine before saving it, and caches the resolved profile for offline use. Each printer keeps its own profile and physical slot count.
 
-![Choose a manufacturer in the multi-printer wizard](docs/images/multi-printer-wizard.png)
+![Add Printer dialog with experimental printer support enabled](docs/images/multi-printer-wizard.png)
 
 The first v5.0.0 candidate supports rectangular beds, standard single-extruder and independent multi-extruder machines, and up to four physical slots. Delta and circular beds, shared-extruder multi-material systems, SDCP and Duet transports, and more than four physical extruders are deferred. ColorMix and Smart Paint mix encoding remain available only on four-slot printers.
 

@@ -5,42 +5,27 @@ import org.junit.Test
 
 class ExperimentalPrinterAddPolicyTest {
     @Test
-    fun `Snapmaker U1 never requires experimental acknowledgement`() {
+    fun `experimental support off exposes only Snapmaker U1`() {
         assertEquals(
-            AddPrinterNextStep.Proceed,
-            addPrinterNextStep(AddPrinterChoice.SNAPMAKER_U1, acknowledged = false),
-        )
-        assertEquals(
-            AddPrinterNextStep.Proceed,
-            addPrinterNextStep(AddPrinterChoice.SNAPMAKER_U1, acknowledged = true),
+            listOf(AddPrinterChoice.SNAPMAKER_U1),
+            visibleAddPrinterChoices(experimentalEnabled = false),
         )
     }
 
     @Test
-    fun `every third party add path requires acknowledgement`() {
-        val experimentalChoices = listOf(
-            AddPrinterChoice.BAMBU_LAN,
-            AddPrinterChoice.ORCA_CATALOGUE,
-            AddPrinterChoice.ORCA_IMPORT,
+    fun `experimental support on exposes every add route`() {
+        assertEquals(
+            AddPrinterChoice.entries,
+            visibleAddPrinterChoices(experimentalEnabled = true),
         )
-
-        experimentalChoices.forEach { choice ->
-            assertEquals(
-                "$choice should be gated",
-                AddPrinterNextStep.RequireAcknowledgement,
-                addPrinterNextStep(choice, acknowledged = false),
-            )
-        }
     }
 
     @Test
-    fun `one acknowledgement permits every third party add path`() {
-        AddPrinterChoice.entries.forEach { choice ->
-            assertEquals(
-                "$choice should proceed after acknowledgement",
-                AddPrinterNextStep.Proceed,
-                addPrinterNextStep(choice, acknowledged = true),
-            )
-        }
+    fun `turning experimental support off hides third party routes again`() {
+        assertEquals(4, visibleAddPrinterChoices(experimentalEnabled = true).size)
+        assertEquals(
+            listOf(AddPrinterChoice.SNAPMAKER_U1),
+            visibleAddPrinterChoices(experimentalEnabled = false),
+        )
     }
 }

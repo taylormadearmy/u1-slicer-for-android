@@ -101,8 +101,8 @@ fun SettingsScreen(
     val currentOverrides by viewModel.slicingOverrides.collectAsState()
     var overrides by remember(currentOverrides) { mutableStateOf(currentOverrides) }
     val plateType by viewModel.plateType.collectAsState()
-    val experimentalPrinterSupportAcknowledged by
-        viewModel.experimentalPrinterSupportAcknowledged.collectAsState()
+    val experimentalPrinterSupportEnabled by
+        viewModel.experimentalPrinterSupportEnabled.collectAsState()
 
     Scaffold(
         topBar = {
@@ -531,9 +531,9 @@ fun SettingsScreen(
                                 printerViewModel.addProfilePrinter(profile, profile.displayName, "")
                             }
                         },
-                        experimentalPrinterSupportAcknowledged = experimentalPrinterSupportAcknowledged,
-                        onAcknowledgeExperimentalPrinterSupport =
-                            viewModel::acknowledgeExperimentalPrinterSupport,
+                        experimentalPrinterSupportEnabled = experimentalPrinterSupportEnabled,
+                        onExperimentalPrinterSupportEnabledChange =
+                            viewModel::saveExperimentalPrinterSupportEnabled,
                     )
                 }
             }

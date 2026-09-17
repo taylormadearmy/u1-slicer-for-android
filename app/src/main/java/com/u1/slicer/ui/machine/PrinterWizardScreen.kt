@@ -2,6 +2,7 @@ package com.u1.slicer.ui.machine
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -18,9 +19,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -214,10 +220,19 @@ private fun <T> WizardList(
     key: (T) -> Any = { label(it) },
     onClick: (T) -> Unit,
 ) {
-    LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+    LazyColumn(
+        modifier = Modifier.heightIn(max = 420.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         items(values, key = key) { item ->
-            TextButton(onClick = { onClick(item) }, modifier = Modifier.fillMaxWidth()) {
-                Text(label(item), modifier = Modifier.fillMaxWidth())
+            OutlinedButton(onClick = { onClick(item) }, modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(label(item), modifier = Modifier.weight(1f))
+                    Icon(Icons.Default.ChevronRight, contentDescription = null)
+                }
             }
         }
     }
