@@ -4,7 +4,7 @@ Living status of the multi-phase Bambu file-handling refactor. Updated when a ph
 
 ## A2 multi-printer pipeline
 
-**Status:** IMPLEMENTED. Release candidate awaiting v5.0.0 validation and publication.
+**Status:** IMPLEMENTED. The validated v5.0.0 release candidate awaits publication authorization.
 
 The generic printer path now resolves Orca-native machine JSON into `MachineProfile`, then derives `SliceConfig`, embedded profile settings, the G-code dialect, and transport capabilities. Each configured printer stores its profile ID. The repository keeps resolved profiles in its offline cache, and the built-in Snapmaker U1 remains the default.
 
@@ -12,7 +12,7 @@ The catalogue source is `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Its source ind
 
 `ProfileEmbedder` writes `snapmaker_authored_profile` on app-authored embeds. Native code uses that marker to apply `profile_keys[]`. Old Snapmaker profiles can still use the `PRINT_START` fallback, but native code scopes that fallback to the Snapmaker family. `ProfileKeyCoverageTest` prevents `applyConfigToPrusa()` from writing a key that `profile_keys[]` silently drops.
 
-The Bambu beta remains a separate opt-in machine and network path. Deferred work covers delta and circular beds, shared-extruder multi-material machines, SDCP and Duet transports, Bambu-path convergence, more than four physical extruders, and generalized ColorMix and Smart Paint mix encoding. The release candidate does not claim that profile persistence across app upgrade has passed until Phase 7.3 completes.
+The Bambu beta remains a separate opt-in machine and network path. Deferred work covers delta and circular beds, shared-extruder multi-material machines, SDCP and Duet transports, Bambu-path convergence, more than four physical extruders, and generalized ColorMix and Smart Paint mix encoding. The released-v4.0.4-to-v5.0.0 soak passed both process-reset exits, migrated-state checks, native U1 slicing, and generic-profile persistence.
 
 For background see [`docs/architecture/2026-04-23-bambu-via-native-loader.md`](architecture/2026-04-23-bambu-via-native-loader.md) (the original strategy doc), the per-phase plans in [`docs/superpowers/plans/`](superpowers/plans/), and the v2 → v3 release roadmap at [`docs/superpowers/specs/2026-04-28-v2-v3-release-roadmap.md`](superpowers/specs/2026-04-28-v2-v3-release-roadmap.md).
 
@@ -26,10 +26,10 @@ For background see [`docs/architecture/2026-04-23-bambu-via-native-loader.md`](a
 - **Phase 2.0 (UX exploration):** ✅ DONE — direction settled in `docs/superpowers/specs/2026-04-26-canonical-filament-list-ux.md` §7
 - **Phase 2.6 (Prepare-screen reshape):** ✅ DONE in v2.0.0 (4 of 5 spec items; STL-default-from-syncFilaments deferred to v2.1.0)
 - **v2.1.0 (hardening release):** ⏸ NOT STARTED — bounded ~2-3 days. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A1**.
-- **v5.0.0 (multi-printer epic):** IMPLEMENTED, release candidate awaiting validation and publication. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A2**.
+- **v5.0.0 (multi-printer epic):** IMPLEMENTED, validated release candidate awaiting publication authorization. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A2**.
 - **Phase 3+ adjacent platform work:** 🔭 ROADMAP — see GitHub #16, #18, #33
 
-The core Bambu file-handling refactor is complete and shipping. The A2 multi-printer epic is implemented as a v5.0.0 release candidate. Remaining work is the Phase 7 validation and publication sequence plus the deferred follow-up issues listed in the A2 section.
+The core Bambu file-handling refactor is complete and shipping. The A2 multi-printer epic is implemented and validated as a v5.0.0 release candidate. Remaining work is the authorized publication sequence plus the deferred follow-up issues listed in the A2 section.
 
 ---
 
@@ -134,7 +134,7 @@ New code shipped in v2.0.0:
 
 ## v5.0.0 candidate: multi-printer via Orca profiles
 
-**Status:** IMPLEMENTED. Awaiting the remaining Phase 7 release-candidate checks and publication.
+**Status:** IMPLEMENTED and locally validated. Awaiting publication authorization.
 
 **Shipped design:** The app supports multiple configured printers through persisted `MachineProfile` IDs and resolved Orca-native JSON. The implementation includes:
 
