@@ -85,39 +85,48 @@ function Assert-ApkChangedExit([string]$Path, [string]$Label) {
 Write-Host "Using only approved device $Device; no print or network host is contacted."
 $priorPackagePath = @(& adb -s $Device shell pm path $AppId 2>&1)
 $hasPriorInstall = $LASTEXITCODE -eq 0 -and (($priorPackagePath -join "`n") -match "package:")
-if ($hasPriorInstall) {
+$priorStateSnapshotCreated = $false
+try {
+    if ($hasPriorInstall) {
+        Install-Apk $AndroidTestApk
+        Run-Instrumented "com.u1.slicer.migration.PriorDeviceStateSnapshotTest#snapshotPrinterConfigAndMachineProfiles" "prior device state snapshot"
+        $priorStateSnapshotCreated = $true
+    }
+
+    Install-Apk $V4Apk -AllowDowngrade
     Install-Apk $AndroidTestApk
-    Run-Instrumented "com.u1.slicer.migration.PriorDeviceStateSnapshotTest#snapshotPrinterConfigAndMachineProfiles" "prior device state snapshot"
+    Launch-App "released v4.0.4"
+    Run-Instrumented "com.u1.slicer.migration.V4UpgradeMigrationSeedTest#seedReleasedV4PrintersConfig" "v4 fixture seed"
+    Save-Log "01-v4-seeded.logcat.txt"
+
+    # The seed test writes and reads back the released persistence shape. Installing the
+    # candidate immediately avoids a second UI launch mutating the fixture before the upgrade.
+    Install-Apk $CandidateApk
+    Invoke-Adb logcat -c | Out-Null
+    Launch-App "candidate first process"
+    $firstCandidateLog = Save-Log "02-candidate-first-process.logcat.txt"
+    Assert-ApkChangedExit $firstCandidateLog "candidate first process"
+    Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyV4PrintersConfigAndLegacyU1SliceAfterUpgrade" "v4 data and native U1 slice verification"
+    Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#seedAndVerifyGenericProfileSurvivesCandidateReinstall" "generic profile seed"
+
+    # Reinstalling the same candidate proves same-version APK timestamp handling. The next launch
+    # must take the intentional APK_CHANGED exit path again; the following instrumentation run checks
+    # that machine_profiles and all v4 printer data survived it.
+    Install-Apk $CandidateApk
+    Invoke-Adb logcat -c | Out-Null
+    Launch-App "candidate same-version reinstall"
+    $reinstallLog = Save-Log "03-candidate-reinstall-process.logcat.txt"
+    Assert-ApkChangedExit $reinstallLog "candidate same-version reinstall"
+    Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyGenericProfileSurvivesCandidateReinstall" "post-reinstall v4 data, native U1 slice, and generic profile verification"
+
+    Write-Host "v4.0.4 -> candidate upgrade soak completed on $Device."
+} finally {
+    if ($hasPriorInstall -and $priorStateSnapshotCreated) {
+        Install-Apk $CandidateApk
+        Install-Apk $AndroidTestApk
+        Run-Instrumented "com.u1.slicer.migration.PriorDeviceStateRestoreTest#restorePrinterConfigAndMachineProfiles" "prior device state restore"
+    } elseif (-not $hasPriorInstall) {
+        & adb -s $Device uninstall $TestId | Out-Host
+        & adb -s $Device uninstall $AppId | Out-Host
+    }
 }
-
-Install-Apk $V4Apk -AllowDowngrade
-Install-Apk $AndroidTestApk
-Launch-App "released v4.0.4"
-Run-Instrumented "com.u1.slicer.migration.V4UpgradeMigrationSeedTest#seedReleasedV4PrintersConfig" "v4 fixture seed"
-Save-Log "01-v4-seeded.logcat.txt"
-Launch-App "released v4.0.4 with seeded data"
-Save-Log "01b-v4-seeded-launch.logcat.txt"
-
-Install-Apk $CandidateApk
-Invoke-Adb logcat -c | Out-Null
-Launch-App "candidate first process"
-$firstCandidateLog = Save-Log "02-candidate-first-process.logcat.txt"
-Assert-ApkChangedExit $firstCandidateLog "candidate first process"
-Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyV4PrintersConfigAndLegacyU1SliceAfterUpgrade" "v4 data and native U1 slice verification"
-Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#seedAndVerifyGenericProfileSurvivesCandidateReinstall" "generic profile seed"
-
-# Reinstalling the same candidate proves same-version APK timestamp handling. The next launch
-# must take the intentional APK_CHANGED exit path again; the following instrumentation run checks
-# that machine_profiles and all v4 printer data survived it.
-Install-Apk $CandidateApk
-Invoke-Adb logcat -c | Out-Null
-Launch-App "candidate same-version reinstall"
-$reinstallLog = Save-Log "03-candidate-reinstall-process.logcat.txt"
-Assert-ApkChangedExit $reinstallLog "candidate same-version reinstall"
-Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyGenericProfileSurvivesCandidateReinstall" "post-reinstall v4 data, native U1 slice, and generic profile verification"
-
-if ($hasPriorInstall) {
-    Run-Instrumented "com.u1.slicer.migration.PriorDeviceStateRestoreTest#restorePrinterConfigAndMachineProfiles" "prior device state restore"
-}
-
-Write-Host "v4.0.4 -> candidate upgrade soak completed on $Device."
