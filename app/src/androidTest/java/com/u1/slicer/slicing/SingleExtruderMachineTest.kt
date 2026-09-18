@@ -146,8 +146,8 @@ class SingleExtruderMachineTest {
               "extruder_offset": ["0x0"],
               "gcode_flavor": "klipper",
               "single_extruder_multi_material": "0",
-              "machine_start_gcode": "G28\\nPRINT_START",
-              "machine_end_gcode": "END_PRINT",
+              "machine_start_gcode": ["G28\\nPRINT_START"],
+              "machine_end_gcode": ["END_PRINT"],
               "machine_change_filament_gcode": "",
               "machine_pause_gcode": "PAUSE"
             }

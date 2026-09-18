@@ -1,6 +1,7 @@
 package com.u1.slicer.machine
 
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.slice.SlicerTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,6 +51,61 @@ class MachineConfigResolverTest {
 
         assertTrue(resolved.wipeTowerX <= 300f - resolved.wipeTowerWidth)
         assertTrue(resolved.wipeTowerY <= 300f - resolved.wipeTowerWidth)
+    }
+
+    @Test
+    fun `active generic profile drives the shared non-Bambu slice target`() {
+        val profile = requireNotNull(
+            MachineProfile.fromResolvedOrcaJson(
+                """
+                    {
+                      "type": "machine",
+                      "name": "Prusa CORE One 0.4 nozzle",
+                      "printer_model": "Prusa CORE One",
+                      "printer_variant": "0.4",
+                      "printable_area": ["0x0", "250x0", "250x220", "0x220"],
+                      "printable_height": "270",
+                      "nozzle_diameter": ["0.4"],
+                      "gcode_flavor": "marlin2",
+                      "machine_start_gcode": ["M17\nG28"],
+                      "machine_end_gcode": ["M104 S0\nM84"]
+                    }
+                """.trimIndent(),
+                MachineFamily.GENERIC,
+            )
+        )
+
+        val resolved = resolveActiveMachineSliceConfig(
+            target = SlicerTarget.SnapmakerU1,
+            profile = profile,
+            base = SliceConfig(),
+        )
+        val rawModelGcode = machineGcodeForSlice(
+            target = SlicerTarget.SnapmakerU1,
+            profile = profile,
+            hasEmbeddedProfile = false,
+        )
+
+        assertEquals(250f, resolved.bedSizeX)
+        assertEquals(220f, resolved.bedSizeY)
+        assertEquals(270f, resolved.maxPrintHeight)
+        assertEquals("GENERIC", resolved.machineTarget)
+        assertEquals("M17\nG28", rawModelGcode.first)
+        assertEquals("M104 S0\nM84", rawModelGcode.second)
+    }
+
+    @Test
+    fun `embedded non-Bambu model leaves machine G-code to its embedded profile`() {
+        val profile = profile("generic_klipper_300.json", MachineFamily.GENERIC)
+
+        assertEquals(
+            "" to "",
+            machineGcodeForSlice(
+                target = SlicerTarget.SnapmakerU1,
+                profile = profile,
+                hasEmbeddedProfile = true,
+            )
+        )
     }
 
     private fun profile(name: String, family: MachineFamily): MachineProfile =

@@ -76,7 +76,8 @@ import com.u1.slicer.slice.buildSliceArtifact
 import com.u1.slicer.slice.buildSliceArtifactWithTimings
 import com.u1.slicer.slice.resolveDefaultSliceTarget
 import com.u1.slicer.machine.MachineProfile
-import com.u1.slicer.machine.resolveMachineSliceConfig
+import com.u1.slicer.machine.machineGcodeForSlice
+import com.u1.slicer.machine.resolveActiveMachineSliceConfig
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -4878,11 +4879,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun activeBedDimensions(): Pair<Float, Float> {
-        val targetConfig = if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) {
-            resolveMachineSliceConfig(activeMachineProfile.value, _config.value)
-        } else {
-            resolveTargetedSliceConfig(effectiveSliceTarget.value, _config.value)
-        }
+        val targetConfig = resolveActiveMachineSliceConfig(
+            target = effectiveSliceTarget.value,
+            profile = activeMachineProfile.value,
+            base = _config.value,
+        )
         return targetConfig.bedSizeX to targetConfig.bedSizeY
     }
 
@@ -6169,7 +6170,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     .sortedBy { it.index }
                     .map { it.color }
                     .ifEmpty { listOf("#FFFFFF") }
-                val targetMachineConfig = resolveTargetedSliceConfig(target, _config.value)
+                val targetMachineConfig = resolveActiveMachineSliceConfig(
+                    target = target,
+                    profile = activeMachineProfile.value,
+                    base = _config.value,
+                )
                 val targetBedSizeX = targetMachineConfig.bedSizeX
                 val targetBedSizeY = targetMachineConfig.bedSizeY
 
@@ -6266,7 +6271,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // USE_FILE passthrough: base values from _config.value are used as-is.
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
-                val resolvedSliceConfig = resolveTargetedSliceConfig(target, ov.resolveInto(_config.value)).let { cfg ->
+                val resolvedSliceConfig = resolveActiveMachineSliceConfig(
+                    target = target,
+                    profile = activeMachineProfile.value,
+                    base = ov.resolveInto(_config.value),
+                ).let { cfg ->
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
                     if (cfg.wipeTowerEnabled) {
@@ -6361,8 +6370,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         filaments = filaments.value
                     ))
                 }
-                val targetAwareSliceConfig = resolveTargetedSliceConfig(
+                val targetAwareSliceConfig = resolveActiveMachineSliceConfig(
                     target = target,
+                    profile = activeMachineProfile.value,
                     base = sliceConfig,
                 )
                 val profileOverrides = buildProfileOverrides(
@@ -6432,13 +6442,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Pass the machine G-code templates from assets so applyConfigToPrusa injects
                 // them when has_embedded_profile=false. 3MF files (sourceModelFile != null)
                 // already embed the profile via ProfileEmbedder — pass empty to avoid overriding it.
-                val usesSnapmakerMachineGcode =
-                    sourceModelFile == null && target == SlicerTarget.SnapmakerU1
-                val (b106StartGcode, b106EndGcode) = if (usesSnapmakerMachineGcode) {
-                    readPrinterMachineGcode()
-                } else {
-                    "" to ""
-                }
+                val (jniMachineStartGcode, jniMachineEndGcode) =
+                    if (target == SlicerTarget.SnapmakerU1) {
+                        machineGcodeForSlice(
+                            target = target,
+                            profile = activeMachineProfile.value,
+                            hasEmbeddedProfile = sourceModelFile != null,
+                        )
+                    } else {
+                        targetAwareSliceConfig.machineStartGcode to targetAwareSliceConfig.machineEndGcode
+                    }
                 // F91 (2026-05-25): populate per-extruder SliceConfig fields from the user's
                 // filament library so native applies them even when the slice bypasses
                 // ProfileEmbedder (raw STL). buildFilamentLibraryArrays inspects the active
@@ -6457,8 +6470,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE)
                         targetAwareSliceConfig.layerHeight else 0.0f,
                     ironingType = resolveNativeIroningType(ov.ironing),
-                    machineStartGcode = b106StartGcode.ifBlank { targetAwareSliceConfig.machineStartGcode },
-                    machineEndGcode = b106EndGcode.ifBlank { targetAwareSliceConfig.machineEndGcode },
+                    machineStartGcode = jniMachineStartGcode,
+                    machineEndGcode = jniMachineEndGcode,
                     filamentFlowRatios = filamentArrays.flowRatios,
                     filamentMaxVolumetricSpeeds = filamentArrays.maxVolumetricSpeeds,
                     filamentFanMinSpeeds = filamentArrays.fanMinSpeeds,
@@ -7418,20 +7431,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Copy the current source model to files/jobs/<jobId>/ for durable storage (F61).
-    private fun readPrinterMachineGcode(): Pair<String, String> {
-        return try {
-            val json = org.json.JSONObject(activeMachineProfile.value.machineJson)
-            Pair(
-                json.optString("machine_start_gcode", ""),
-                json.optString("machine_end_gcode", ""),
-            )
-        } catch (e: Throwable) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Log.w("SlicerVM", "B106: failed to read machine G-code from assets: ${e.message}")
-            "" to ""
-        }
-    }
-
     private fun copySourceToDurableJobDir(jobId: Long, sourceFile: File?): File? {
         if (sourceFile == null || !sourceFile.exists()) return null
         return try {
