@@ -92,7 +92,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2144 JVM unit tests
+./gradlew testDebugUnitTest                        # 2146 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 467 instrumented test methods — uses Orchestrator
 ```
 
@@ -122,9 +122,9 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2144 tests across 240 reported test suites
+### Unit tests (`app/src/test/`) - 2146 tests across 240 reported test suites
 
-Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineConfigResolverTest` (3), `MachineProfileRepositoryTest` (6), `MachineProfileTest` (8), `OrcaProfileBundleImporterTest` (7), `OrcaProfileResolverTest` (5), `Phase2GeometryLiteralGuardTest` (1), `PrinterWizardViewModelTest` (9), `ProfileCacheTest` (7), and `VendorCatalogClientTest` (8).
+Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineConfigResolverTest` (5), `MachineProfileRepositoryTest` (6), `MachineProfileTest` (8), `OrcaProfileBundleImporterTest` (7), `OrcaProfileResolverTest` (5), `Phase2GeometryLiteralGuardTest` (1), `PrinterWizardViewModelTest` (9), `ProfileCacheTest` (7), and `VendorCatalogClientTest` (8).
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines

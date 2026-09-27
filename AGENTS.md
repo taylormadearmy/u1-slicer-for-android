@@ -25,11 +25,11 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal build
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest                        # 2144 JVM unit tests
+./gradlew testDebugUnitTest                        # 2146 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 467 instrumented test methods — uses Orchestrator
 ```
 
-**2,611 test methods in the current inventory.** The final Phase 7 JVM run passed 2,144 tests across 240 reported suites. An anchored source scan finds 467 `@Test` annotations across 77 instrumented-test Kotlin files. The unfiltered confidence run passed 201 tests across the 17-class smoke set, all seven U1 E2E scenarios, and the wizard-to-slice-and-upload-only scenario. Instrumented tests use Android Test Orchestrator to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
+**2,613 test methods in the current inventory.** The v5.0.0 release-candidate JVM run passed 2,146 tests across 240 reported suites. An anchored source scan finds 467 `@Test` annotations across 77 instrumented-test Kotlin files. The unfiltered confidence run passed 201 tests across the 17-class smoke set, all seven U1 E2E scenarios, and the wizard-to-slice-and-upload-only scenario. Instrumented tests use Android Test Orchestrator to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
 
 **Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs. Pass the serial via `ANDROID_SERIAL=<id>` env var. Never deploy automated tests to personal or non-phone devices (the NF22E1 listed in local notes is off-limits).
 
