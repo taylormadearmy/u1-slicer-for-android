@@ -2,6 +2,7 @@ package com.u1.slicer.printer
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.u1.slicer.RequiresExternalFixture
 import com.u1.slicer.data.HostType
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrintersConfig
@@ -21,8 +22,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
-/** Device-to-Docker proof for the Phase 6 upload safety boundary. */
+/** Device-to-host mock proof for the Phase 6 upload safety boundary. */
 @RunWith(AndroidJUnit4::class)
+@RequiresExternalFixture("scripts/run-phase6-printer-host-e2e.ps1")
 class PrinterHostUploadE2ETest {
 
     private val targetContext get() = InstrumentationRegistry.getInstrumentation().targetContext

@@ -15,11 +15,14 @@ import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
+import com.u1.slicer.OfflineU1PrinterRule
 import org.junit.runner.RunWith
 
 /** F99: a normal multi-colour 3MF may map one source colour to an in-app ColorMix. */
 @RunWith(AndroidJUnit4::class)
 class FileColourMixRemapSliceTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private lateinit var viewModel: SlicerViewModel
     private lateinit var fixture: File

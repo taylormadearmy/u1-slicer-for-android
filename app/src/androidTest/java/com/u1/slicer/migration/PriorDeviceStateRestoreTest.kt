@@ -2,6 +2,7 @@ package com.u1.slicer.migration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.u1.slicer.RequiresExternalFixture
 import com.u1.slicer.data.PrintersConfig
 import com.u1.slicer.data.PrintersRepository
 import java.io.File
@@ -15,6 +16,7 @@ import org.junit.runner.RunWith
 
 /** Restores state captured before the v4 downgrade once the candidate checks have passed. */
 @RunWith(AndroidJUnit4::class)
+@RequiresExternalFixture("scripts/run-v4-upgrade-soak.ps1")
 class PriorDeviceStateRestoreTest {
     @Test
     fun restorePrinterConfigAndMachineProfiles() = runBlocking {

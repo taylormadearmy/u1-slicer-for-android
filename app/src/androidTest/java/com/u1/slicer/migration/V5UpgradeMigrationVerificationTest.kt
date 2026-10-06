@@ -2,6 +2,7 @@ package com.u1.slicer.migration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.u1.slicer.RequiresExternalFixture
 import com.u1.slicer.NativeLibrary
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.HostType
@@ -26,6 +27,7 @@ import org.junit.runner.RunWith
 
 /** Verifies v4 data after candidate install/restart and exercises a durable generic profile. */
 @RunWith(AndroidJUnit4::class)
+@RequiresExternalFixture("scripts/run-v4-upgrade-soak.ps1")
 class V5UpgradeMigrationVerificationTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext.applicationContext

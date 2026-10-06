@@ -5,6 +5,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.data.PerObjectPose
+import com.u1.slicer.data.CanonicalColourDestination
+import com.u1.slicer.data.CanonicalColourRemap
 import com.u1.slicer.data.SessionState
 import com.u1.slicer.data.SessionStateRepository
 import com.u1.slicer.data.SliceJob
@@ -20,11 +22,13 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class SessionResumeIntegrationTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private val app = ApplicationProvider.getApplicationContext<Application>()
     private val repo = SessionStateRepository(app)
@@ -256,6 +260,7 @@ class SessionResumeIntegrationTest {
         // Use 3DBenchy (single-object STL) so the resume path doesn't pause
         // on the multi-plate selector — we only want to verify F66 state.
         val asset = copyAssetToCache("3DBenchy.stl")
+        val remaps = listOf(CanonicalColourRemap(0, CanonicalColourDestination.PhysicalSlot(2)))
         // Persist a session with non-default F66 state. Note: split ops are
         // intentionally empty here because splitObject on Benchy is a no-op
         // (single-island) and we don't want the replay to fail silently. The
@@ -279,6 +284,7 @@ class SessionResumeIntegrationTest {
                                        scaleX = 1.25f, scaleY = 1.25f, scaleZ = 1.25f)
                 ),
                 perVolumeExtruders = mapOf("0:0" to 3),
+                canonicalColourRemaps = remaps,
                 splitObjectOperations = emptyList(),
                 splitVolumeOperations = emptyList(),
                 sliceJobId = null,
@@ -310,6 +316,7 @@ class SessionResumeIntegrationTest {
         }
 
         // Selection
+        assertEquals("Session resume must retain its saved file-colour remaps", remaps, vm.canonicalColourRemaps.value)
         assertEquals(
             "selectedObjectIndex must restore from SessionState — without this, resume drops to bed-wide mode unexpectedly",
             0, vm.selection.value.objectIndex,

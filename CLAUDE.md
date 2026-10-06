@@ -92,8 +92,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2146 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 467 instrumented test methods — uses Orchestrator
+./gradlew testDebugUnitTest                        # 2148 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 464 independent instrumented tests — uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -122,7 +122,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2146 tests across 240 reported test suites
+### Unit tests (`app/src/test/`) - 2148 tests across 240 reported test suites
 
 Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineConfigResolverTest` (5), `MachineProfileRepositoryTest` (6), `MachineProfileTest` (8), `OrcaProfileBundleImporterTest` (7), `OrcaProfileResolverTest` (5), `Phase2GeometryLiteralGuardTest` (1), `PrinterWizardViewModelTest` (9), `ProfileCacheTest` (7), and `VendorCatalogClientTest` (8).
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
@@ -225,9 +225,9 @@ Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineCo
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 467 test methods across 77 Kotlin files
+### Instrumented tests (`app/src/androidTest/`) - 471 test methods across 79 Kotlin files
 
-This heading records an anchored source inventory, not a completed full-device run. The command `rg -n '^\s*@Test\b' app/src/androidTest` finds 467 annotations across 77 Kotlin files. The final unfiltered confidence run passed 201 tests across the configured 17-class smoke set, all seven U1 E2E scenarios, and the one-test `PrinterWizardToSliceTest` add-on. The wizard test validates the profile, saves it, reloads it from DataStore, slices a real fixture, and uploads only to an on-device loopback server. It does not start a print. The v4.0.4-to-v5.0.0 release-APK soak also passed both process-reset exits, migrated-state checks, native U1 slices, and generic-profile persistence.
+The full regression run on 5–6 October 2026 passed all 464 independent device tests plus the host-upload check and six ordered upgrade checks. All 36 manual batch scenarios passed, including both Smart Paint acceptance round trips. The command `rg -n '^\s*@Test\b' app/src/androidTest` finds 471 annotations across 79 Kotlin files. `@RequiresExternalFixture` marks the seven checks whose prerequisite setup is supplied by the drivers in `E2E_TESTING.md`; ordinary Gradle and shard runs exclude them. Tests keep Orchestrator process isolation and remove only their own temporary workspaces.
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath

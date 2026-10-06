@@ -1,6 +1,9 @@
 @{
     Name = 'u1-slicer-confidence-check'
     InstrumentedClasses = @(
+        'com.u1.slicer.aipaint.SmartPaintBenchyIntegrationTest'
+        'com.u1.slicer.bambu.ThreeMfColourRemapperInstrumentedTest'
+        'com.u1.slicer.SmartPaintLoadStateTest'
         'com.u1.slicer.native.NativeLibrarySymbolTest'
         'com.u1.slicer.native.NativeLibraryCorrectnessTest'
         'com.u1.slicer.native.NativePlateDataTest'

@@ -2,14 +2,15 @@ package com.u1.slicer.bambu
 
 import java.io.File
 import java.io.FileOutputStream
+import java.util.regex.Pattern
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 /** Produces a disposable physical/mix-tool-space 3MF; source files are never changed. */
 object ThreeMfColourRemapper {
-    private val paintAttr = Regex("""((?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)=\")([^"]+)(\")""")
-    private val extruderMetadata = Regex("""(<metadata\b[^>]*key=\"extruder\"[^>]*value=\")([0-9]+)(\")""")
+    private val paintAttr = Pattern.compile("""((?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)=\")([^"]+)(\")""")
+    private val extruderMetadata = Pattern.compile("""(<metadata\b[^>]*key=\"extruder\"[^>]*value=\")([0-9]+)(\")""")
 
     fun remap(
         input: File,
@@ -37,15 +38,30 @@ object ThreeMfColourRemapper {
     }
 
     private fun rewriteModel(bytes: ByteArray, states: Map<Int, Int>): ByteArray =
-        paintAttr.replace(String(bytes)) { m ->
-            val replacement = PaintColorRemapper.remap(m.groupValues[2], states) ?: m.groupValues[2]
-            m.groupValues[1] + replacement + m.groupValues[3]
-        }.toByteArray()
+        rewriteAttributes(bytes, paintAttr) { value ->
+            PaintColorRemapper.remap(value, states) ?: value
+        }
 
     private fun rewriteModelSettings(bytes: ByteArray, fileToTool: Map<Int, Int>): ByteArray =
-        extruderMetadata.replace(String(bytes)) { m ->
-            val sourceIndex = m.groupValues[2].toIntOrNull()?.minus(1)
-            val state = sourceIndex?.let(fileToTool::get) ?: m.groupValues[2].toInt()
-            m.groupValues[1] + state + m.groupValues[3]
-        }.toByteArray()
+        rewriteAttributes(bytes, extruderMetadata) { value ->
+            val sourceIndex = value.toIntOrNull()?.minus(1)
+            val state = sourceIndex?.let(fileToTool::get) ?: value.toInt()
+            state.toString()
+        }
+
+    private fun rewriteAttributes(bytes: ByteArray, pattern: Pattern, rewriteValue: (String) -> String): ByteArray {
+        val text = String(bytes, Charsets.UTF_8)
+        // Kotlin's transform-based Regex.replace creates a matcher per match. Android's
+        // matcher copies the entire input into native memory, so reuse a single matcher.
+        val matcher = pattern.matcher(text)
+        val result = StringBuilder(text.length)
+        var copiedUntil = 0
+        while (matcher.find()) {
+            result.append(text, copiedUntil, matcher.start(2))
+            result.append(rewriteValue(matcher.group(2)!!))
+            copiedUntil = matcher.end(2)
+        }
+        result.append(text, copiedUntil, text.length)
+        return result.toString().toByteArray(Charsets.UTF_8)
+    }
 }

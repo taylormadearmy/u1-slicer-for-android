@@ -525,8 +525,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbo)
 
         val batchBytes = batch.triangleCount * 3 * MeshData.BYTES_PER_VERTEX
-        batch.geometry.position(0)
-        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, batchBytes, batch.geometry, GLES30.GL_DYNAMIC_DRAW)
+        val geometry = batch.geometry.duplicate().apply { clear() }
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, batchBytes, geometry, GLES30.GL_DYNAMIC_DRAW)
 
         GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 0)
         GLES30.glEnableVertexAttribArray(0)
@@ -542,7 +542,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         
         for (i in mesh.batches.indices) {
             val batch = mesh.batches[i]
-            val cb = batch.colorBuffer ?: continue
+            val cb = batch.colorBuffer?.duplicate()?.apply { clear() } ?: continue
             
             GLES30.glBindVertexArray(modelVAOs[i])
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, colorVBOs[i])

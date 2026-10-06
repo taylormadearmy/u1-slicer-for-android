@@ -16,6 +16,12 @@ android {
         versionName "5.0.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        if (!project.hasProperty('android.testInstrumentationRunnerArguments.listener')) {
+            testInstrumentationRunnerArguments listener: "com.u1.slicer.TestWorkspaceCleanupListener"
+        }
+        if (!project.hasProperty('android.testInstrumentationRunnerArguments.notAnnotation')) {
+            testInstrumentationRunnerArguments notAnnotation: "com.u1.slicer.RequiresExternalFixture"
+        }
         vectorDrawables {
             useSupportLibrary true
         }

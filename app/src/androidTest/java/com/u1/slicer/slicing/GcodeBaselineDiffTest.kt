@@ -12,6 +12,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
+import com.u1.slicer.OfflineU1PrinterRule
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -55,6 +57,7 @@ import java.io.File
  */
 @RunWith(AndroidJUnit4::class)
 class GcodeBaselineDiffTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private val targetContext get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val assetContext get() = InstrumentationRegistry.getInstrumentation().context

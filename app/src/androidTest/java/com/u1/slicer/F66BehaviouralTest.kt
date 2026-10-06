@@ -10,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -25,6 +26,7 @@ import java.io.File
  */
 @RunWith(AndroidJUnit4::class)
 class F66BehaviouralTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private lateinit var ctx: Application
     private lateinit var vm: SlicerViewModel

@@ -32,6 +32,9 @@ function Get-SafeName([string]$Name) {
 }
 
 function Capture-Screenshot([string]$Path) {
+    Invoke-Adb shell input keyevent KEYCODE_WAKEUP | Out-Null
+    Invoke-Adb shell wm dismiss-keyguard | Out-Null
+    Start-Sleep -Seconds 1
     $captureArgs = @("shell", "screencap", "-p", "/sdcard/ss.png")
     Invoke-Adb @captureArgs | Out-Null
     Invoke-Adb pull /sdcard/ss.png $Path | Out-Null
@@ -44,6 +47,7 @@ function Get-TestCmdLog([int]$Last = 160) {
 function Broadcast([string]$Action, [string[]]$ExtraArgs = @()) {
     $args = @("shell", "am", "broadcast", "-a", "$($AppId).$Action") + $ExtraArgs + @("-p", $AppId)
     Invoke-Adb @args | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ADB broadcast $Action failed with exit code $LASTEXITCODE" }
 }
 
 function Dump-State {
@@ -163,6 +167,11 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     Invoke-Adb shell am force-stop $AppId | Out-Null
     Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
     Start-Sleep -Seconds 8
+    if ([string]::IsNullOrWhiteSpace((Invoke-Adb shell pidof $AppId) -join '')) {
+        Write-Step "Reopening after the APK upgrade reset"
+        Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
+        Start-Sleep -Seconds 4
+    }
 
     if ($Scenario.Suite -eq 'Bambu') {
         Broadcast "SET_BAMBU_TARGET" @("--es", "model", $Scenario.Target)
@@ -207,6 +216,26 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     $sliceOk = $false
     $gcodePath = ""
     $exportPath = ""
+    $smartPaintOk = $true
+    if ($loadOk -and $Scenario.SmartPaint) {
+        Broadcast "SET_COLORS" @("--es", "colors", "'#FF0000,#00FF00,#0000FF,#FFFFFF'")
+        if ($Scenario.PriorRemap) {
+            Broadcast "SET_COLOUR_REMAP" @("--ei", "index", "0", "--ei", "slot", "3")
+            $seedLog = Wait-State "SmartPaintAccepted: .* remaps=1" 15 "seed previous file remap"
+            $smartPaintOk = $seedLog -match "remaps=1"
+        }
+        Broadcast "START_SMART_PAINT"
+        $paintLog = Wait-State "SmartPaintResult: true triangles=[1-9]" 60 "Smart Paint segmentation"
+        $smartPaintOk = $smartPaintOk -and $paintLog -match "SmartPaintResult: true triangles=[1-9]"
+        Capture-Screenshot (Join-Path $ArtifactDir "$safe-smart-paint.png")
+        if ($smartPaintOk) {
+            Broadcast "ACCEPT_SMART_PAINT"
+            $acceptLog = Wait-State "SmartPaintAccepted: true triangles=[1-9][0-9]* remaps=0" 30 "Smart Paint accept and reload"
+            $smartPaintOk = $acceptLog -match "SmartPaintAccepted: true triangles=[1-9][0-9]* remaps=0"
+            Capture-Screenshot $prepareShot
+        }
+        $loadOk = $loadOk -and $smartPaintOk
+    }
     if ($loadOk -and $Scenario.Kind -eq "slice") {
         Write-Step "[$Index/$Total] slicing $($Scenario.Name)"
         Broadcast "SLICE"
@@ -245,6 +274,13 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     }
     $sliceChecksOk = $sliceOk -and $gcodeChecks -ne $null -and
         $toolRangeOk -and $targetOk -and $machineMacrosOk
+    if ($Scenario.SmartPaint -and $gcodeChecks -ne $null) {
+        $usedPaintTools = @(0..3 | Where-Object { [int]$gcodeChecks["T$_"] -gt 0 }).Count
+        $sliceChecksOk = $sliceChecksOk -and $usedPaintTools -ge 2
+        Broadcast "NAVIGATE" @("--es", "screen", "preview")
+        Start-Sleep -Seconds 3
+        Capture-Screenshot (Join-Path $ArtifactDir "$safe-preview.png")
+    }
     $status = if ($loadOk -and ($Scenario.Kind -ne "slice" -or $sliceChecksOk)) { "PASS" } else { "FAIL" }
     $lines = @(
         "SCENARIO: $($Scenario.Name)",
@@ -259,6 +295,7 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
         "LOG: $logFile",
         "---",
         "load: $(if ($loadOk) { 'PASS' } else { 'FAIL' })",
+        "smartPaintAccept: $(if (!$Scenario.SmartPaint) { 'N/A' } elseif ($smartPaintOk) { 'PASS' } else { 'FAIL' })",
         "plateSelect: $(if ($Scenario.Plate -eq $null) { 'N/A' } elseif ($plateOk) { 'PASS' } else { 'FAIL' })",
         "slice: $(if ($Scenario.Kind -ne 'slice') { 'N/A' } elseif ($sliceOk) { 'PASS' } else { 'FAIL' })",
         "targetIdentity: $(if ($Scenario.Suite -ne 'Bambu' -or $targetOk) { 'PASS' } else { 'FAIL' })",
@@ -360,6 +397,27 @@ $last = if ($EndAt -gt 0) { [Math]::Min($EndAt, $runScenarios.Count) } else { $r
 for ($i = $StartAt; $i -le $last; $i++) {
     $ok = Run-Scenario $runScenarios[$i - 1] $i $runScenarios.Count
     if ($ok) { $passed++ } else { $failed++ }
+}
+
+# Always include the Smart Paint round-trip checks in U1 smoke and full batches.
+if ($Suite -in @('U1', 'Both')) {
+    $paintScenarios = @(
+        @{ Name="Smart Paint Benchy round trip"; PriorRemap=$false },
+        @{ Name="Smart Paint Benchy after file colour remap"; PriorRemap=$true }
+    )
+    foreach ($paintScenario in $paintScenarios) {
+        $paintScenario.File = '3DBenchy.stl'
+        $paintScenario.Plate = $null
+        $paintScenario.Kind = 'slice'
+        $paintScenario.Suite = 'U1'
+        $paintScenario.Target = ''
+        $paintScenario.SmartPaint = $true
+        $paintScenario.LoadTimeoutSeconds = 120
+        $paintScenario.SliceTimeoutSeconds = 900
+        $paintIndex = $runScenarios.Count + 1 + [array]::IndexOf($paintScenarios, $paintScenario)
+        $ok = Run-Scenario $paintScenario $paintIndex ($runScenarios.Count + 2)
+        if ($ok) { $passed++ } else { $failed++ }
+    }
 }
 
 if ($IncludePrinterWizardUpload -and $Suite -in @('U1', 'Both')) {

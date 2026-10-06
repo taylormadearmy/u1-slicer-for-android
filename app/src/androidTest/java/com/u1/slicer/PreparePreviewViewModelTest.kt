@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
@@ -27,6 +28,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.zip.ZipFile
@@ -36,6 +38,7 @@ import java.util.zip.ZipFile
 
 
 class PreparePreviewViewModelTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private val targetContext get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val assetContext get() = InstrumentationRegistry.getInstrumentation().context
@@ -2174,7 +2177,8 @@ class PreparePreviewViewModelTest {
         val application = targetContext.applicationContext as U1SlicerApplication
         val viewModel = SlicerViewModel(application)
         val modelFile = copyAssetToCache("1890038_xav01_H2C_279_104.3mf")
-        val overridesBefore = viewModel.slicingOverrides.value
+        val settings = application.container.settingsRepository
+        val overridesBefore = runBlocking { settings.slicingOverrides.first() }
         try {
             viewModel.loadModelFromFile(modelFile)
 
@@ -2237,7 +2241,7 @@ class PreparePreviewViewModelTest {
                 t1Count > 0
             )
         } finally {
-            viewModel.saveSlicingOverrides(overridesBefore) // restore original overrides
+            runBlocking { settings.saveSlicingOverrides(overridesBefore) }
             viewModel.clearModel()
             modelFile.delete()
         }
@@ -2261,9 +2265,15 @@ class PreparePreviewViewModelTest {
     @Test
     fun f91_editLibraryFilamentAfterLoad_triggersReEmbedSoNewValuesReachGcode() = runBlocking {
         val application = targetContext.applicationContext as U1SlicerApplication
+        val settings = application.container.settingsRepository
+        val overridesBefore = settings.slicingOverrides.first()
+        // This case asserts one filament entry. An inherited E2 support override
+        // legitimately expands every per-filament header array to two entries.
+        settings.saveSlicingOverrides(SlicingOverrides())
         val viewModel = SlicerViewModel(application)
         val modelFile = copyAssetToCache("tetrahedron.stl")
         val filamentDao = application.container.filamentDao
+        var filamentBefore: FilamentProfile? = null
 
         try {
             viewModel.loadModelFromFile(modelFile)
@@ -2287,6 +2297,7 @@ class PreparePreviewViewModelTest {
                 "seeded Generic PLA missing after 15s wait — SeedCallback may not have run"
             )
             val pla = allFilaments.first { it.name == "Generic PLA" }
+            filamentBefore = pla
 
             // Link slot 0 to the PLA profile via PrintersRepository, matching cheeky_b52's setup.
             val printersRepo = application.container.printersRepository
@@ -2348,6 +2359,8 @@ class PreparePreviewViewModelTest {
                 pa!!.contains("0.024")
             )
         } finally {
+            filamentBefore?.let { filamentDao.update(it) }
+            settings.saveSlicingOverrides(overridesBefore)
             viewModel.clearModel()
             modelFile.delete()
         }

@@ -27,6 +27,53 @@ For the repo-defined confidence sweep with live progress output and a status fil
 ```
 The default smoke list and E2E range are in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1).
 
+The device runner removes each test process's `files/transient/<session>` and
+`cache/transient/<session>` workspaces when that process finishes. Saved jobs,
+settings and other sessions stay intact. This prevents a full Orchestrator run
+from filling the device with temporary copies of large 3MFs.
+
+U1 ViewModel and mixed-filament scenarios use `OfflineU1PrinterRule` to select
+a four-slot U1 at a reserved offline address. The rule restores the previous
+printer configuration after each case, including failed cases. These tests
+must not inherit a single-nozzle printer selected on the phone.
+
+For a full Windows run across two approved phones, build once with
+`./gradlew assembleDebug assembleDebugAndroidTest`. Install both APKs and the
+Gradle-resolved Orchestrator/test-services APKs on each phone. In separate
+terminals, run:
+
+```powershell
+.\scripts\run-instrumented-shard.ps1 -Device <phone-1> -NumShards 2 -ShardIndex 0 -ResultsDir <results>
+.\scripts\run-instrumented-shard.ps1 -Device <phone-2> -NumShards 2 -ShardIndex 1 -ResultsDir <results>
+```
+
+The runner requires an explicit device, rejects the NF22E1, forwards the
+workspace-cleanup listener, and treats skipped tests or incomplete output as
+failures. Check both shard summaries and the combined test count before
+claiming the full suite passed. It keeps saved app data intact.
+
+There are 464 independent device tests, one host-upload check and six ordered
+upgrade-soak checks. The ordinary Gradle and shard runners exclude
+`@RequiresExternalFixture` classes. For a complete device pass, also run both
+fixture drivers on their approved test phone after ordinary tests finish:
+
+```powershell
+.\scripts\run-phase6-printer-host-e2e.ps1
+.\scripts\run-v4-upgrade-soak.ps1 -CandidateApk app/build/outputs/apk/debug/app-debug.apk -ResultsDir <upgrade-results>
+```
+
+That driver checks the released v4.0.4 APK hash, snapshots the current printer
+state, downgrades, seeds v4 data, upgrades, verifies a native U1 slice, reinstalls
+the candidate, verifies persistence again, and restores the snapshot. Its six
+checks require this install sequence and must not be shuffled or sharded.
+
+The host-upload driver starts the OctoPrint and PrusaLink mocks and reverses
+their loopback ports to the approved phone. Docker remains its default.
+`-Backend Python -PythonPath <python-executable>` runs the same handlers as
+hidden local processes bound to `127.0.0.1`. Both backends record requests and
+stop only the mocks and port mappings they created. The print-start request
+is checked against a mock, never a physical printer.
+
 If the pinned Orca catalogue or any recorded fetched-profile snapshot changed, validate those files before starting the confidence sweep:
 
 ```powershell
@@ -83,8 +130,19 @@ that broke in v2.2.0). Painted fixtures hit Branch A and bypass the regressed co
 (`ShouldSubsampleForAiPaintTest`) and the merge perf algorithm
 (`MeshSegmenterMergePerfTest`); the instrumented test
 `SmartPaintBenchyIntegrationTest` runs steps 1–5 on real `3DBenchy.stl` and asserts
-N < 200 leaves and < 30s wall time. Steps 6–7 (accept + slice) remain manual until
-a future test harness can drive the result-screen UI.
+N < 200 leaves and < 30s wall time. The batch runner also runs two Smart Paint
+round-trip scenarios after every U1 smoke or full batch, including `-Suite Both`:
+
+- Segment Benchy, change a region's slot, accept, reload, slice, export and capture Preview.
+- Repeat with a file-colour remap active before painting. Acceptance must clear that
+  remap, preserve the triangle count and complete within 30 seconds.
+
+Both scenarios require at least two physical tools in exported G-code and no T4–T9.
+They call the production painting and acceptance functions through debug-only commands,
+and save result, Prepare and Preview screenshots for visual review. Touch interactions
+such as lasso, brush strokes and the colour picker still require the SP-1–SP-5 checks below.
+`ThreeMfColourRemapperInstrumentedTest` separately bounds a 100,000-triangle remap's
+time and native allocations on Android; `SmartPaintLoadStateTest` checks remap reset.
 
 ## Universal post-slice rubric (every multi-colour file)
 

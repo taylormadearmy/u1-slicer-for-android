@@ -108,11 +108,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 2146 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 467 instrumented test methods (ARM64 device required)
+./gradlew testDebugUnitTest              # 2148 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 464 independent instrumented tests (ARM64 device required)
 ```
 
-**2,613 test methods in the current inventory.** The v5.0.0 release-candidate JVM run passed 2,146 tests across 240 reported suites. An anchored source scan finds 467 `@Test` annotations across 77 instrumented-test Kotlin files. The unfiltered confidence run passed 201 tests across the 17-class smoke set, all seven U1 E2E scenarios, and the wizard-to-slice-and-upload-only scenario.
+**2,619 test methods in the current inventory.** The full regression run on 5–6 October 2026 passed 2,148 JVM tests, 464 independent device tests, the host-upload check, all six ordered upgrade checks, and 36 manual batch scenarios including two Smart Paint round trips. An anchored source scan finds 471 `@Test` annotations across 79 instrumented-test Kotlin files. The seven fixture-driven checks run through the drivers documented in `E2E_TESTING.md`.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

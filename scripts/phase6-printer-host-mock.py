@@ -111,8 +111,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("octoprint", "prusalink"), default=os.environ.get("MODE", "octoprint"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
+    parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
-    server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.state = State(args.mode)
     try:
         server.serve_forever()

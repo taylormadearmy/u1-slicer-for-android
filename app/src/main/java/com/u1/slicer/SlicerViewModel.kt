@@ -543,6 +543,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     private fun beginNewModelLoad(): Long {
         val generation = modelLoadGeneration.incrementAndGet()
+        // Resume installs the saved file's remaps before loading it. Other imports,
+        // including Smart Paint output, have a new canonical colour index space.
+        if (!restoreInProgress) _canonicalColourRemaps.value = emptyList()
         _canonicalFilamentList.value = null
         _sliceMixToolSpace.value = false
         _h2dFilamentNozzleAssignments.value = emptyList()
@@ -8071,6 +8074,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // file (the StateFlow value persists across model loads).
         _filamentOverrides.value = emptyMap()
         currentModelFile = null
+        _canonicalColourRemaps.value = emptyList()
         lastModelInfo = null
         _modelInfo.value = null
         _copyCount.value = 1
