@@ -13,6 +13,12 @@
         'com.u1.slicer.slicing.SlicingIntegrationTest'
         'com.u1.slicer.slicing.BambuPipelineIntegrationTest'
         'com.u1.slicer.slicing.BambuSingleNozzleNativeConfigTest'
+        'com.u1.slicer.slicing.GenericKlipperNativeConfigTest'
+        'com.u1.slicer.slicing.GenericPrinterSliceViewModelTest'
+        'com.u1.slicer.data.JobMachineMigrationTest'
+        'com.u1.slicer.bambu.ThreeMfColourRemapperInstrumentedTest'
+        'com.u1.slicer.ui.FilamentMappingLayoutTest'
+        'com.u1.slicer.ui.printer.PrinterEditDialogInstrumentedTest'
         'com.u1.slicer.slicing.SemmSlicingTest'
         'com.u1.slicer.MatchAColourE2ETest'
     )

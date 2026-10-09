@@ -4,6 +4,9 @@ import com.u1.slicer.bambu.BambuProjectWriter
 import com.u1.slicer.bambu.BambuH2DGcodeTransformer
 import com.u1.slicer.bambu.resolveH2DFilamentMap
 import com.u1.slicer.data.Printer
+import com.u1.slicer.data.MachineKind
+import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.SliceJob
 import com.u1.slicer.gcode.GcodeToolRemapper
 import java.io.File
 
@@ -15,6 +18,7 @@ sealed class SliceArtifact {
         override val sourceModelName: String,
         val gcodeFile: File,
         override val target: SlicerTarget = SlicerTarget.SnapmakerU1,
+        val machineProfileFingerprint: String? = null,
     ) : SliceArtifact()
 
     data class BambuProjectArtifact(
@@ -27,10 +31,30 @@ sealed class SliceArtifact {
     ) : SliceArtifact()
 }
 
-fun SliceArtifact.isCompatibleWith(printer: Printer?): Boolean = printer != null && target.isCompatibleWith(
-    kind = printer.kind,
-    bambuModel = printer.bambu?.model,
-)
+fun SliceArtifact.isCompatibleWith(printer: Printer?): Boolean {
+    if (printer == null) return false
+    return when (target) {
+        SlicerTarget.SnapmakerU1 -> printer.machine == MachineKind.SNAPMAKER_U1
+        SlicerTarget.ElegooCentauriCarbon -> printer.machine == MachineKind.ELEGOO_CENTAURI_CARBON &&
+            printer.kind == PrinterKind.ELEGOO_CC1
+        SlicerTarget.GenericKlipper -> printer.machine == MachineKind.GENERIC_KLIPPER &&
+            this is SliceArtifact.MoonrakerGcodeArtifact && machineProfileFingerprint != null &&
+            machineProfileFingerprint == printer.machineProfile?.fingerprint
+        else -> printer.machine == MachineKind.BAMBU && target.isCompatibleWith(printer.kind, printer.bambu?.model)
+    }
+}
+
+/** Old jobs predate generic support. Unknown newer identities are deliberately unsendable. */
+fun sliceArtifactForJob(job: SliceJob): SliceArtifact.MoonrakerGcodeArtifact {
+    val target = if (job.sliceTarget == null) SlicerTarget.SnapmakerU1 else
+        runCatching { SlicerTarget.valueOf(job.sliceTarget) }.getOrDefault(SlicerTarget.GenericKlipper)
+    return SliceArtifact.MoonrakerGcodeArtifact(
+        sourceModelName = job.modelName,
+        gcodeFile = File(job.gcodePath),
+        target = target,
+        machineProfileFingerprint = job.machineProfileFingerprint.takeIf { job.sliceTarget == SlicerTarget.GenericKlipper.name },
+    )
+}
 
 fun buildSliceArtifact(
     target: SlicerTarget,
@@ -41,6 +65,7 @@ fun buildSliceArtifact(
     filamentColours: List<String>,
     filamentTypes: List<String>,
     filamentNozzleAssignments: List<Int> = emptyList(),
+    machineProfileFingerprint: String? = null,
 ): SliceArtifact = buildSliceArtifactWithTimings(
     target = target,
     sourceModelName = sourceModelName,
@@ -51,6 +76,7 @@ fun buildSliceArtifact(
     filamentTypes = filamentTypes,
     filamentNozzleAssignments = filamentNozzleAssignments,
     onPackagingStage = null,
+    machineProfileFingerprint = machineProfileFingerprint,
 )
 
 fun buildSliceArtifactWithTimings(
@@ -63,6 +89,7 @@ fun buildSliceArtifactWithTimings(
     filamentTypes: List<String>,
     filamentNozzleAssignments: List<Int> = emptyList(),
     onPackagingStage: ((stage: String, elapsedMs: Long) -> Unit)?,
+    machineProfileFingerprint: String? = null,
 ): SliceArtifact = when (target) {
     SlicerTarget.SnapmakerU1 -> SliceArtifact.MoonrakerGcodeArtifact(
         sourceModelName = sourceModelName,
@@ -154,6 +181,8 @@ fun buildSliceArtifactWithTimings(
         SliceArtifact.MoonrakerGcodeArtifact(
             sourceModelName = sourceModelName,
             gcodeFile = gcodeFile,
+            target = target,
+            machineProfileFingerprint = machineProfileFingerprint,
         )
     }
 }

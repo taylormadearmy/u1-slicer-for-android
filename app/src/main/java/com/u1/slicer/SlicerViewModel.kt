@@ -70,6 +70,8 @@ import com.u1.slicer.printer.BambuProjectFileInspector
 import com.u1.slicer.slice.SliceTargetFamily
 import com.u1.slicer.slice.SliceArtifact
 import com.u1.slicer.slice.SlicerTarget
+import com.u1.slicer.slice.GenericMachineProfile
+import com.u1.slicer.slice.sliceArtifactForJob
 import com.u1.slicer.slice.buildSliceArtifact
 import com.u1.slicer.slice.buildSliceArtifactWithTimings
 import com.u1.slicer.slice.resolveDefaultSliceTarget
@@ -415,6 +417,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         SharingStarted.Eagerly,
         resolveDefaultSliceTarget(null),
     )
+
+    private fun selectedGenericProfile(): GenericMachineProfile? = when (effectiveSliceTarget.value) {
+        SlicerTarget.ElegooCentauriCarbon -> GenericMachineProfile.centauriCarbon()
+        SlicerTarget.GenericKlipper -> activePrinterForSlicing.value?.machineProfile
+        else -> null
+    }
 
     private val _latestSliceArtifact = MutableStateFlow<SliceArtifact?>(null)
     val latestSliceArtifact: StateFlow<SliceArtifact?> = _latestSliceArtifact.asStateFlow()
@@ -4798,7 +4806,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun activeBedDimensions(): Pair<Float, Float> {
-        val targetConfig = resolveTargetedSliceConfig(effectiveSliceTarget.value, _config.value)
+        val targetConfig = resolveTargetedSliceConfig(effectiveSliceTarget.value, _config.value, selectedGenericProfile())
         return targetConfig.bedSizeX to targetConfig.bedSizeY
     }
 
@@ -4984,7 +4992,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (!isCurrentModelLoad(loadGeneration)) return null
         recoveryOrigInfo = origInfo
 
-        val sourceConfig = if (origInfo.isBambu) {
+        val sourceConfig = if (origInfo.isBambu || effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
             ZipFile(sourceFile).use { profileEmbedder.parseSourceConfig(it) }
         } else {
             null
@@ -5089,6 +5097,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     ): java.io.File {
         val embedSetupT0 = System.currentTimeMillis()
         val cfg = _config.value
+        if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
+            require(!info.hasPaintData && !info.hasMultiExtruderAssignments && !info.hasLayerToolChanges && info.usedExtruderIndices.all { it <= 1 }) {
+                "Generic Klipper and Centauri Carbon currently support single-filament models only. Import an unpainted single-filament model."
+            }
+            val machine = requireNotNull(selectedGenericProfile()) { "Import a Klipper machine profile before slicing" }
+            val genericOverrides = buildExplicitBambuProfileOverrides(
+                buildProfileOverrides(cfg, 1, hasSourceConfig = _sourceConfig.value != null),
+                slicingOverrides.value,
+                hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+            )
+            val sourceTuning = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+            val filamentTuning = genericFilamentTuning(cfg)
+            return profileEmbedder.embed(file, machine.compose(sourceTuning, filamentTuning + genericOverrides), outputDir, info, plateId = plateId)
+        }
         val slotCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
         val colorMapping = _colorMapping.value
@@ -5224,7 +5246,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val buildProfileOverridesMs = System.currentTimeMillis() - buildProfileOverridesT0
         val buildConfigT0 = System.currentTimeMillis()
         val sliceTarget = effectiveSliceTarget.value
-        val bambuComposeResult = if (sliceTarget != SlicerTarget.SnapmakerU1) {
+        val bambuComposeResult = if (sliceTarget.family == SliceTargetFamily.BAMBU) {
             val targeted = resolveTargetedSliceConfig(sliceTarget, cfg)
             // Do not leak the active U1/process profile or automatically selected
             // slot-library values into Bambu precedence layer 4. Only controls
@@ -5291,6 +5313,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "buildConfigMs=${buildConfigMs} targetCount=$targetCount sourceConfig=${sourceConfig != null}"
         )
         return profileEmbedder.embed(embedInput, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
+    }
+
+    private fun genericFilamentTuning(cfg: SliceConfig): Map<String, Any> {
+        val preset = extruderPresets.value.firstOrNull { it.index == 0 }
+        val profile = preset?.filamentProfileId?.let { id -> filaments.value.firstOrNull { it.id == id } }
+        return com.u1.slicer.slice.buildGenericFilamentSettings(
+            resolvedProfile = buildProfileOverrides(cfg, 1, usedSlots = listOf(0)),
+            librarySettings = buildFilamentLibrarySettings(1, listOf(0), extruderPresets.value, filaments.value),
+            libraryBedTemp = profile?.bedTemp,
+            useLibraryBedTemp = slicingOverrides.value.bedTemp.mode == OverrideMode.USE_FILE,
+            sourceSettings = _sourceConfig.value.orEmpty(),
+            useSourceFilament = profile == null && _filamentOverrides.value[0]?.materialType == null,
+        )
     }
 
     private fun buildProfileOverrides(
@@ -5738,7 +5773,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             )
         ) {
             _state.value = SlicerState.Error(
-                "Local slicing is not yet available for this Bambu model. Use a project sliced for the active printer in Bambu Studio.",
+                "Local slicing is not available until a supported machine profile is selected or imported.",
             )
             return
         }
@@ -5792,6 +5827,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.w("SlicerVM", "Ignoring slice request because currentModelFile is null")
                     _state.value = SlicerState.Error("Model is not ready to slice yet")
                     return@launch
+                }
+                val printerForSlice = activePrinterForSlicing.value
+                val target = resolveDefaultSliceTarget(printerForSlice)
+                val genericMachineForSlice = when (target) {
+                    SlicerTarget.ElegooCentauriCarbon -> GenericMachineProfile.centauriCarbon()
+                    SlicerTarget.GenericKlipper -> printerForSlice?.machineProfile
+                    else -> null
+                }
+                val genericSourceTuning = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+                val genericFilamentTuning = genericFilamentTuning(_config.value)
+                if (target.family == SliceTargetFamily.GENERIC) {
+                    requireNotNull(genericMachineForSlice) { "Import a Klipper machine profile before slicing" }
+                    val sourceInfo = _threeMfInfo.value ?: sourceModelInfo
+                    require(sourceInfo?.hasPaintData != true && sourceInfo?.hasMultiExtruderAssignments != true && sourceInfo?.hasLayerToolChanges != true &&
+                        sourceInfo?.usedExtruderIndices?.all { it <= 1 } != false &&
+                        _perVolumeExtruders.value.values.all { it <= 1 } && _canonicalColourRemaps.value.isEmpty()) {
+                        "This machine currently supports single-filament models only. Remove paint, mixes, and multi-tool assignments before slicing."
+                    }
+                    require(slicingOverrides.value.supportFilament.value?.let { it <= 1 } != false &&
+                        slicingOverrides.value.supportInterfaceFilament.value?.let { it <= 1 } != false) {
+                        "Single-nozzle machines cannot use a separate support filament."
+                    }
                 }
                 LongOpService.start(context, "Slicing")
                 var maxPct = 0
@@ -6073,14 +6130,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val copies = _copyCount.value
                 val custom = customObjectPositions
                 val mi = lastModelInfo
-                val target = effectiveSliceTarget.value
                 val artifactFilamentColours = extruderPresets.value
                     .sortedBy { it.index }
                     .map { it.color }
                     .ifEmpty { listOf("#FFFFFF") }
-                val targetMachineConfig = resolveTargetedSliceConfig(target, _config.value)
+                val targetMachineConfig = resolveTargetedSliceConfig(target, _config.value, genericMachineForSlice)
                 val targetBedSizeX = targetMachineConfig.bedSizeX
                 val targetBedSizeY = targetMachineConfig.bedSizeY
+                if (target.family == SliceTargetFamily.GENERIC && mi != null && mi.sizeZ > targetMachineConfig.maxPrintHeight) {
+                    _state.value = SlicerState.Error("Model height (${mi.sizeZ.toInt()}mm) exceeds the selected machine's ${targetMachineConfig.maxPrintHeight.toInt()}mm printable height.")
+                    return@launch
+                }
 
                 // SAFETY CHECK: refuse to slice if model is larger than the bed.
                 // A combined bounding box > 270mm means objects from multiple plates were loaded,
@@ -6175,7 +6235,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // USE_FILE passthrough: base values from _config.value are used as-is.
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
-                val resolvedSliceConfig = resolveTargetedSliceConfig(target, ov.resolveInto(_config.value)).let { cfg ->
+                val resolvedSliceConfig = resolveTargetedSliceConfig(target, ov.resolveInto(_config.value), genericMachineForSlice).let { cfg ->
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
                     if (cfg.wipeTowerEnabled) {
@@ -6273,7 +6333,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val targetAwareSliceConfig = resolveTargetedSliceConfig(
                     target = target,
                     base = sliceConfig,
+                    machineProfile = genericMachineForSlice,
                 )
+                if (target.family == SliceTargetFamily.GENERIC) _sliceMixToolSpace.value = false
                 val profileOverrides = buildProfileOverrides(
                     targetAwareSliceConfig,
                     targetAwareSliceConfig.extruderCount,
@@ -6396,7 +6458,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // NOTE: this aligns the Kotlin recipe with the documented slot-id model;
                     // see the C-1 part-B concern in the branch report re: the native engine
                     // deriving num_physical from filament_diameter.size() (= 4 + nMix).
-                    mixedFilamentDefinitions = mixedFilamentDefinitions,
+                    mixedFilamentDefinitions = if (target.family == SliceTargetFamily.GENERIC) "" else mixedFilamentDefinitions,
                     bambuExplicitOverrides = if (target != SlicerTarget.SnapmakerU1) {
                         buildExplicitBambuProfileOverrides(
                             profileOverrides = profileOverrides,
@@ -6413,8 +6475,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     diagnostics.clearSliceInProgress()
                     return@launch
                 }
+                check(activePrinterForSlicing.value == printerForSlice) { "Printer configuration changed during slice preparation. Slice again for the selected printer." }
+                if (genericMachineForSlice != null) {
+                    val explicit = buildExplicitBambuProfileOverrides(
+                        profileOverrides, ov, hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+                    )
+                    val selectedProfileFile = File(transientWorkspaceDir(), "selected-machine-profile.json")
+                    val genericConfigForSlice = genericMachineForSlice.compose(genericSourceTuning, genericFilamentTuning + explicit)
+                    selectedProfileFile.writeText(profileEmbedder.serializeConfig(genericConfigForSlice))
+                    check(native.loadProfile(selectedProfileFile.absolutePath)) { "Native slicer could not load the selected machine profile" }
+                }
                 val result = native.slice(jniSliceConfig)
                 ensureActive()
+                if (activePrinterForSlicing.value != printerForSlice) _sliceStale.value = true
 
                 // Native cancel: slice() returned with cancelled=true from CanceledException
                 if (result?.cancelled == true) {
@@ -6427,83 +6500,85 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (result != null && result.success) {
-                    // B63: patch filament_type header with current extruder preset material types.
-                    // Needed for STL files (no embedded profile → native slicer uses OrcaSlicer
-                    // default "PLA") and as a staleness guard for 3MF files (profile was embedded
-                    // at model-load time; user may have changed presets since).
-                    //
-                    // Phase 2.7: when the file has more filaments than the user's extruder count
-                    // (multi-filament file mapped to fewer slots), emit one filament_type per
-                    // canonical filament so per-filament overrides reach the G-code header.
-                    val canonicalForPatch = getCanonicalFilamentList()
-                    val basePresets = extruderPresets.value
-                    val supportDrivenSlotCount = maxOf(
-                        slicingOverrides.value.supportFilament.value ?: 0,
-                        slicingOverrides.value.supportInterfaceFilament.value ?: 0,
-                    )
-                    // B110: produce filament_type AND nozzle_temperature header arrays
-                    // from the same physical-slot-indexed source so they agree on which
-                    // slot received a Prepare-screen override. Without this, the
-                    // post-slice `filament_type` patch is physical-slot-indexed (B102) but
-                    // `nozzle_temperature` stays in canonical/UI order — the two header
-                    // rows disagree (PLA at slot 0 but 235°C at slot 0, vs PETG at slot 2).
-                    val ftTypes: List<String>
-                    val ntTemps: List<Int>
-                    if (
-                        canonicalForPatch != null &&
-                        !(canonicalForPatch.size <= 1 && supportDrivenSlotCount > canonicalForPatch.size)
-                    ) {
-                        val padTo = maxOf(canonicalForPatch.size, supportDrivenSlotCount)
-                        ftTypes = resolveFilamentTypesForHeaderPatch(
-                            canonical = canonicalForPatch,
-                            overrides = _filamentOverrides.value
-                                .mapValues { (_, ov) -> ov.color to ov.materialType },
-                            colorMapping = _colorMapping.value,
-                            presets = basePresets,
-                            filamentLibrary = filaments.value,
-                            padTo = padTo,
+                    if (target.family != SliceTargetFamily.GENERIC) {
+                        // B63: patch filament_type header with current extruder preset material types.
+                        // Needed for STL files (no embedded profile → native slicer uses OrcaSlicer
+                        // default "PLA") and as a staleness guard for 3MF files (profile was embedded
+                        // at model-load time; user may have changed presets since).
+                        //
+                        // Phase 2.7: when the file has more filaments than the user's extruder count
+                        // (multi-filament file mapped to fewer slots), emit one filament_type per
+                        // canonical filament so per-filament overrides reach the G-code header.
+                        val canonicalForPatch = getCanonicalFilamentList()
+                        val basePresets = extruderPresets.value
+                        val supportDrivenSlotCount = maxOf(
+                            slicingOverrides.value.supportFilament.value ?: 0,
+                            slicingOverrides.value.supportInterfaceFilament.value ?: 0,
                         )
-                        ntTemps = resolveNozzleTempsForHeaderPatch(
-                            canonical = canonicalForPatch,
-                            overrides = _filamentOverrides.value
-                                .mapValues { (_, ov) -> ov.color to ov.materialType },
-                            colorMapping = _colorMapping.value,
-                            presets = basePresets,
-                            filamentLibrary = filaments.value,
-                            padTo = padTo,
-                        )
-                    } else {
-                        // B105: for non-canonical files (STL, generic 3MF) emit only the
-                        // materials for the physically-used slots. Using all 4 presets
-                        // here wrote a 4-entry filament_type header even for single-colour
-                        // prints (matched the slotTypes bug in buildProfileOverrides).
-                        // B117: prefer the Prepare-screen `_filamentOverrides[0]` material
-                        // for the FIRST slot — that's where DC15's "I want PETG on a
-                        // single-colour 3MF" override lands. Without this the G-code
-                        // header would still read PLA even though the slice used PETG.
-                        val usedSlotsForPatch = toolRemapSlots
-                            ?: _colorMapping.value?.distinct()?.sorted()
-                            ?: listOf(_selectedExtruder.value)
-                        val nonCanonicalOverride0 = _filamentOverrides.value[0]
-                        ftTypes = applyNonCanonicalOverride(
-                            slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
-                            slotTemps = resolveNonCanonicalHeaderPatchTemps(
-                                usedSlotsForPatch, basePresets, filaments.value
-                            ),
-                            override = nonCanonicalOverride0,
-                        ).first
-                        ntTemps = applyNonCanonicalOverride(
-                            slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
-                            slotTemps = resolveNonCanonicalHeaderPatchTemps(
-                                usedSlotsForPatch, basePresets, filaments.value
-                            ),
-                            override = nonCanonicalOverride0,
-                        ).second
+                        // B110: produce filament_type AND nozzle_temperature header arrays
+                        // from the same physical-slot-indexed source so they agree on which
+                        // slot received a Prepare-screen override. Without this, the
+                        // post-slice `filament_type` patch is physical-slot-indexed (B102) but
+                        // `nozzle_temperature` stays in canonical/UI order — the two header
+                        // rows disagree (PLA at slot 0 but 235°C at slot 0, vs PETG at slot 2).
+                        val ftTypes: List<String>
+                        val ntTemps: List<Int>
+                        if (
+                            canonicalForPatch != null &&
+                            !(canonicalForPatch.size <= 1 && supportDrivenSlotCount > canonicalForPatch.size)
+                        ) {
+                            val padTo = maxOf(canonicalForPatch.size, supportDrivenSlotCount)
+                            ftTypes = resolveFilamentTypesForHeaderPatch(
+                                canonical = canonicalForPatch,
+                                overrides = _filamentOverrides.value
+                                    .mapValues { (_, ov) -> ov.color to ov.materialType },
+                                colorMapping = _colorMapping.value,
+                                presets = basePresets,
+                                filamentLibrary = filaments.value,
+                                padTo = padTo,
+                            )
+                            ntTemps = resolveNozzleTempsForHeaderPatch(
+                                canonical = canonicalForPatch,
+                                overrides = _filamentOverrides.value
+                                    .mapValues { (_, ov) -> ov.color to ov.materialType },
+                                colorMapping = _colorMapping.value,
+                                presets = basePresets,
+                                filamentLibrary = filaments.value,
+                                padTo = padTo,
+                            )
+                        } else {
+                            // B105: for non-canonical files (STL, generic 3MF) emit only the
+                            // materials for the physically-used slots. Using all 4 presets
+                            // here wrote a 4-entry filament_type header even for single-colour
+                            // prints (matched the slotTypes bug in buildProfileOverrides).
+                            // B117: prefer the Prepare-screen `_filamentOverrides[0]` material
+                            // for the FIRST slot — that's where DC15's "I want PETG on a
+                            // single-colour 3MF" override lands. Without this the G-code
+                            // header would still read PLA even though the slice used PETG.
+                            val usedSlotsForPatch = toolRemapSlots
+                                ?: _colorMapping.value?.distinct()?.sorted()
+                                ?: listOf(_selectedExtruder.value)
+                            val nonCanonicalOverride0 = _filamentOverrides.value[0]
+                            ftTypes = applyNonCanonicalOverride(
+                                slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
+                                slotTemps = resolveNonCanonicalHeaderPatchTemps(
+                                    usedSlotsForPatch, basePresets, filaments.value
+                                ),
+                                override = nonCanonicalOverride0,
+                            ).first
+                            ntTemps = applyNonCanonicalOverride(
+                                slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
+                                slotTemps = resolveNonCanonicalHeaderPatchTemps(
+                                    usedSlotsForPatch, basePresets, filaments.value
+                                ),
+                                override = nonCanonicalOverride0,
+                            ).second
+                        }
+                        val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
+                        val ntPatched = fixNozzleTemperatureHeader(result.gcodePath, ntTemps)
+                        Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
+                        Log.i("SlicerVM", "B110 nozzle_temperature patch: $ntPatched (temps=$ntTemps)")
                     }
-                    val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
-                    val ntPatched = fixNozzleTemperatureHeader(result.gcodePath, ntTemps)
-                    Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
-                    Log.i("SlicerVM", "B110 nozzle_temperature patch: $ntPatched (temps=$ntTemps)")
 
                     // Sub-plan #2c P1 fix: when a plate is selected (currentPlateId > 0), the
                     // plate-filtered custom_gcode_per_layer.xml lives in currentModelFile
@@ -6672,6 +6747,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         SliceJob(
                             modelName = currentModelName.ifEmpty { "Unknown" },
                             gcodePath = result.gcodePath,
+                            sliceTarget = target.name,
+                            machineProfileFingerprint = if (target == SlicerTarget.GenericKlipper) genericMachineForSlice?.fingerprint else null,
                             sourcePath = null, // filled in below once we have the rowid
                             totalLayers = result.totalLayers,
                             estimatedTimeSeconds = result.estimatedTimeSeconds,
@@ -6748,6 +6825,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 target = target,
                                 sourceModelName = currentModelName.ifEmpty { "Unknown" },
                                 gcodeFile = finalGcodeFile,
+                                machineProfileFingerprint = if (target == SlicerTarget.GenericKlipper) genericMachineForSlice?.fingerprint else null,
                                 workingDir = context.cacheDir,
                                 plateId = recoveryPlateId.takeIf { it > 0 } ?: 1,
                                 filamentColours = artifactFilamentColours,
@@ -7237,6 +7315,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // F60: parse saved G-code and set it as the active preview so the viewer can display it.
     // Returns true if the file existed and parsing was started, false if the file is missing.
     fun loadJobGcodeForViewer(job: SliceJob, onResult: (success: Boolean) -> Unit) {
+        _latestSliceArtifact.value = null
         if (!restoreInProgress) restoreSessionJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             val gcodeFile = File(job.gcodePath)
@@ -7249,6 +7328,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val parsed = GcodeParser.parse(gcodeFile)
                 setParsedGcodeWithRangeReset(parsed)
                 _sliceMixToolSpace.value = storedGcodeIsPhysical(job)
+                _latestSliceArtifact.value = sliceArtifactForJob(job)
                 _state.value = SlicerState.SliceComplete(sliceResultFromJob(job))
                 _gcodePreview.value = ""
                 launch(Dispatchers.Main) { onResult(true) }
@@ -7632,6 +7712,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _sliceMixToolSpace.value = saved.gcodeToolSpace?.let {
             gcodeToolSpaceFromDb(it) == GcodeToolSpace.PHYSICAL
         } ?: storedGcodeIsPhysical(row)
+        _latestSliceArtifact.value = sliceArtifactForJob(row)
         _state.value = SlicerState.SliceComplete(sliceResultFromJob(row))
         _gcodePreview.value = ""
         _navigateEvents.tryEmit("preview")

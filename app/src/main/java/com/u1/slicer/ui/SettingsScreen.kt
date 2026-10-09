@@ -57,7 +57,6 @@ import com.u1.slicer.BuildConfig
 import com.u1.slicer.GITHUB_URL
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.U1SlicerApplication
-import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.network.UpdateChecker
 import kotlinx.coroutines.launch
 import com.u1.slicer.data.OverrideMode
@@ -472,55 +471,10 @@ fun SettingsScreen(
                     com.u1.slicer.ui.printer.PrintersSettingsCard(
                         printers = visiblePrinters,
                         activeId = activePrinterId,
-                        onAdd = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                            printerViewModel.addPrinter(
-                                nick,
-                                kind,
-                                url,
-                                bambuIp,
-                                bambuAccessCode,
-                                bambuSerial,
-                                bambuModel,
-                            )
-                        },
-                        onEdit = { id, nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                            printerViewModel.updatePrinter(
-                                id,
-                                nick,
-                                kind,
-                                url,
-                                bambuIp,
-                                bambuAccessCode,
-                                bambuSerial,
-                                bambuModel,
-                            )
-                        },
+                        onAdd = printerViewModel::savePrinterDraft,
+                        onEdit = printerViewModel::savePrinterDraft,
                         onDelete = { id -> printerViewModel.deletePrinter(id) },
-                        onTestConnection = { kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                            when (kind) {
-                                com.u1.slicer.data.PrinterKind.MOONRAKER -> {
-                                    val client = com.u1.slicer.network.MoonrakerClient().apply {
-                                        baseUrl = com.u1.slicer.network.MoonrakerClient.normalizeUrl(url)
-                                    }
-                                    client.testConnection()
-                                }
-                                com.u1.slicer.data.PrinterKind.BAMBU_LAN -> {
-                                    if (bambuIp.isBlank() || bambuAccessCode.isBlank() || bambuSerial.isBlank()) {
-                                        "Enter IP, access code, and serial first"
-                                    } else {
-                                        val app = context.applicationContext as U1SlicerApplication
-                                        app.container.bambuLanClientFactory().testConnection(
-                                            BambuConfig(
-                                                ip = bambuIp.trim(),
-                                                accessCode = bambuAccessCode.trim(),
-                                                serial = bambuSerial.trim(),
-                                                model = bambuModel,
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        },
+                        onTestConnection = printerViewModel::testPrinterDraft,
                         bambuEnabled = bambuBetaEnabled,
                     )
                 }

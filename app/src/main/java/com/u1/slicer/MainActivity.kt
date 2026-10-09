@@ -528,6 +528,9 @@ class MainActivity : ComponentActivity() {
                 var pendingBambuSend by remember {
                     mutableStateOf<PendingBambuSend?>(null)
                 }
+                var pendingPlainGcodePrint by remember {
+                    mutableStateOf<SliceArtifact.MoonrakerGcodeArtifact?>(null)
+                }
                 // Bug fix (2026-05-01): hoist the IO scope used by the
                 // FilamentMappingDialog onConfirm out of the
                 // `pendingMappingSend?.let { ... }` gate. Pre-fix the scope
@@ -548,6 +551,9 @@ class MainActivity : ComponentActivity() {
                 val appSlicerState by viewModel.state.collectAsState()
                 val previewActivePrinter by printerViewModel.activePrinter.collectAsState()
                 val latestSliceArtifact by viewModel.latestSliceArtifact.collectAsState()
+                LaunchedEffect(previewActivePrinter) {
+                    pendingPlainGcodePrint = null
+                }
                 // F88: collect model name so Save/Share G-code can suggest a meaningful filename.
                 val currentModelFileName by viewModel.modelFileName.collectAsState()
                 val sharedPreviewModelKey = when (val s = appSlicerState) {
@@ -666,6 +672,7 @@ class MainActivity : ComponentActivity() {
                                     preferEmbeddedProject = gcodePath.isBlank(),
                                 )
                                 val selectedSliceArtifact = latestSliceArtifact.takeIf {
+                                    previewActivePrinter?.kind != PrinterKind.BAMBU_LAN ||
                                     bambuProject?.source == PreviewBambuProject.Source.GeneratedSliceArtifact
                                 }
                                 if (!canSendSliceArtifactToPrinter(selectedSliceArtifact, previewActivePrinter)) {
@@ -677,6 +684,9 @@ class MainActivity : ComponentActivity() {
                                         project = bambuProject,
                                         action = PendingBambuSend.Action.PrintAndUpload,
                                     )
+                                } else if (usesPlainGcodeSend(previewActivePrinter)) {
+                                    pendingPlainGcodePrint = selectedSliceArtifact as? SliceArtifact.MoonrakerGcodeArtifact
+                                    if (pendingPlainGcodePrint == null) printerViewModel.reportSendError("Slice again for this printer before sending")
                                 } else {
                                     pendingMappingSend = PendingMappingSend(
                                         gcodePath = gcodePath,
@@ -692,6 +702,7 @@ class MainActivity : ComponentActivity() {
                                     preferEmbeddedProject = gcodePath.isBlank(),
                                 )
                                 val selectedSliceArtifact = latestSliceArtifact.takeIf {
+                                    previewActivePrinter?.kind != PrinterKind.BAMBU_LAN ||
                                     bambuProject?.source == PreviewBambuProject.Source.GeneratedSliceArtifact
                                 }
                                 if (!canSendSliceArtifactToPrinter(selectedSliceArtifact, previewActivePrinter)) {
@@ -703,6 +714,15 @@ class MainActivity : ComponentActivity() {
                                         project = bambuProject,
                                         action = PendingBambuSend.Action.UploadOnly,
                                     )
+                                } else if (usesPlainGcodeSend(previewActivePrinter)) {
+                                    val artifact = selectedSliceArtifact as? SliceArtifact.MoonrakerGcodeArtifact
+                                    if (artifact == null) {
+                                        printerViewModel.reportSendError("Slice again for this printer before sending")
+                                    } else {
+                                        printerViewModel.beginSendPreparing()
+                                        printerViewModel.sendGcodeArtifact(artifact, startPrint = false)
+                                        navigateTab(Routes.PRINTER)
+                                    }
                                 } else {
                                     pendingMappingSend = PendingMappingSend(
                                         gcodePath = gcodePath,
@@ -788,6 +808,22 @@ class MainActivity : ComponentActivity() {
                 // Phase 2.4 — Filament mapping dialog interposed between
                 // Send and the actual upload. Always shown when the user
                 // taps Send (PrintAndUpload) or Upload Only.
+                pendingPlainGcodePrint?.let { artifact ->
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { pendingPlainGcodePrint = null },
+                        title = { Text("Start print?") },
+                        text = { Text("Upload ${artifact.sourceModelName} and start printing on ${previewActivePrinter?.nickname.orEmpty()}? This will heat the printer and move its head.") },
+                        confirmButton = {
+                            androidx.compose.material3.TextButton(onClick = {
+                                pendingPlainGcodePrint = null
+                                printerViewModel.beginSendPreparing()
+                                printerViewModel.sendGcodeArtifact(artifact, startPrint = true)
+                                navigateTab(Routes.PRINTER)
+                            }) { Text("Start print") }
+                        },
+                        dismissButton = { androidx.compose.material3.TextButton(onClick = { pendingPlainGcodePrint = null }) { Text("Cancel") } },
+                    )
+                }
                 pendingBambuSend?.let { pending ->
                     val canonicalState by produceState<CanonicalLookup>(
                         initialValue = CanonicalLookup.Loading,
@@ -1457,7 +1493,14 @@ internal fun canBambuMapAndPrint(
 internal fun canSendSliceArtifactToPrinter(
     artifact: SliceArtifact?,
     printer: Printer?,
-): Boolean = artifact == null || artifact.isCompatibleWith(printer)
+): Boolean = when {
+    artifact is SliceArtifact.MoonrakerGcodeArtifact && artifact.target.family == com.u1.slicer.slice.SliceTargetFamily.BAMBU -> false
+    usesPlainGcodeSend(printer) -> artifact != null && artifact.isCompatibleWith(printer)
+    else -> artifact == null || artifact.isCompatibleWith(printer)
+}
+
+internal fun usesPlainGcodeSend(printer: Printer?): Boolean = printer?.machine == com.u1.slicer.data.MachineKind.GENERIC_KLIPPER ||
+    printer?.machine == com.u1.slicer.data.MachineKind.ELEGOO_CENTAURI_CARBON
 
 internal fun validateBambuAmsMapping(
     mapping: List<Int>,
@@ -2165,11 +2208,12 @@ fun PrepareScreen(
                                 val b = f66LoadTimePoses[k] ?: com.u1.slicer.data.PerObjectPose()
                                 v.scaleX != b.scaleX || v.scaleY != b.scaleY || v.scaleZ != b.scaleZ
                             }
-                            val targetMachineConfig = resolveTargetedSliceConfig(
+                            val targetMachineConfig = if (viewModel.effectiveSliceTarget.value == com.u1.slicer.slice.SlicerTarget.GenericKlipper && activePrinter?.machineProfile == null) null else resolveTargetedSliceConfig(
                                 viewModel.effectiveSliceTarget.value,
                                 config,
+                                activePrinter?.machineProfile,
                             )
-                            InlineModelPreview(
+                            if (targetMachineConfig != null) InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
                                 selectedObjectIndex = f66Selection.objectIndex,
@@ -2240,6 +2284,7 @@ fun PrepareScreen(
                                 onSmartPaint = smartPaintCallback,
                                 isReeditSmartPaint = isReeditSmartPaint,
                             )
+                            else Text("Import a machine profile in Settings to display this printer's bed.")
                             if (showInfoDialog && loadedInfo != null) {
                                 ModelInfoDialog(
                                     info = loadedInfo,
@@ -2809,11 +2854,12 @@ fun PreviewScreen(
                         // B142b: mix-assigned slices emit physical-slot tools — no
                         // canonical→slot mapping applies and the palette is slot-space.
                         val gcodeColorMapping = if (isH2c || sliceMixToolSpace) null else colorMapping
-                        val targetMachineConfig = resolveTargetedSliceConfig(
+                        val targetMachineConfig = if (effectiveSliceTarget == com.u1.slicer.slice.SlicerTarget.GenericKlipper && activePrinter?.machineProfile == null) null else resolveTargetedSliceConfig(
                             effectiveSliceTarget,
                             config,
+                            activePrinter?.machineProfile,
                         )
-                        InlineGcodePreview(
+                        if (targetMachineConfig != null) InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
                             bedSizeMm = targetMachineConfig.bedSizeX,
@@ -2839,6 +2885,7 @@ fun PreviewScreen(
                             initialLayerRange = previewLayerRange,
                             onLayerRangeChange = { lo, hi -> viewModel.setPreviewLayerRange(lo, hi) },
                         )
+                        else Text("Import a machine profile in Settings to display this printer's bed.")
                         }
                     }
                     val filamentOverrides by viewModel.filamentOverrides.collectAsState()
@@ -2943,12 +2990,16 @@ fun PreviewScreen(
                     } else printerCapabilities.supportsUpload &&
                         canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter),
                     betaNotice = when {
+                        usesPlainGcodeSend(activePrinter) && !canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter) ->
+                            "Slice again for the active machine profile before sending."
+                        activePrinter?.machine == com.u1.slicer.data.MachineKind.ELEGOO_CENTAURI_CARBON ->
+                            "Centauri Carbon 1 support is beta and has not been validated on hardware."
                         activePrinter?.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN -> null
                         !canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter) ->
                             "This slice was created for a different printer. Slice again for the active printer before sending."
                         else -> null
                     },
-                    primaryActionLabel = if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                    primaryActionLabel = if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN || usesPlainGcodeSend(activePrinter)) {
                         "Start Print"
                     } else {
                         "Map & Print"

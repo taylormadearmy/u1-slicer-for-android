@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
 
@@ -43,34 +42,10 @@ import com.u1.slicer.data.PrinterKind
 fun PrintersSettingsCard(
     printers: List<Printer>,
     activeId: String?,
-    onAdd: (
-        nickname: String,
-        kind: PrinterKind,
-        url: String,
-        bambuIp: String,
-        bambuAccessCode: String,
-        bambuSerial: String,
-        bambuModel: BambuModel,
-    ) -> Unit,
-    onEdit: (
-        id: String,
-        nickname: String,
-        kind: PrinterKind,
-        url: String,
-        bambuIp: String,
-        bambuAccessCode: String,
-        bambuSerial: String,
-        bambuModel: BambuModel,
-    ) -> Unit,
+    onAdd: (Printer) -> Unit,
+    onEdit: (Printer) -> Unit,
     onDelete: (id: String) -> Unit,
-    onTestConnection: suspend (
-        kind: PrinterKind,
-        url: String,
-        bambuIp: String,
-        bambuAccessCode: String,
-        bambuSerial: String,
-        bambuModel: BambuModel,
-    ) -> String?,
+    onTestConnection: suspend (Printer) -> String?,
     bambuEnabled: Boolean = false,
 ) {
     var editing by remember { mutableStateOf<Printer?>(null) }
@@ -101,8 +76,7 @@ fun PrintersSettingsCard(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                if (bambuEnabled) "Add a Snapmaker U1 or a supported Bambu Lab printer. Bambu support is currently in beta."
-                else "Add a Snapmaker U1. Enable Bambu beta support in Settings to add a supported Bambu Lab printer.",
+                "Choose your machine and its connection protocol. Generic Klipper requires an Orca machine profile.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
             )
@@ -142,9 +116,7 @@ fun PrintersSettingsCard(
     if (addingNew) {
         PrinterEditDialog(
             existing = null,
-            onSave = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                onAdd(nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel)
-            },
+            onSave = onAdd,
             onTest = onTestConnection,
             bambuEnabled = bambuEnabled,
             onDismiss = { addingNew = false },
@@ -153,9 +125,7 @@ fun PrintersSettingsCard(
     editing?.let { existing ->
         PrinterEditDialog(
             existing = existing,
-            onSave = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                onEdit(existing.id, nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel)
-            },
+            onSave = onEdit,
             onTest = onTestConnection,
             bambuEnabled = bambuEnabled,
             onDismiss = { editing = null },
@@ -165,6 +135,8 @@ fun PrintersSettingsCard(
 
 internal fun buildPrinterSubtitle(printer: Printer): String = when (printer.kind) {
     PrinterKind.MOONRAKER -> printer.moonrakerUrl.ifBlank { "(no URL set)" }
+    PrinterKind.ELEGOO_CC1 -> "Centauri Carbon 1 - ${printer.host?.url.orEmpty()}"
+    PrinterKind.OCTOPRINT -> "OctoPrint - ${printer.host?.url.orEmpty()}"
     PrinterKind.BAMBU_LAN -> {
         val model = printer.bambu?.model?.name?.replace('_', ' ').orEmpty()
         val ip = printer.bambu?.ip.orEmpty()

@@ -11,12 +11,18 @@ import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.MachineKind
+import com.u1.slicer.data.PrintHostConfig
+import com.u1.slicer.data.defaultMachineKind
+import com.u1.slicer.slice.SliceArtifact
+import com.u1.slicer.slice.isCompatibleWith
 import com.u1.slicer.data.PrintersConfig
 import com.u1.slicer.data.defaultExtruderPresets
 import com.u1.slicer.data.upsertLibraryProfile
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -113,7 +119,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     /** F78: per-extruder slot config sourced from the active printer. */
     val extruderPresets: StateFlow<List<ExtruderPreset>> = printersRepo.activePrinter
-        .map { it?.extruderPresets ?: defaultExtruderPresets() }
+        .map { visibleExtruderPresets(it) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, defaultExtruderPresets())
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Unknown)
@@ -356,6 +362,31 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun savePrinterDraft(draft: Printer) {
+        val active = activePrinter.value
+        if (active?.id == draft.id && printerConnectionFingerprint(active) != printerConnectionFingerprint(draft)) {
+            invalidateActivePrinterOperations()
+        }
+        viewModelScope.launch {
+            val current = printersRepo.config.first()
+            val existing = current?.printers?.firstOrNull { it.id == draft.id }
+            if (existing == null) {
+                printersRepo.add(draft)
+            } else {
+                if (current.activeId == draft.id && printerConnectionFingerprint(existing) != printerConnectionFingerprint(draft)) {
+                    invalidateActivePrinterOperations()
+                    printerRepo.prepareForActivePrinterSwitch()
+                }
+                printersRepo.update(draft)
+            }
+        }
+    }
+
+    suspend fun testPrinterDraft(draft: Printer): String? = withContext(Dispatchers.IO) {
+        val factory = (getApplication<Application>() as U1SlicerApplication).container.printerTransportFactory
+        testDraftConnection(factory, draft)
+    }
+
     fun addPrinter(
         nickname: String,
         kind: PrinterKind,
@@ -502,7 +533,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         launchBoundPrinterAction { actionContext ->
             val cfg = printersRepo.config.first() ?: return@launchBoundPrinterAction
             val active = cfg.active
-            val updated = active.extruderPresets.map { if (it.index == preset.index) preset else it }
+            val updated = updatedExtruderPresets(active.extruderPresets, preset)
             if (!isCurrentPrinterAction(actionContext)) return@launchBoundPrinterAction
             printersRepo.update(active.copy(extruderPresets = updated))
         }
@@ -615,6 +646,48 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
      * confirm the source is already in physical-slot space) before
      * reaching this function. The compiler enforces it.
      */
+    fun sendGcodeArtifact(artifact: SliceArtifact.MoonrakerGcodeArtifact, startPrint: Boolean) {
+        sendJob?.cancel()
+        _sendingState.value = SendingState.Uploading
+        val requestedGeneration = consumePreparedSendGeneration()
+        sendJob = viewModelScope.launch(Dispatchers.IO) {
+            val actionContext = capturePrinterActionContext(requestedGeneration)
+            if (!isCurrentPrinterAction(actionContext)) return@launch
+            val ctx = getApplication<Application>()
+            com.u1.slicer.LongOpService.start(ctx, "Uploading to printer")
+            try {
+                val expectedPrinter = printersRepo.config.first()?.active
+                suspend fun valid(): Boolean {
+                    val printer = printersRepo.config.first()?.active
+                    return isCurrentPrinterAction(actionContext) &&
+                        printer?.machine != MachineKind.SNAPMAKER_U1 &&
+                        printer?.machine != MachineKind.BAMBU && artifact.isCompatibleWith(printer)
+                }
+                if (!valid()) {
+                    reportSendError("This slice was created for a different printer. Slice again before sending.")
+                    return@launch
+                }
+                if (!artifact.gcodeFile.isFile) {
+                    reportSendError("G-code file not found")
+                    return@launch
+                }
+                val filename = PrinterRepository.resolveUploadBaseName(artifact.sourceModelName, artifact.gcodeFile.name)
+                val result = if (startPrint) printerRepo.uploadAndPrint(artifact.gcodeFile, filename, validateBeforeStart = { valid() }, expectedPrinter = expectedPrinter)
+                    else printerRepo.uploadOnly(artifact.gcodeFile, filename, expectedPrinter = expectedPrinter)
+                if (!isCurrentPrinterAction(actionContext)) return@launch
+                _sendingState.value = when (result) {
+                    TransportCommandResult.Success -> if (startPrint) SendingState.PrintStarted else SendingState.UploadComplete
+                    is TransportCommandResult.Unsupported -> SendingState.Error(result.reason)
+                    is TransportCommandResult.Failure -> SendingState.Error(result.reason)
+                }
+            } catch (error: Exception) {
+                handleUnexpectedSendFailure(error, actionContext, "Printer upload failed")
+            } finally {
+                com.u1.slicer.LongOpService.stop(ctx)
+            }
+        }
+    }
+
     fun sendAndPrint(physical: com.u1.slicer.gcode.PhysicalGcodePath, modelName: String? = null) {
         sendJob?.cancel()
         _sendingState.value = SendingState.Uploading
@@ -629,6 +702,11 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             val ctx = getApplication<Application>()
             com.u1.slicer.LongOpService.start(ctx, "Uploading to printer")
             try {
+                val expectedPrinter = printersRepo.config.first()?.active
+                if (!allowsPhysicalGcodeSend(expectedPrinter)) {
+                    _sendingState.value = SendingState.Error("Physical-slot G-code can only be sent to a Snapmaker U1. Slice again for the active machine.")
+                    return@launch
+                }
                 val file = physical.toFile()
                 if (!file.exists()) {
                     if (!isCurrentPrinterAction(actionContext)) return@launch
@@ -638,7 +716,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 // F84: prefer the original model name over the on-disk gcode name
                 // so the printer's file browser shows distinct, recognisable jobs.
                 val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
-                val result = printerRepo.uploadAndPrint(file, filename)
+                val result = printerRepo.uploadAndPrint(
+                    file, filename,
+                    validateBeforeStart = {
+                        isCurrentPrinterAction(actionContext) && allowsPhysicalGcodeSend(printersRepo.config.first()?.active)
+                    },
+                    expectedPrinter = expectedPrinter,
+                )
                 if (!isCurrentPrinterAction(actionContext)) return@launch
                 _sendingState.value = when (result) {
                     TransportCommandResult.Success -> SendingState.PrintStarted
@@ -669,6 +753,11 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             val ctx = getApplication<Application>()
             com.u1.slicer.LongOpService.start(ctx, "Uploading to printer")
             try {
+                val expectedPrinter = printersRepo.config.first()?.active
+                if (!allowsPhysicalGcodeSend(expectedPrinter)) {
+                    _sendingState.value = SendingState.Error("Physical-slot G-code can only be sent to a Snapmaker U1. Slice again for the active machine.")
+                    return@launch
+                }
                 val file = physical.toFile()
                 if (!file.exists()) {
                     if (!isCurrentPrinterAction(actionContext)) return@launch
@@ -676,7 +765,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
                 val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
-                val result = printerRepo.uploadOnly(file, filename)
+                val result = printerRepo.uploadOnly(file, filename, expectedPrinter = expectedPrinter)
                 if (!isCurrentPrinterAction(actionContext)) return@launch
                 _sendingState.value = when (result) {
                     TransportCommandResult.Success -> SendingState.UploadComplete
@@ -756,6 +845,26 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     }
 
     companion object {
+        internal fun updatedExtruderPresets(presets: List<ExtruderPreset>, preset: ExtruderPreset): List<ExtruderPreset> =
+            (presets.filterNot { it.index == preset.index } + preset).sortedBy { it.index }
+
+        internal fun visibleExtruderPresets(printer: Printer?): List<ExtruderPreset> =
+            when (printer?.machine) {
+                MachineKind.GENERIC_KLIPPER, MachineKind.ELEGOO_CENTAURI_CARBON ->
+                    listOf(printer.extruderPresets.firstOrNull { it.index == 0 } ?: ExtruderPreset(index = 0))
+                else -> printer?.extruderPresets ?: defaultExtruderPresets()
+            }
+
+        internal fun allowsPhysicalGcodeSend(printer: Printer?): Boolean = printer?.machine == MachineKind.SNAPMAKER_U1
+
+        internal suspend fun testDraftConnection(factory: PrinterTransportFactory, draft: Printer): String? {
+            val transport = factory.create(draft)
+            return try {
+                transport.testConnection()
+            } finally {
+                withContext(NonCancellable) { transport.stop() }
+            }
+        }
         internal fun shouldSwitchActivePrinter(config: PrintersConfig, requestedId: String): Boolean =
             config.activeId != requestedId && config.printers.any { it.id == requestedId }
 
@@ -787,6 +896,8 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 printer.id,
                 printer.kind.name,
                 com.u1.slicer.network.MoonrakerClient.normalizeUrl(printer.moonrakerUrl),
+                printer.machine.name,
+                printer.machineProfile?.fingerprint.orEmpty(),
             ).joinToString("|")
             PrinterKind.BAMBU_LAN -> printer.bambu?.let { bambu ->
                 listOf(
@@ -798,6 +909,10 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     bambu.model.name,
                 ).joinToString("|")
             }
+            PrinterKind.ELEGOO_CC1, PrinterKind.OCTOPRINT -> listOf(
+                printer.id, printer.kind.name, printer.host?.url?.trim().orEmpty(),
+                printer.host?.apiKey.orEmpty(), printer.machine.name, printer.machineProfile?.fingerprint.orEmpty(),
+            ).joinToString("|")
             null -> null
         }
 
@@ -838,6 +953,14 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     ),
                     extruderPresets = existingExtruderPresets,
                     selectedWebcamUid = null,
+                )
+                PrinterKind.ELEGOO_CC1, PrinterKind.OCTOPRINT -> Printer(
+                    id = id,
+                    nickname = resolvedNickname,
+                    kind = kind,
+                    host = PrintHostConfig(url.trim()),
+                    machine = defaultMachineKind(kind),
+                    extruderPresets = emptyList(),
                 )
             }
         }

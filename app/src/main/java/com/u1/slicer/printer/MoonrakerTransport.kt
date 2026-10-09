@@ -16,12 +16,13 @@ import java.io.File
 
 class MoonrakerTransport(
     private val client: MoonrakerClient,
+    private val u1: Boolean = true,
 ) : PrinterTransport {
     override val capabilities = PrinterTransportCapabilities(
         supportsCamera = true,
-        supportsRemoteScreen = true,
-        supportsLightControl = true,
-        supportsFilamentSync = true,
+        supportsRemoteScreen = u1,
+        supportsLightControl = u1,
+        supportsFilamentSync = u1,
         supportsHeaterControl = true,
         supportsCustomGcode = true,
         supportsSkipObjects = true,
@@ -73,19 +74,21 @@ class MoonrakerTransport(
     override suspend fun queryWebcamSources(): List<WebcamSource> = client.queryWebcamSources()
 
     override suspend fun wakeCamera() {
-        client.wakeCamera()
+        if (u1) client.wakeCamera()
     }
 
     override suspend fun queryFilamentSlots(): List<FilamentSlot>? {
+        if (!u1) return null
         val slots = client.queryFilamentSlots()
         _filamentSlots.value = slots ?: emptyList()
         return slots
     }
 
-    override suspend fun getLedState(): Boolean? = client.getLedState()
+    override suspend fun getLedState(): Boolean? = if (u1) client.getLedState() else null
 
     override suspend fun setLed(on: Boolean): TransportCommandResult =
-        if (client.setLed(on)) TransportCommandResult.Success
+        if (!u1) TransportCommandResult.Unsupported("U1 light control is not available on generic Klipper printers")
+        else if (client.setLed(on)) TransportCommandResult.Success
         else TransportCommandResult.Failure("Light update failed")
 
     override suspend fun sendGcode(gcode: String): TransportCommandResult =
@@ -96,9 +99,9 @@ class MoonrakerTransport(
         if (client.setHeaterTemperature(heater, targetC)) TransportCommandResult.Success
         else TransportCommandResult.Failure("Could not update temperature")
 
-    override suspend fun probeRemoteScreen(): Boolean = client.probeRemoteScreen()
+    override suspend fun probeRemoteScreen(): Boolean = u1 && client.probeRemoteScreen()
 
-    override fun remoteScreenUrl(): String? = client.remoteScreenUrl()
+    override fun remoteScreenUrl(): String? = if (u1) client.remoteScreenUrl() else null
 
     override suspend fun hintJobStarting() {
         rapidPollCyclesRemaining = 60

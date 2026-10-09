@@ -10,6 +10,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PrinterRepositoryTest {
+    @Test fun `generated filenames are accepted by generic printer transports`() {
+        for (source in listOf(".hidden.stl", "x".repeat(300) + ".stl", "....stl")) {
+            val name = PrinterRepository.buildPrinterUploadFilename(source, nowMillis = 42)
+            OctoPrintTransport.requireRemoteName(name)
+            com.u1.slicer.printer.elegoo.ElegooCc1Protocol.validateFilename(name)
+            assertTrue(name.length <= 255)
+        }
+    }
+
 
     @Test
     fun buildPrinterUploadFilename_appendsUniqueSuffix() {
