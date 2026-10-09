@@ -12,6 +12,7 @@ class PrinterTest {
             nickname = "Workshop",
             kind = PrinterKind.MOONRAKER,
             moonrakerUrl = "http://192.168.1.50",
+            selectedWebcamUid = "physical-camera",
             extruderPresets = listOf(
                 ExtruderPreset(index = 0, color = "#FF0000", materialType = "PLA"),
                 ExtruderPreset(index = 1, color = "#00FF00", materialType = "PETG"),
@@ -165,6 +166,7 @@ class PrinterTest {
         val back = Printer.fromJsonObject(json)
 
         assertEquals(defaultExtruderPresets(), back.extruderPresets)
+        assertNull(back.selectedWebcamUid)
     }
 
     @Test

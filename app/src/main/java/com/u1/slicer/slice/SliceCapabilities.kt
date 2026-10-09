@@ -21,6 +21,15 @@ fun capabilityProfileFor(target: SlicerTarget): SliceCapabilityProfile =
             supportsColorMix = true,
             supportsTopSurfaceMixModes = true,
         )
+        SlicerTarget.ElegooCentauriCarbon, SlicerTarget.GenericKlipper -> SliceCapabilityProfile(
+            beta = true,
+            supportsUpload = true,
+            supportsStart = true,
+            supportsAmsMapping = false,
+            supportsImportedProcessProfiles = true,
+            supportsColorMix = false,
+            supportsTopSurfaceMixModes = false,
+        )
         else -> SliceCapabilityProfile(
             beta = true,
             supportsUpload = true,

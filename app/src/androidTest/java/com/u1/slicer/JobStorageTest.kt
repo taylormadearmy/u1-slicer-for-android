@@ -34,6 +34,14 @@ class JobStorageTest {
         filamentType = "PLA"
     )
 
+    private fun awaitDeletion(path: File, label: String) {
+        val deadline = System.currentTimeMillis() + 5_000L
+        while (path.exists() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(25)
+        }
+        assertFalse(label, path.exists())
+    }
+
     // Regression: B40 — deleting a job must remove its durable files/jobs/<id>/ directory
     @Test
     fun deleteJob_removesJobDirectory() {
@@ -51,9 +59,7 @@ class JobStorageTest {
         gcodeFile.createNewFile()
 
         viewModel.deleteJob(job)
-        Thread.sleep(500)
-
-        assertFalse("jobs/${job.id}/ directory should be removed after deleteJob", jobDir.exists())
+        awaitDeletion(jobDir, "jobs/${job.id}/ directory should be removed after deleteJob")
     }
 
     // Regression: B40 — deleteAllJobs must remove the entire files/jobs/ directory
@@ -72,8 +78,6 @@ class JobStorageTest {
         File(jobsRoot, "$id2/output.gcode").also { it.parentFile?.mkdirs(); it.createNewFile() }
 
         viewModel.deleteAllJobs()
-        Thread.sleep(500)
-
-        assertFalse("jobs/ directory should be removed after deleteAllJobs", jobsRoot.exists())
+        awaitDeletion(jobsRoot, "jobs/ directory should be removed after deleteAllJobs")
     }
 }

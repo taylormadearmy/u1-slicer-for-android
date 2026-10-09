@@ -281,6 +281,29 @@ fun SlicingOverridesAccordion(
             }
         )
 
+        val ironingTypes = listOf(
+            "no ironing" to "Off",
+            "top" to "Top surfaces",
+            "topmost" to "Topmost surface",
+            "solid" to "All solid layers",
+        )
+        OverrideRow(
+            label = "Ironing",
+            override = overrides.ironing,
+            defaultHint = "Off",
+            onModeChange = { mode -> onOverridesChange(overrides.copy(ironing = overrides.ironing.copy(mode = mode))) },
+            fileKey = "ironing_type",
+            sourceConfig = sourceConfig,
+            valueContent = {
+                OverrideDropdown(
+                    value = overrides.ironing.value ?: "no ironing",
+                    options = ironingTypes.map { it.first },
+                    labels = ironingTypes.map { it.second },
+                    onValueChange = { onOverridesChange(overrides.copy(ironing = OverrideValue(OverrideMode.OVERRIDE, it))) },
+                )
+            },
+        )
+
         OverrideRow(
             label = "Reduce Infill Retraction",
             override = overrides.reduceInfillRetraction,

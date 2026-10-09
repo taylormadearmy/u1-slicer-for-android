@@ -4,6 +4,8 @@ import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.MachineKind
+import com.u1.slicer.data.PrintHostConfig
 import com.u1.slicer.data.PrintersConfig
 import com.u1.slicer.data.defaultExtruderPresets
 import org.junit.Assert.assertEquals
@@ -13,6 +15,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PrinterViewModelTest {
+    @Test fun `first filament edit is inserted and survives printer serialization`() {
+        val preset = com.u1.slicer.data.ExtruderPreset(0, "#123456", "PETG", 42)
+        val printer = Printer("generic", "Klipper", machine = MachineKind.GENERIC_KLIPPER, extruderPresets = emptyList())
+        val updated = printer.copy(extruderPresets = PrinterViewModel.updatedExtruderPresets(printer.extruderPresets, preset))
+        assertEquals(listOf(preset), Printer.fromJsonObject(Printer.toJsonObject(updated)).extruderPresets)
+        assertEquals(listOf(preset.copy(materialType = "ABS")), PrinterViewModel.updatedExtruderPresets(updated.extruderPresets, preset.copy(materialType = "ABS")))
+    }
+
+    @Test
+    fun `generic slot editor exposes one physical nozzle even with legacy four presets`() {
+        val generic = Printer("generic", "Klipper", machine = MachineKind.GENERIC_KLIPPER)
+        assertEquals(listOf(0), PrinterViewModel.visibleExtruderPresets(generic).map { it.index })
+        val cc1 = Printer("cc1", "CC1", PrinterKind.ELEGOO_CC1, host = PrintHostConfig("192.0.2.1"), extruderPresets = emptyList())
+        assertEquals(listOf(0), PrinterViewModel.visibleExtruderPresets(cc1).map { it.index })
+        assertEquals(4, PrinterViewModel.visibleExtruderPresets(Printer("u1", "U1")).size)
+    }
+
+    @Test
+    fun `legacy physical Gcode entrypoints only accept U1 machines`() {
+        assertTrue(PrinterViewModel.allowsPhysicalGcodeSend(Printer("u1", "U1")))
+        assertFalse(PrinterViewModel.allowsPhysicalGcodeSend(Printer("generic", "Klipper", machine = MachineKind.GENERIC_KLIPPER)))
+        assertFalse(PrinterViewModel.allowsPhysicalGcodeSend(Printer("cc1", "CC1", PrinterKind.ELEGOO_CC1, host = PrintHostConfig("192.0.2.1"))))
+        assertFalse(PrinterViewModel.allowsPhysicalGcodeSend(null))
+    }
+    @Test
+    fun `changing a Moonraker machine invalidates the send context`() {
+        val u1 = Printer("printer", "U1", moonrakerUrl = "http://192.0.2.1:7125")
+        val generic = u1.copy(machine = MachineKind.GENERIC_KLIPPER)
+        assertFalse(PrinterViewModel.printerConnectionFingerprint(u1) == PrinterViewModel.printerConnectionFingerprint(generic))
+    }
+
+    @Test
+    fun `changing a host credential invalidates the send context`() {
+        val octo = Printer("octo", "Octo", PrinterKind.OCTOPRINT, host = PrintHostConfig("http://192.0.2.2", "old"))
+        val updated = octo.copy(host = octo.host!!.copy(apiKey = "new"))
+        assertFalse(PrinterViewModel.printerConnectionFingerprint(octo) == PrinterViewModel.printerConnectionFingerprint(updated))
+    }
     @Test
     fun `switch eligibility uses saved printer configuration`() {
         val config = PrintersConfig(
@@ -184,5 +223,38 @@ class PrinterViewModelTest {
         assertEquals("192.168.1.88", printer.bambu?.ip)
         assertEquals("12345678", printer.bambu?.accessCode)
         assertEquals("P1S123ABC", printer.bambu?.serial)
+    }
+
+    @Test
+    fun `buildPrinter keeps camera UID only for unchanged Moonraker printer`() {
+        val moonraker = PrinterViewModel.buildPrinter(
+            id = "moonraker-1",
+            fallbackNickname = "Printer 1",
+            existingExtruderPresets = defaultExtruderPresets(),
+            nickname = "U1",
+            kind = PrinterKind.MOONRAKER,
+            url = "printer.local",
+            bambuIp = "",
+            bambuAccessCode = "",
+            bambuSerial = "",
+            bambuModel = BambuModel.P1S,
+            selectedWebcamUid = "physical-camera",
+        )
+        val bambu = PrinterViewModel.buildPrinter(
+            id = "bambu-1",
+            fallbackNickname = "Printer 1",
+            existingExtruderPresets = defaultExtruderPresets(),
+            nickname = "P1S",
+            kind = PrinterKind.BAMBU_LAN,
+            url = "",
+            bambuIp = "192.168.1.88",
+            bambuAccessCode = "12345678",
+            bambuSerial = "p1s123abc",
+            bambuModel = BambuModel.P1S,
+            selectedWebcamUid = "physical-camera",
+        )
+
+        assertEquals("physical-camera", moonraker.selectedWebcamUid)
+        assertNull(bambu.selectedWebcamUid)
     }
 }

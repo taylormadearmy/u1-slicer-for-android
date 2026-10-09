@@ -433,6 +433,37 @@ Java_com_u1_slicer_NativeLibrary_nativeDuplicateObject(JNIEnv*, jobject, jint ob
     return res.has_value() ? *res : -1;
 }
 
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeSetAdaptiveLayerHeight(
+        JNIEnv* env, jobject, jfloat quality, jint smoothing_radius, jboolean keep_min) {
+    if (!g_engine || smoothing_radius < 0) return nullptr;
+    const auto range = g_engine->setAdaptiveLayerHeight(quality, static_cast<unsigned int>(smoothing_radius), keep_min == JNI_TRUE);
+    if (range.empty()) return nullptr;
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(range.size()));
+    env->SetFloatArrayRegion(result, 0, static_cast<jsize>(range.size()), range.data());
+    return result;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeClearVariableLayerHeights(JNIEnv*, jobject) {
+    return (g_engine && g_engine->clearVariableLayerHeights()) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetVariableLayerHeightRange(JNIEnv* env, jobject) {
+    if (!g_engine) return nullptr;
+    const auto range = g_engine->getVariableLayerHeightRange();
+    if (range.empty()) return nullptr;
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(range.size()));
+    env->SetFloatArrayRegion(result, 0, static_cast<jsize>(range.size()), range.data());
+    return result;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeDeleteObject(JNIEnv*, jobject, jint objIdx) {
+    return (g_engine && g_engine->deleteObject(static_cast<int>(objIdx))) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jdoubleArray JNICALL
 Java_com_u1_slicer_NativeLibrary_nativeAutoOrientObject(JNIEnv* env, jobject, jint objIdx) {
     if (!g_engine) return nullptr;

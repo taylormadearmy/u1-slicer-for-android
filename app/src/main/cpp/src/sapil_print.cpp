@@ -378,11 +378,90 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     }
 }
 
+static bool isGenericTarget(const SliceConfig& config) {
+    return config.machine_target == "GENERIC_KLIPPER" || config.machine_target == "ELEGOO_CC1";
+}
+
+static void validateGenericConfig(const Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config) {
+    auto* area = dpc.option<Slic3r::ConfigOptionPoints>("printable_area");
+    auto* height = dpc.option<Slic3r::ConfigOptionFloat>("printable_height");
+    auto* nozzles = dpc.option<Slic3r::ConfigOptionFloats>("nozzle_diameter");
+    auto* start = dpc.option<Slic3r::ConfigOptionString>("machine_start_gcode");
+    auto* end = dpc.option<Slic3r::ConfigOptionString>("machine_end_gcode");
+    auto* flavor = dpc.option<Slic3r::ConfigOptionEnum<Slic3r::GCodeFlavor>>("gcode_flavor");
+    if (config.extruder_count != 1 || !config.mixed_filament_definitions.empty() ||
+        !area || area->values.size() != 4 || !height || height->value <= 0 ||
+        !nozzles || nozzles->values.size() != 1 || !start || start->value.empty() ||
+        !end || end->value.empty() || !flavor || flavor->value != Slic3r::gcfKlipper ||
+        start->value != config.machine_start_gcode || end->value != config.machine_end_gcode) {
+        throw std::runtime_error("Selected single-nozzle Klipper machine profile is missing or inconsistent");
+    }
+    const std::vector<Slic3r::Vec2d> expected_area = {
+        {0, 0}, {config.bed_size_x, 0}, {config.bed_size_x, config.bed_size_y}, {0, config.bed_size_y}
+    };
+    // JNI geometry is float, while Orca JSON parses double. Allow only rounding
+    // error at the supported 2 m bed limit, not a different physical envelope.
+    constexpr double epsilon = 0.0005;
+    if (!std::isfinite(config.bed_size_x) || !std::isfinite(config.bed_size_y) ||
+        !std::isfinite(config.max_print_height) || !std::isfinite(config.nozzle_diameter) ||
+        config.bed_size_x <= 0 || config.bed_size_y <= 0 || config.max_print_height <= 0 || config.nozzle_diameter <= 0 ||
+        !std::isfinite(height->value) || !std::isfinite(nozzles->values.front()) ||
+        std::abs(height->value - config.max_print_height) > epsilon ||
+        std::abs(nozzles->values.front() - config.nozzle_diameter) > epsilon) {
+        throw std::runtime_error("Selected Klipper machine geometry or nozzle does not match the slice target");
+    }
+    for (size_t index = 0; index < expected_area.size(); ++index) {
+        if (!area->values[index].allFinite() || (area->values[index] - expected_area[index]).norm() > epsilon) {
+            throw std::runtime_error("Selected Klipper machine geometry or nozzle does not match the slice target");
+        }
+    }
+    // These are explicit policy decisions for the first single-filament release.
+    // Do not fall through to the U1 tool, temperature, retraction or motion defaults.
+}
+
+static void validateGenericBounds(const Slic3r::DynamicPrintConfig& dpc, const Slic3r::BoundingBoxf3& bounds) {
+    if (!bounds.defined) return;
+    const auto* area = dpc.option<Slic3r::ConfigOptionPoints>("printable_area");
+    const auto* height = dpc.option<Slic3r::ConfigOptionFloat>("printable_height");
+    double bed_x = 0, bed_y = 0;
+    for (const auto& point : area->values) {
+        bed_x = std::max(bed_x, point.x());
+        bed_y = std::max(bed_y, point.y());
+    }
+    constexpr double epsilon = 0.01;
+    if (bounds.min.x() < -epsilon || bounds.min.y() < -epsilon || bounds.min.z() < -epsilon ||
+        bounds.max.x() > bed_x + epsilon || bounds.max.y() > bed_y + epsilon || bounds.max.z() > height->value + epsilon) {
+        throw std::runtime_error("Model or generated helper extrusions exceed the selected machine's printable volume");
+    }
+    const auto* exclusion = dpc.option<Slic3r::ConfigOptionPoints>("bed_exclude_area");
+    if (exclusion && exclusion->values.size() >= 3) {
+        Slic3r::BoundingBoxf excluded(exclusion->values);
+        if (bounds.min.x() < excluded.max.x() - epsilon && bounds.max.x() > excluded.min.x() + epsilon &&
+            bounds.min.y() < excluded.max.y() - epsilon && bounds.max.y() > excluded.min.y() + epsilon) {
+            throw std::runtime_error("Model or helper extrusion bounding box overlaps the selected machine's bed exclusion area");
+        }
+    }
+}
+
 static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config, bool has_embedded_profile = false) {
+    if (isGenericTarget(config)) {
+        validateGenericConfig(dpc, config);
+        dpc.set_key_value("enable_prime_tower", new Slic3r::ConfigOptionBool(false));
+        dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+        dpc.set_key_value("exclude_object", new Slic3r::ConfigOptionBool(false));
+        return;
+    }
     const bool is_bambu_target = config.machine_target.rfind("BAMBU_", 0) == 0;
     if (is_bambu_target) {
         applyBambuConfigToPrusa(dpc, config, has_embedded_profile);
         return;
+    }
+    // Raw STL has no embedded profile, so global ironing must cross the JNI
+    // boundary. An empty value intentionally leaves a file profile/default intact.
+    if (!config.ironing_type.empty()) {
+        Slic3r::ConfigSubstitutionContext substitutions{
+            Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
+        dpc.set_deserialize("ironing_type", config.ironing_type, substitutions);
     }
     // Layer settings (OrcaSlicer keys)
     // layer_height: 0.0f sentinel means "let profile_keys[] value (or OrcaSlicer default) stand".
@@ -946,6 +1025,15 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // temperatures, layer height, speeds, etc.) override the embedded profile.
         Slic3r::DynamicPrintConfig dpc;
         dpc.apply(Slic3r::FullPrintConfig::defaults());
+        const bool is_generic_target = isGenericTarget(config);
+        if (is_generic_target) {
+            if (pImpl->printer_config.empty()) {
+                throw std::runtime_error("Load a resolved Klipper machine profile before slicing");
+            }
+            // loadProfile() receives a selected machine snapshot composed in Kotlin.
+            // Imported model_config is deliberately ignored for this target family.
+            dpc.apply(pImpl->printer_config);
+        }
 
         // Detect whether the embedded config is a Snapmaker profile before applying
         // any overrides — both applyConfigToPrusa and profile_keys need this flag.
@@ -974,7 +1062,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Snapmaker 3MFs (where the heuristic fires correctly).
         auto& model_config = getModelConfig();
         bool is_snapmaker_profile = false;
-        if (!model_config.empty()) {
+        if (!is_generic_target && !model_config.empty()) {
             auto* start_opt = model_config.option<Slic3r::ConfigOptionString>("machine_start_gcode");
             if (start_opt && start_opt->value.find("PRINT_START") != std::string::npos) {
                 is_snapmaker_profile = true;
@@ -998,7 +1086,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Applying all 391 keys causes SIGSEGV — many have array sizes, feature flags,
         // or template macros that conflict with our minimal Print pipeline.
         int applied = 0;
-        if (!model_config.empty()) {
+        if (!is_generic_target && !model_config.empty()) {
             if (is_bambu_embedded_profile) {
                 // Process and filament settings only.  In particular this list
                 // must never acquire machine geometry, machine_*, nozzle topology
@@ -1504,6 +1592,10 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         // Apply model + config to the print
         Slic3r::Model& model = getGlobalModel();
+        if (is_generic_target) {
+            // A source project's per-height macros are not part of the selected machine.
+            model.plates_custom_gcodes.clear();
+        }
 
         // Ensure every object sits on the bed (min z = 0).
         // Per-object ensure_on_bed() is correct: each restructured Bambu build
@@ -1526,8 +1618,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // 2 mm absorbs that without losing the safety property: a model
         // that is genuinely off-bed will be off by tens of millimetres.
         {
-            const double BED_X = 270.0, BED_Y = 270.0;
-            const double EDGE_TOL = 2.0;
+            const double BED_X = is_generic_target ? config.bed_size_x : 270.0;
+            const double BED_Y = is_generic_target ? config.bed_size_y : 270.0;
+            const double EDGE_TOL = is_generic_target ? 0.01 : 2.0;
             Slic3r::BoundingBoxf3 worldBB;
             for (auto* obj : model.objects) {
                 worldBB.merge(obj->bounding_box_exact());
@@ -1539,6 +1632,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                                    yMin < -EDGE_TOL || yMax > BED_Y + EDGE_TOL;
                 if (outOfBounds) {
                     double sizeX = xMax - xMin, sizeY = yMax - yMin;
+                    if (is_generic_target && (sizeX > BED_X + EDGE_TOL || sizeY > BED_Y + EDGE_TOL)) {
+                        throw std::runtime_error("Model is larger than the selected machine's bed");
+                    }
                     double deltaX = (BED_X - sizeX) / 2.0 - xMin;
                     double deltaY = (BED_Y - sizeY) / 2.0 - yMin;
                     for (auto* obj : model.objects) {
@@ -1555,6 +1651,10 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                         xMin, xMax, yMin, yMax);
                 }
             }
+        }
+
+        if (is_generic_target) {
+            for (auto* obj : model.objects) validateGenericBounds(dpc, obj->bounding_box_exact());
         }
 
         // SEMM (paint-based multi-color): ENABLED via serialized TBB loops.
@@ -1629,6 +1729,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             auto validation = print.validate();
             if (!validation.string.empty()) {
                 SAPIL_LOGW("Print validation: %s", validation.string.c_str());
+                if (is_generic_target) throw std::runtime_error("Selected machine print validation failed: " + validation.string);
             } else {
                 SAPIL_LOGI("Print validation: OK");
             }
@@ -1681,6 +1782,15 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             throw Slic3r::CanceledException();
         }
         if (progress) progress(90, "Generating G-code");
+        if (is_generic_target && !print.first_layer_convex_hull().points.empty()) {
+            // Includes generated supports, brim and skirt, but excludes the selected
+            // machine's intentional purge/parking commands outside printable_area.
+            Slic3r::BoundingBoxf3 helper_bounds;
+            for (const auto& point : print.first_layer_convex_hull().points) {
+                helper_bounds.merge(Slic3r::Vec3d(Slic3r::unscale<double>(point.x()), Slic3r::unscale<double>(point.y()), 0.0));
+            }
+            validateGenericBounds(dpc, helper_bounds);
+        }
 
         // Checkpoint 3: validate wipe_tower_y right before G-code export
         if (config.wipe_tower_enabled) {
@@ -1811,6 +1921,19 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
 bool SlicerEngine::loadProfile(const std::string& ini_path) {
     try {
+        if (ini_path.size() >= 5 && ini_path.substr(ini_path.size() - 5) == ".json") {
+            pImpl->printer_config = Slic3r::DynamicPrintConfig();
+            Slic3r::DynamicPrintConfig selected;
+            std::map<std::string, std::string> key_values;
+            std::string reason;
+            Slic3r::ConfigSubstitutionContext substitutions(Slic3r::ForwardCompatibilitySubstitutionRule::Disable);
+            if (selected.load_from_json(ini_path, substitutions, true, key_values, reason) != 0) {
+                SAPIL_LOGW("Selected machine profile failed to load: %s", reason.c_str());
+                return false;
+            }
+            pImpl->printer_config = std::move(selected);
+            return true;
+        }
         pImpl->print_config.load_from_ini(ini_path, Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
         return true;
     } catch (const std::exception& e) {

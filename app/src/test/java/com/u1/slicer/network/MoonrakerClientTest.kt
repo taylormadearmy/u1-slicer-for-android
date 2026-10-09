@@ -397,44 +397,51 @@ class MoonrakerClientTest {
     }
 
     @Test
-    fun `queryWebcamSnapshotCandidates with empty webcam list appends monitor jpg as last candidate`() = runTest {
+    fun `queryWebcamSources with empty webcam list returns one legacy fallback source`() = runTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setBody("""{"result":{"webcams":[]}}"""))
         server.start()
         val client = MoonrakerClient()
         client.baseUrl = server.url("/").toString()
-        val candidates = client.queryWebcamSnapshotCandidates()
-        assertTrue("Expected at least 2 candidates", candidates.size >= 2)
+        val sources = client.queryWebcamSources()
+        assertEquals(1, sources.size)
+        val source = sources.single()
+        assertTrue(source.isLegacyFallback)
+        assertTrue("Expected at least 2 candidates", source.snapshotUrls.size >= 2)
         assertTrue(
-            "Last candidate must be monitor.jpg, got: ${candidates.last()}",
-            candidates.last().endsWith("/server/files/camera/monitor.jpg")
+            "Last candidate must be monitor.jpg, got: ${source.snapshotUrls.last()}",
+            source.snapshotUrls.last().endsWith("/server/files/camera/monitor.jpg")
         )
         server.shutdown()
     }
 
     @Test
-    fun `queryWebcamSnapshotCandidates with configured webcam appends monitor jpg after existing candidates`() = runTest {
+    fun `queryWebcamSources returns every enabled named source with its own URL fallbacks`() = runTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setBody("""
             {"result":{"webcams":[{
-                "name":"Camera","enabled":true,
+                "uid":"display","name":"Printer display","location":"screen","enabled":true,
                 "snapshot_url":"/webcam/?action=snapshot",
                 "stream_url":"/webcam/?action=stream"
+            },{
+                "uid":"physical","name":"Physical camera","location":"printer","enabled":true,
+                "snapshot_url":"/webcam2/snapshot.jpg"
+            },{
+                "uid":"disabled","name":"Disabled","enabled":false,
+                "snapshot_url":"/disabled.jpg"
             }]}}
         """.trimIndent()))
         server.start()
         val client = MoonrakerClient()
         client.baseUrl = server.url("/").toString()
-        val candidates = client.queryWebcamSnapshotCandidates()
-        assertTrue("Expected at least 2 candidates", candidates.size >= 2)
-        assertTrue(
-            "Last candidate must be monitor.jpg, got: ${candidates.last()}",
-            candidates.last().endsWith("/server/files/camera/monitor.jpg")
-        )
-        assertFalse(
-            "First candidate must not be monitor.jpg",
-            candidates.first().contains("monitor.jpg")
-        )
+        val sources = client.queryWebcamSources()
+
+        assertEquals(listOf("display", "physical"), sources.map { it.uid })
+        assertEquals("Printer display · screen", sources[0].label)
+        assertEquals("Physical camera · printer", sources[1].label)
+        assertFalse(sources.any { it.isLegacyFallback })
+        assertFalse(sources.flatMap { it.snapshotUrls }.any { it.contains("monitor.jpg") })
+        assertTrue(sources.all { it.snapshotUrls.isNotEmpty() })
         server.shutdown()
     }
 }

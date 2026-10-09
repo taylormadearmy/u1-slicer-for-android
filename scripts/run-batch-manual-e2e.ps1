@@ -31,7 +31,8 @@ function Get-SafeName([string]$Name) {
 }
 
 function Capture-Screenshot([string]$Path) {
-    Invoke-Adb shell screencap -p /sdcard/ss.png | Out-Null
+    $captureArgs = @("shell", "screencap", "-p", "/sdcard/ss.png")
+    Invoke-Adb @captureArgs | Out-Null
     Invoke-Adb pull /sdcard/ss.png $Path | Out-Null
 }
 
@@ -101,7 +102,7 @@ function Wait-LoadReady {
     )
 
     if ($Scenario.Plate -ne $null) {
-        return Wait-State "State: ModelLoaded|State: SliceComplete|isMultiPlate: true|Multi-plate: .*showing selector" $Scenario.LoadTimeoutSeconds "load $($Scenario.Name)"
+        return Wait-State "State: ModelLoaded|State: SliceComplete|ShowPlateSelector: true" $Scenario.LoadTimeoutSeconds "load $($Scenario.Name)"
     }
 
     return Wait-State "State: ModelLoaded|State: SliceComplete" $Scenario.LoadTimeoutSeconds "load $($Scenario.Name)"
@@ -185,10 +186,13 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     $loadLog = Wait-LoadReady $Scenario
     Capture-Screenshot $prepareShot
 
-    $plateSelectorReady = $loadLog -match "isMultiPlate: true|Multi-plate: .*showing selector"
+    $plateSelectorReady = $loadLog -match "ShowPlateSelector: true"
     $loadOk = $loadLog -match "State: ModelLoaded|State: SliceComplete" -or ($Scenario.Plate -ne $null -and $plateSelectorReady)
-    $plateOk = $Scenario.Plate -eq $null
-    if ($loadOk -and $Scenario.Plate -ne $null) {
+    # A 3MF can carry a single PrusaSlicer plate in its metadata without the app exposing
+    # a plate picker. Select only when the UI would actually offer selection; otherwise
+    # selecting during the normal direct load races a second native load (Buzz -> Korok).
+    $plateOk = $Scenario.Plate -eq $null -or ($loadOk -and -not $plateSelectorReady)
+    if ($plateSelectorReady -and $Scenario.Plate -ne $null) {
         Write-Step "[$Index/$Total] selecting plate $($Scenario.Plate)"
         Broadcast "SELECT_PLATE" @("--ei", "plate", "$($Scenario.Plate)")
         $loadLog = Wait-State "State: ModelLoaded|State: SliceComplete" $Scenario.LoadTimeoutSeconds "plate $($Scenario.Plate) $($Scenario.Name)"

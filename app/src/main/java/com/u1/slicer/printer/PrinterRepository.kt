@@ -82,6 +82,7 @@ class PrinterRepository(
             _printerUrl.value = when (newPrinter.kind) {
                 PrinterKind.MOONRAKER -> MoonrakerClient.normalizeUrl(newPrinter.moonrakerUrl)
                 PrinterKind.BAMBU_LAN -> newPrinter.bambu?.ip.orEmpty()
+                PrinterKind.ELEGOO_CC1, PrinterKind.OCTOPRINT -> newPrinter.host?.url.orEmpty()
             }
             return
         }
@@ -96,6 +97,7 @@ class PrinterRepository(
         _printerUrl.value = when (newPrinter.kind) {
             PrinterKind.MOONRAKER -> MoonrakerClient.normalizeUrl(newPrinter.moonrakerUrl)
             PrinterKind.BAMBU_LAN -> newPrinter.bambu?.ip.orEmpty()
+            PrinterKind.ELEGOO_CC1, PrinterKind.OCTOPRINT -> newPrinter.host?.url.orEmpty()
         }
         _capabilities.value = currentTransport?.capabilities ?: PrinterTransportCapabilities()
         _status.value = PrinterStatus(state = "disconnected", progress = 0f)
@@ -112,12 +114,21 @@ class PrinterRepository(
         val cfg = printersRepo.config.first() ?: return
         val active = cfg.active
         if (active.kind != PrinterKind.MOONRAKER) return
-        printersRepo.update(active.copy(moonrakerUrl = normalized))
+        printersRepo.update(
+            active.copy(
+                moonrakerUrl = normalized,
+                selectedWebcamUid = active.selectedWebcamUid.takeIf {
+                    normalized == MoonrakerClient.normalizeUrl(active.moonrakerUrl)
+                },
+            )
+        )
     }
 
     /** Returns null on success, or an error message string on failure. */
-    suspend fun testConnection(): String? =
-        currentTransport?.testConnection() ?: "No printer configured"
+    suspend fun testConnection(): String? {
+        val transport = currentTransport ?: return "No printer configured"
+        return transport.testConnection()
+    }
 
     /** Returns true if the paxx12 extended-firmware remote screen endpoint is reachable. */
     suspend fun probeRemoteScreen(): Boolean = currentTransport?.probeRemoteScreen() ?: false
@@ -206,16 +217,27 @@ class PrinterRepository(
         PrintProgressNotifier.clear(appContext)
     }
 
-    suspend fun uploadAndPrint(gcodeFile: java.io.File, filename: String): TransportCommandResult {
-        val uploadName = buildPrinterUploadFilename(filename)
+    suspend fun uploadAndPrint(
+        gcodeFile: java.io.File,
+        filename: String,
+        validateBeforeStart: suspend () -> Boolean = { true },
+        expectedPrinter: Printer? = null,
+    ): TransportCommandResult {
         val transport = currentTransport ?: return TransportCommandResult.Failure("No printer configured")
+        val selectedPrinter = expectedPrinter ?: activePrinter ?: return TransportCommandResult.Failure("No printer configured")
+        if (!matchesCurrentPrinter(selectedPrinter) || currentTransport !== transport) {
+            return TransportCommandResult.Failure("Printer configuration changed; please send again")
+        }
+        val uploadName = buildPrinterUploadFilename(filename)
         when (val uploaded = transport.uploadJob(gcodeFile, uploadName)) {
             TransportCommandResult.Success -> Unit
             is TransportCommandResult.Unsupported -> return uploaded
             is TransportCommandResult.Failure -> return uploaded
         }
         currentCoroutineContext().ensureActive()
-        if (currentTransport !== transport) {
+        val allowed = validateBeforeStart() && matchesCurrentPrinter(selectedPrinter)
+        currentCoroutineContext().ensureActive()
+        if (!allowed || currentTransport !== transport) {
             return TransportCommandResult.Failure("Active printer changed after upload; the print was not started")
         }
         return when (val started = transport.startJob(uploadName)) {
@@ -228,10 +250,20 @@ class PrinterRepository(
         }
     }
 
-    suspend fun uploadOnly(gcodeFile: java.io.File, filename: String): TransportCommandResult {
+    suspend fun uploadOnly(gcodeFile: java.io.File, filename: String, expectedPrinter: Printer? = null): TransportCommandResult {
+        val transport = currentTransport ?: return TransportCommandResult.Failure("No printer configured")
+        val selectedPrinter = expectedPrinter ?: activePrinter ?: return TransportCommandResult.Failure("No printer configured")
+        if (!matchesCurrentPrinter(selectedPrinter) || currentTransport !== transport) {
+            return TransportCommandResult.Failure("Printer configuration changed; please send again")
+        }
         val uploadName = buildPrinterUploadFilename(filename)
-        return currentTransport?.uploadJob(gcodeFile, uploadName)
-            ?: TransportCommandResult.Failure("No printer configured")
+        return transport.uploadJob(gcodeFile, uploadName)
+    }
+
+    private suspend fun matchesCurrentPrinter(expected: Printer): Boolean {
+        val selected = printersRepo.config.first()?.active ?: return false
+        val bound = activePrinter ?: return false
+        return !shouldRecreateTransport(expected, selected) && !shouldRecreateTransport(expected, bound)
     }
 
     suspend fun uploadAndPrintBambuProject(
@@ -280,8 +312,8 @@ class PrinterRepository(
             ?: TransportCommandResult.Failure("No printer configured")
     }
 
-    suspend fun queryWebcamSnapshotCandidates(): List<String> =
-        currentTransport?.queryWebcamSnapshotCandidates() ?: emptyList()
+    suspend fun queryWebcamSources(): List<WebcamSource> =
+        currentTransport?.queryWebcamSources() ?: emptyList()
 
     suspend fun wakeCamera() {
         currentTransport?.wakeCamera()
@@ -399,23 +431,28 @@ class PrinterRepository(
             extension: String,
             fallbackBase: String,
         ): String {
+            val suffix = "_$nowMillis$extension"
             val base = sourceName
                 .substringBeforeLast('.', sourceName)
                 .replace(Regex("""[^A-Za-z0-9._-]+"""), "_")
                 .replace(Regex("""_+"""), "_")
-                .trim('_')
+                .trim('_', '.')
                 .ifBlank { fallbackBase }
-            return "${base}_$nowMillis$extension"
+                .take(255 - suffix.length)
+            return "$base$suffix"
         }
 
         internal fun shouldRecreateTransport(current: Printer?, next: Printer): Boolean {
             if (current == null) return true
+            if (current.id != next.id || current.machine != next.machine ||
+                current.machineProfile?.fingerprint != next.machineProfile?.fingerprint) return true
             if (current.kind != next.kind) return true
             return when (next.kind) {
                 PrinterKind.MOONRAKER ->
                     MoonrakerClient.normalizeUrl(current.moonrakerUrl) !=
                         MoonrakerClient.normalizeUrl(next.moonrakerUrl)
                 PrinterKind.BAMBU_LAN -> current.bambu != next.bambu
+                PrinterKind.ELEGOO_CC1, PrinterKind.OCTOPRINT -> current.host != next.host
             }
         }
 

@@ -55,6 +55,11 @@ class NativeLibrary {
     external fun loadModelForPlate(path: String, plateIdx: Int): Boolean
 
     external fun clearModel()
+    /** F101: returns [minMm, maxMm, pointCount] or null when generation is unavailable. */
+    external fun nativeSetAdaptiveLayerHeight(quality: Float, smoothingRadius: Int, keepMin: Boolean): FloatArray?
+    external fun nativeClearVariableLayerHeights(): Boolean
+    /** Returns [minMm, maxMm, pointCount], or null when the model has fixed layers. */
+    external fun nativeGetVariableLayerHeightRange(): FloatArray?
     // Cancel an in-progress QEM preview decimation. Called from clearModel() before
     // acquiring previewMutex so QEM bails out immediately.
     external fun cancelPreviewMesh()
@@ -304,6 +309,9 @@ class NativeLibrary {
      *  per-volume extruder overrides, and instance transform — callers should
      *  call `setObjectPositions` afterwards to place the new object on the bed. */
     external fun nativeDuplicateObject(objIdx: Int): Int
+
+    /** Removes one object. Returns false for an invalid index or the final object. */
+    external fun nativeDeleteObject(objIdx: Int): Boolean
 
     /** Auto-orient one object so a stable face is on the bed. Returns the new
      *  Euler rotation `[x, y, z]` in radians, or `null` on failure. TBB-parallel
