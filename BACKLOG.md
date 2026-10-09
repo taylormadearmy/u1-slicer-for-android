@@ -4,6 +4,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B150: Native libraries and APK packaging lack full 16 KB page-size support (GitHub #190) — OPEN
+- **Evidence** (2026-10-09): Android 17 displayed its native-library compatibility warning during the v4.0.5 UI tests. `libc++_shared.so` has 4 KB ELF LOAD alignment; the JNI library has 16 KB LOAD alignment, but the APK's uncompressed native entries fail 16 KB ZIP alignment checks.
+- **Current validation**: the Pixel 9a uses 4 KB pages. All 468 device checks and all 34 U1/H2D E2E cases passed on that phone; these results do not prove 16 KB compatibility.
+- **Acceptance**: make the C++ runtime, JNI library, RELRO boundaries, and APK packaging 16 KB compliant while retaining the required NDK 26 Release compiler for Orca. Pass ELF and ZIP alignment checks, then run the native, colour-mix, UI, and E2E tests in an actual 16 KB environment. See [issue #190](https://github.com/taylormadearmy/u1-slicer-for-android/issues/190).
+
 ### B147: Smart-Paint + STRIPES mode (and STRIPES + fine_top_lines) still not mixing top surface after B146 — FIXED on `feature/colormix-topsurface`
 - **Symptoms** (Kevin, 2026-06-12): after B146, STRIPES mode via Smart Paint still produced no within-layer top-surface split; STRIPES + fine_top_lines also failed; only PROPORTIONAL, DITHER, or STRIPES + ironing_glaze worked.
 - **Root cause**: B146's collapse-prevention condition was `top_mix_mode == 1 || top_mix_mode == 2 || ironing_glaze` — STRIPES (`top_mix_mode == 0`) and STRIPES + `fine_top_lines` were not in the list, so those variants still collapsed to a single physical tool per layer. The same `is_mixed()` gate failures described in B146 then applied.
@@ -718,7 +723,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) §v2.1.0.
 
 ### A2: v3.0.0 multi-printer via Orca profile import (GitHub #152)
-- **Status**: NOT STARTED. Estimated weeks. Needs a brainstorming-skill design session + spec doc before any code.
+- **Status**: PARTIAL v4.0.5 (released 2026-10-09). Separate machine/connection selection, immutable imported single-nozzle Klipper profiles, CC1 and OctoPrint beta adapters, native generic-machine policy, and saved-job profile compatibility are delivered. Full printer/filament/process import, general slot-count parameterisation, and the proposed JNI pipeline replacement remain open. GitHub #152 stays open.
 - **Driver**: support multiple printers in a single Android app, profile-driven via OrcaSlicer profile import. Replaces the hardcoded U1 assumptions threaded through `applyConfigToPrusa`, the `profile_keys[]` whitelist, the `is_snapmaker_profile` heuristic, and the 4-slot `coerceIn(0, 3)` clamps.
 - **Scope**:
   - **Profile import system.** Read `.orca_printer`, `.orca_filament`, `.orca_process` JSON. Handle 3MF-embedded variants. Validation (schema, required keys, conflict detection).
@@ -1153,6 +1158,8 @@ The following are candidate options for M5. We'll choose which to build next. Al
 - Useful for both routine Snapmaker Orca updates and the eventual FullSpectrum fork evaluation (F14)
 
 ## Closed (recent)
+
+- **v4.0.5 (released 2026-10-09):** Fixed oversized Map & Upload filament rows by giving the dropdown container its row width, and fixed painted-model colour-mix remapping stalls by using one Java matcher across the XML. Added beta CC1 and imported single-nozzle Klipper support through Moonraker and OctoPrint, with saved-job machine/profile identity and separate upload/start actions. Review fixes preserve filament edits, selected and first-layer temperatures, native generic headers, valid upload filenames, and active connections during printer renames. Validation: 2,044 JVM tests, all 468 device checks, and 34/34 U1/H2D E2E cases passed. Two device layout checks passed after their setup dismissed Android's system warning, with visibility assertions unchanged. A2 remains partial; B150 / GitHub #190 tracks 16 KB compatibility, and physical operation of the new adapters remains unverified.
 
 - **v4.0.4 (released 2026-08-29):** Fixed F99 file-colour to ColorMix remapping after the staged 3MF reload: a virtual mix tool can no longer collide with a fifth canonical file colour and collapse to one physical tool. The manual E2E runner now waits for the actual app plate selector rather than raw 3MF metadata, preventing a non-Bambu single-plate model from being selected while it is still loading; the model-load boundary also clears previous plate state immediately. Validation: 1,976 JVM tests, 451 instrumented tests, and 34/34 U1/H2D manual E2E scenarios passed. B149 remains open because its Bespok3d paint representation has not yet been confirmed.
 
