@@ -14,6 +14,8 @@ class GenericMachineProfile private constructor(
     val bedSizeY: Float,
     val maxPrintHeight: Float,
     val nozzleDiameter: Float,
+    val extruderCount: Int,
+    val gcodeFlavor: String,
 ) {
     val settings: Map<String, Any> get() = readSettings(JSONObject(resolvedJson))
 
@@ -25,28 +27,33 @@ class GenericMachineProfile private constructor(
         bedSizeY = bedSizeY,
         maxPrintHeight = maxPrintHeight,
         nozzleDiameter = nozzleDiameter,
-        extruderCount = 1,
-        supportFilament = 0,
-        supportInterfaceFilament = 0,
+        extruderCount = extruderCount,
+        supportFilament = base.supportFilament.coerceIn(0, extruderCount),
+        supportInterfaceFilament = base.supportInterfaceFilament.coerceIn(0, extruderCount),
         wipeTowerEnabled = false,
         mixedFilamentDefinitions = "",
-        machineStartGcode = settings["machine_start_gcode"]?.toString().orEmpty(),
-        machineEndGcode = settings["machine_end_gcode"]?.toString().orEmpty(),
-        machineChangeFilamentGcode = "",
-        machineTarget = if (target == SlicerTarget.ElegooCentauriCarbon) "ELEGOO_CC1" else "GENERIC_KLIPPER",
+        machineStartGcode = template(settings["machine_start_gcode"]),
+        machineEndGcode = template(settings["machine_end_gcode"]),
+        machineChangeFilamentGcode = template(settings["machine_change_filament_gcode"] ?: settings["change_filament_gcode"]),
+        machineTarget = when (target) {
+            SlicerTarget.ElegooCentauriCarbon -> "ELEGOO_CC1"
+            SlicerTarget.GenericMarlin -> "GENERIC_MARLIN"
+            else -> "GENERIC_KLIPPER"
+        },
     )
 
     /** Source projects contribute process/filament tuning, never machine commands or geometry. */
     fun compose(source: Map<String, Any>? = null, overrides: Map<String, Any> = emptyMap()): Map<String, Any> {
         val config = DEFAULTS.toMutableMap()
         settings.filterKeys { it in MACHINE_KEYS || it in PROCESS_KEYS || it.startsWith("machine_max_") || it.startsWith("machine_min_") }.forEach { (key, value) ->
-            config[key] = if (key.startsWith("machine_max_") || key.startsWith("machine_min_")) value else singleFilament(key, value)
+            config[key] = if (key in TEMPLATE_KEYS) template(value)
+                else if (key.startsWith("machine_max_") || key.startsWith("machine_min_")) value else normalized(key, value)
         }
-        source.orEmpty().filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = singleFilament(key, value) }
-        overrides.filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = singleFilament(key, value) }
-        // This release has one physical nozzle and one filament, with no automatic tool changes.
-        config["nozzle_diameter"] = listOf(nozzleDiameter.toString())
-        config["extruder_offset"] = listOf("0x0")
+        source.orEmpty().filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = normalized(key, value) }
+        overrides.filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = normalized(key, value) }
+        config.entries.toList().forEach { (key, value) -> config[key] = normalized(key, value) }
+        config["nozzle_diameter"] = strings(settings["nozzle_diameter"])
+        config["extruder_offset"] = strings(settings["extruder_offset"]).ifEmpty { List(extruderCount) { "0x0" } }
         config["single_extruder_multi_material"] = "0"
         config["enable_prime_tower"] = "0"
         config["support_filament"] = "0"
@@ -54,18 +61,42 @@ class GenericMachineProfile private constructor(
         config["wall_filament"] = "1"
         config["sparse_infill_filament"] = "1"
         config["solid_infill_filament"] = "1"
-        config["change_filament_gcode"] = ""
-        config["filament_start_gcode"] = listOf("")
-        config["filament_end_gcode"] = listOf("")
+        config["change_filament_gcode"] = template(settings["machine_change_filament_gcode"] ?: settings["change_filament_gcode"])
+        config["filament_start_gcode"] = List(extruderCount) { "" }
+        config["filament_end_gcode"] = List(extruderCount) { "" }
         config["exclude_object"] = "0"
+        // Orca's relative-E Marlin output requires a reset at each layer. This
+        // app-owned command supplements selected machine hooks, never source hooks.
+        val relativeExtrusion = config["use_relative_e_distances"]?.toString()?.lowercase() !in setOf("0", "false", "no")
+        if (gcodeFlavor in setOf("marlin", "marlin2") && relativeExtrusion) {
+            val reset = Regex("(?im)^[ \\t]*G92[ \\t]*E(?:0(?:\\.0*)?|\\.0+)[ \\t]*(?:;.*)?$")
+            val before = template(config["before_layer_change_gcode"])
+            val after = template(config["layer_change_gcode"])
+            if (!reset.containsMatchIn(before) && !reset.containsMatchIn(after)) {
+                config["before_layer_change_gcode"] = if (before.isBlank()) "G92 E0" else "${before.trimEnd()}\nG92 E0"
+            }
+        }
         return config
     }
+
+    private fun normalized(key: String, value: Any): Any = if (value is List<*> &&
+        key !in setOf("printable_area", "bed_exclude_area") &&
+        !key.startsWith("machine_max_") && !key.startsWith("machine_min_")) {
+        require(value.isNotEmpty() || key == "extruder_offset") { "Empty array for '$key'" }
+        if (value.isEmpty()) List(extruderCount) { "0x0" }
+        else List(extruderCount) { value.getOrElse(it) { value.last() }.toString() }
+    } else value
 
     companion object {
         fun fromJson(json: String): GenericMachineProfile = import(json)
 
+        /** Released 405 snapshots disabled SEMM at composition time, even when their metadata set it. */
+        internal fun fromPersistedJson(json: String): GenericMachineProfile = importResolved(json, emptyList(), true)
+
         /** Import one profile plus parent documents, or a JSON array of inheritance documents. */
-        fun import(json: String, parents: List<String> = emptyList()): GenericMachineProfile {
+        fun import(json: String, parents: List<String> = emptyList()): GenericMachineProfile = importResolved(json, parents, false)
+
+        private fun importResolved(json: String, parents: List<String>, bundledCc1: Boolean): GenericMachineProfile {
             require(json.length <= 2_000_000) { "Machine profile is too large" }
             val documents = if (json.trimStart().startsWith("[")) {
                 val array = JSONArray(json)
@@ -92,16 +123,33 @@ class GenericMachineProfile private constructor(
                 return result
             }
             val values = resolve(leaves.single(), emptySet()).toMutableMap()
+            TEMPLATE_KEYS.forEach { key ->
+                val value = values[key]
+                if (value is List<*>) {
+                    require(value.size == 1) { "$key requires one machine template" }
+                }
+            }
             val name = leaves.single().getString("name")
             values["name"] = name
             values["type"] = "machine"
-            require(values["gcode_flavor"]?.toString() == "klipper") { "Only Klipper machine profiles are supported" }
+            val flavor = values["gcode_flavor"]?.toString()
+            require(flavor in setOf("klipper", "marlin", "marlin2")) { "Only Klipper or Marlin machine profiles are supported" }
             require(values["printer_technology"]?.toString()?.let { it == "FFF" } != false) { "Only FFF machine profiles are supported" }
             val nozzles = strings(values["nozzle_diameter"])
-            require(nozzles.size == 1) { "Only single-nozzle machine profiles are supported" }
-            val nozzle = positive(nozzles.single(), "nozzle diameter", 0.1f, 2f)
-            require(strings(values["extruder_offset"]).let { it.isEmpty() || it == listOf("0x0") }) { "Extruder offsets are not supported" }
-            require(strings(values["printer_extruder_id"]).size <= 1 && strings(values["physical_extruder_map"]).size <= 1) { "Multiple extruders are not supported" }
+            require(nozzles.size in 1..4) { "One to four physical nozzles are supported" }
+            val diameters = nozzles.map { positive(it, "nozzle diameter", 0.1f, 2f) }
+            require(diameters.distinct().size == 1) { "Physical nozzles must have the same diameter" }
+            val nozzle = diameters.first()
+            val manualSingleTool = nozzles.size == 1 && values["manual_filament_change"]?.toString()?.lowercase() in setOf("1", "true", "yes")
+            require(bundledCc1 && nozzles.size == 1 || manualSingleTool || values["single_extruder_multi_material"]?.toString()?.lowercase() !in setOf("1", "true", "yes")) { "Automatic single-extruder multi-material machines are not supported" }
+            val offsets = strings(values["extruder_offset"])
+            require(offsets.isEmpty() || offsets.size == nozzles.size) { "Extruder offsets must match physical nozzles" }
+            offsets.forEach { point ->
+                val xy = point.split('x')
+                require(xy.size == 2 && xy.all { it.toFloatOrNull()?.let { n -> n.isFinite() && n in -2000f..2000f } == true }) { "Invalid extruder offset" }
+            }
+            require(strings(values["printer_extruder_id"]).size <= nozzles.size && strings(values["physical_extruder_map"]).size <= nozzles.size) { "Invalid physical extruder map" }
+            require(values["printer_structure"]?.toString()?.lowercase() != "delta") { "Delta printers are not supported" }
             val polygon = strings(values["printable_area"])
             require(polygon.size == 4) { "Only rectangular origin-based beds are supported" }
             val points = polygon.map { point ->
@@ -132,8 +180,8 @@ class GenericMachineProfile private constructor(
             }
             if (exclusion == listOf("0x0")) values["bed_exclude_area"] = emptyList<String>()
             val height = positive(values["printable_height"]?.toString(), "printable height", 1f, 2000f)
-            require(values["machine_start_gcode"]?.toString()?.isNotBlank() == true) { "A machine start G-code template is required" }
-            require(values["machine_end_gcode"]?.toString()?.isNotBlank() == true) { "A machine end G-code template is required" }
+            require(template(values["machine_start_gcode"]).isNotBlank()) { "A machine start G-code template is required" }
+            require(template(values["machine_end_gcode"]).isNotBlank()) { "A machine end G-code template is required" }
             listOf("machine_start_gcode", "machine_end_gcode").forEach { key -> require(values[key].toString().length <= 100_000) { "$key is too large" } }
             values.forEach { (key, value) ->
                 if (key.startsWith("machine_max_") || key.startsWith("machine_min_")) {
@@ -144,11 +192,11 @@ class GenericMachineProfile private constructor(
                 values.toSortedMap().forEach { (key, value) -> put(key, if (value is List<*>) JSONArray(value) else value) }
             }.toString()
             val fingerprint = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-            return GenericMachineProfile(name, canonical, fingerprint, width, depth, height, nozzle)
+            return GenericMachineProfile(name, canonical, fingerprint, width, depth, height, nozzle, nozzles.size, requireNotNull(flavor))
         }
 
         fun centauriCarbon(): GenericMachineProfile = CC1
-        private val CC1 by lazy { fromJson(CentauriCarbonProfileJson.value) }
+        private val CC1 by lazy { importResolved(CentauriCarbonProfileJson.value, emptyList(), true) }
 
         private fun positive(value: String?, label: String, min: Float, max: Float): Float {
             val number = value?.toFloatOrNull()
@@ -178,15 +226,14 @@ class GenericMachineProfile private constructor(
             }
         }
 
-        private fun singleFilament(key: String, value: Any): Any =
-            if (value is List<*> && key !in setOf("printable_area", "bed_exclude_area")) value.take(1) else value
-
         private val METADATA_KEYS = setOf("inherits", "from", "setting_id", "instantiation", "version")
+        private val TEMPLATE_KEYS = setOf("machine_start_gcode", "machine_end_gcode", "machine_change_filament_gcode", "change_filament_gcode", "machine_pause_gcode", "before_layer_change_gcode", "layer_change_gcode")
+        private fun template(value: Any?): String = if (value is List<*>) value.single().toString() else value?.toString().orEmpty()
 
         private val MACHINE_KEYS = setOf(
             "printer_model", "printer_settings_id", "printer_variant", "printer_structure", "gcode_flavor",
             "printable_area", "printable_height", "bed_exclude_area", "nozzle_diameter", "extruder_offset",
-            "machine_start_gcode", "machine_end_gcode", "machine_pause_gcode", "before_layer_change_gcode", "layer_change_gcode",
+            "machine_start_gcode", "machine_end_gcode", "machine_change_filament_gcode", "change_filament_gcode", "machine_pause_gcode", "before_layer_change_gcode", "layer_change_gcode",
             "retraction_length", "retraction_speed", "deretraction_speed", "retraction_minimum_travel", "retract_before_wipe",
             "retract_when_changing_layer", "retract_restart_extra", "z_hop", "z_hop_types", "retract_lift_above", "retract_lift_below", "wipe", "wipe_distance",
             "min_layer_height", "max_layer_height", "extruder_clearance_radius", "extruder_clearance_height_to_rod", "extruder_clearance_height_to_lid",

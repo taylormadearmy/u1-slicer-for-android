@@ -12,7 +12,7 @@
 #
 # Prereqs:
 #  - Build dir already configured with the desired CMake settings (NDK
-#    26, Release, -Wl,-z,max-page-size=16384). If not, configure first
+#    26, Release, c++_static, 16KB max/common page sizes). If not, configure first
 #    per CLAUDE.md §"Native Rebuild" §"Fresh build".
 #  - orca submodule initialised + checked out at the intended pin.
 
@@ -38,6 +38,11 @@ fi
 
 if [ ! -f "$BUILD_DIR/build.ninja" ]; then
   echo "ERROR: $BUILD_DIR is not a configured CMake build dir (no build.ninja)." >&2
+  exit 1
+fi
+
+if ! grep -qE '^ANDROID_STL:[^=]+=c\+\+_static$' "$BUILD_DIR/CMakeCache.txt"; then
+  echo 'ERROR: reconfigure with -DANDROID_STL=c++_static before building.' >&2
   exit 1
 fi
 
@@ -103,6 +108,8 @@ if [ "$ALIGNS" != "0x4000" ]; then
   exit 1
 fi
 
+python "$REPO_ROOT/scripts/validate-native-page-size.py" --elf "$TMP_STRIPPED"
+
 KOTLIN_COUNT=$(grep -cE 'external fun' "$REPO_ROOT/app/src/main/java/com/u1/slicer/NativeLibrary.kt" || echo "?")
 JNI_COUNT=$("$LLVM_READELF" --dyn-syms "$TMP_STRIPPED" 2>/dev/null | grep -c 'Java_com_u1_slicer_NativeLibrary' || echo "?")
 echo "==> JNI symbols: $JNI_COUNT in .so vs $KOTLIN_COUNT external fun in NativeLibrary.kt"
@@ -110,10 +117,6 @@ if [ "$JNI_COUNT" != "$KOTLIN_COUNT" ]; then
   echo "ERROR: JNI symbol count mismatch; CMake may have dropped a source file." >&2
   exit 1
 fi
-if [ "$JNI_COUNT" != "$KOTLIN_COUNT" ]; then
-  echo "WARNING: JNI symbol count mismatch — CMake may have dropped a source file." >&2
-fi
-
 cp "$TMP_STRIPPED" "$SO_TARGET"
 echo "==> Deployed: $SO_TARGET (${SIZE_MB} MB)"
 

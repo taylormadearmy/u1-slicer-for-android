@@ -19,6 +19,7 @@ import com.u1.slicer.viewer.NativePreviewMesh
 import com.u1.slicer.viewer.NativeRenderBatch
 import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.NativePlateState
+import com.u1.slicer.machine.MachineFamily
 import com.u1.slicer.viewer.StlParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
@@ -29,8 +30,10 @@ import java.io.File
 @Composable
 fun ModelViewerScreen(
     modelFilePath: String,
-    bedSizeXmm: Float = 270f,
-    bedSizeYmm: Float = bedSizeXmm,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     onBack: () -> Unit
 ) {
     var mesh by remember { mutableStateOf<MeshData?>(null) }
@@ -155,11 +158,11 @@ fun ModelViewerScreen(
     }
 
     // Send mesh to GL view when ready
-    LaunchedEffect(mesh, viewerView, bedSizeXmm, bedSizeYmm) {
+    LaunchedEffect(mesh, viewerView, bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily) {
         val m = mesh
         val v = viewerView
         if (m != null && v != null) {
-            v.setBedSizeMm(bedSizeXmm, bedSizeYmm)
+            v.setBedProfile(bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily)
             v.setMesh(m)
         }
     }
@@ -222,7 +225,7 @@ fun ModelViewerScreen(
                     factory = { ctx ->
                         ModelViewerView(ctx).also { view ->
                             viewerView = view
-                            view.setBedSizeMm(bedSizeXmm, bedSizeYmm)
+                            view.setBedProfile(bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily)
                             mesh?.let { view.setMesh(it) }
                         }
                     },

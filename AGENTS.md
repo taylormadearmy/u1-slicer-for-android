@@ -25,11 +25,11 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal build
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest                        # 2044 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 468 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 2235 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 493 independent device tests, uses Orchestrator
 ```
 
-**2512 total tests.** Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
+**2739 total tests:** 2235 JVM tests and 504 device tests. The default device run includes 493 independent tests. The remaining 11 require the upgrade or mock-host drivers named by `@RequiresExternalFixture`. Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
 
 **Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs. Pass the serial via `ANDROID_SERIAL=<id>` env var. Never deploy automated tests to personal or non-phone devices (the NF22E1 listed in local notes is off-limits).
 
@@ -51,6 +51,14 @@ ANDROID_SERIAL=<id> ./gradlew connectedDebugAndroidTest --no-daemon \
 .\scripts\run-confidence-check.ps1 -Status
 ```
 The default instrumented smoke set and E2E range live in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1). Use `-InstrumentedClasses` / `-SkipUnit` / `-SkipInstrumented` / `-SkipE2E` only when you intentionally want a partial sweep.
+
+When changing the pinned Orca catalogue or its recorded fetched-profile snapshots, run the pinned upstream profile checks before the confidence sweep:
+
+```powershell
+python .\scripts\validate-machine-profiles.py
+```
+
+The wrapper is offline and validates the recorded subpaths in `app/src/test/resources/machine/catalogue/` with the checker from the pinned Orca submodule.
 
 **Sharded across two devices** (roughly 2× speedup):
 ```bash
@@ -76,6 +84,7 @@ git submodule update --init --recursive app/src/main/cpp/orcaslicer
 ```bash
 # Verify NDK26: CMakeCache.txt must have ndk/26.1.10909125 in CMAKE_TOOLCHAIN_FILE
 # Verify Release: CMAKE_BUILD_TYPE:STRING=Release
+# Verify runtime: ANDROID_STL is c++_static (reconfigure old shared-runtime caches)
 ninja -j1    # -j2+ OOMs
 $NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe --strip-unneeded libprusaslicer-jni.so
 cp libprusaslicer-jni.so app/src/main/jniLibs/arm64-v8a/
@@ -83,9 +92,10 @@ cp libprusaslicer-jni.so app/src/main/jniLibs/arm64-v8a/
 ```
 
 **Verification after strip:**
-- Size ~19–21 MB (if 50 MB+, you built Debug — redo)
+- Size ~20–23 MB with the static runtime (if 50 MB+, you built Debug — redo)
 - `llvm-readelf -p .comment libprusaslicer-jni.so` → `clang version 17.0.2`
 - JNI symbol count: `llvm-readelf --dyn-syms ... | grep Java_com_u1_slicer | wc -l` matches the count of `external fun` declarations in `NativeLibrary.kt`
+- Validate the packaged APK with `python scripts/validate-native-page-size.py <apk> --aapt D:/Android/Sdk/build-tools/35.0.0/aapt.exe`. The single JNI library links the C++ runtime statically; both LOAD and GNU_RELRO alignment and the actual native extraction manifest must pass.
 
 **Fresh CMake configure** (no existing build dir):
 ```bash
@@ -101,7 +111,7 @@ mkdir -p "$BUILD_DIR"
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DCMAKE_MAKE_PROGRAM=D:/Android/Sdk/cmake/3.22.1/bin/ninja.exe \
   -DCMAKE_BUILD_TYPE=Release -B"$BUILD_DIR" -GNinja \
-  -DSLICER_BACKEND=orca -DANDROID_STL=c++_shared
+  -DSLICER_BACKEND=orca -DANDROID_STL=c++_static
 ninja -j1 -C "$BUILD_DIR"
 ```
 
@@ -132,6 +142,17 @@ Never reuse or update a published release — always use a new tag.
 - **Native**: OrcaSlicer C++ via JNI — pre-built `.so` in `jniLibs/arm64-v8a/`
 - **3D**: OpenGL ES 3.0 (`GLSurfaceView`, `viewer/` package)
 - Kotlin 1.9.22, compileSdk 34, minSdk 26, JVM 17
+
+### Machine profiles
+
+- `MachineProfile` is the source of machine geometry, G-code flavor, firmware family, start and end G-code, and the physical slot count.
+- For generic native slicing, the immutable `GenericMachineProfile` snapshot owns those values and its fingerprint. Catalogue/display `MachineProfile` metadata derives from that same selected JSON.
+- `MachineProfileRepository` prefers each printer's embedded snapshot, then its explicit cached profile ID. Missing explicit bindings fail instead of becoming U1. Legacy U1 configurations keep the U1 default.
+- The catalogue is pinned to `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Its source index contains 326 models across 56 usable vendors. The wizard shows the eligible subset after rectangular-FDM, physical-slot, and firmware checks.
+- The generic path supports rectangular FDM machines with 1 to 4 physical slots and either Klipper or Marlin G-code. Network upload uses Moonraker, OctoPrint, or PrusaLink when the profile and transport expose the required capability.
+- Bambu support remains a dedicated opt-in path. Do not route Bambu machines through the generic `MachineProfile` path until the planned convergence work lands.
+- Elegoo Centauri Carbon 1 has a dedicated experimental add route and transport, not Moonraker. Carbon 2 is unsupported. Mock protocol tests do not establish physical CC1 compatibility.
+- `snapmaker_authored_profile` marks app-authored embedded profiles. Native code applies `profile_keys[]` for marked profiles. The `PRINT_START` check remains only as a scoped fallback for legacy Snapmaker files, and `ProfileKeyCoverageTest` guards every key written by `applyConfigToPrusa()`.
 
 ---
 

@@ -1,5 +1,7 @@
 package com.u1.slicer.printer
 
+import okhttp3.OkHttpClient
+import com.u1.slicer.network.PrinterStatus
 import com.u1.slicer.data.PrintHostConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -139,5 +141,58 @@ class OctoPrintTransportTest {
         assertEquals("printing", state("{\"printing\":true}"))
         assertEquals("standby", state("{\"operational\":true}"))
         assertEquals("disconnected", state("{}"))
+    }
+    @Test
+    fun `upload maps auth and conflict failures`() = runBlocking {
+        MockWebServer().use { server ->
+            val file = File.createTempFile("octo", ".gcode").apply { writeText("G28\n") }
+            try {
+                server.enqueue(MockResponse().setResponseCode(401))
+                val authentication = OctoPrintTransport(server.url("/").toString(), "bad", OkHttpClient())
+                    .uploadJob(file, "x.gcode")
+                assertTrue(authentication is TransportCommandResult.Failure)
+                assertTrue((authentication as TransportCommandResult.Failure).reason.contains("authentication"))
+                server.enqueue(MockResponse().setResponseCode(409))
+                val conflict = OctoPrintTransport(server.url("/").toString(), "key", OkHttpClient())
+                    .uploadJob(file, "x.gcode")
+                assertTrue(conflict is TransportCommandResult.Failure)
+                assertTrue((conflict as TransportCommandResult.Failure).reason.contains("conflict"))
+            } finally { file.delete() }
+        }
+    }
+
+    @Test
+    fun `job status maps state and progress`() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200).setBody("""{"state":"Printing","job":{"file":{"name":"cube.gcode"},"filament":{"tool0":{"length":123.5}}},"progress":{"completion":42.5,"printTime":12}}"""))
+            val transport = OctoPrintTransport(server.url("/").toString(), "key", OkHttpClient())
+            val status = transport.fetchStatus()
+            assertEquals(PrinterStatus("printing", .425f, "cube.gcode", 12f, 123.5f), status)
+            assertEquals("/api/job", server.takeRequest().path)
+        }
+    }
+
+    @Test
+    fun `job status maps paused idle error and offline states`() = runBlocking {
+        MockWebServer().use { server ->
+            listOf("Paused" to "paused", "Operational" to "standby", "Error" to "error", "Offline" to "disconnected")
+                .forEach { (octoState, expected) ->
+                    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"state":"$octoState"}"""))
+                    val status = OctoPrintTransport(server.url("/").toString(), "key", OkHttpClient()).fetchStatus()
+                    assertEquals(expected, status.state)
+                }
+        }
+    }
+
+    @Test fun uploadWithStartFlagIsRefusedWithoutNetwork() = runBlocking {
+        MockWebServer().use { server ->
+            val file = File.createTempFile("octosafe", ".gcode").apply { writeText("G28\n") }
+            try {
+                val transport = OctoPrintTransport(server.url("/").toString(), "key")
+                assertFalse(transport.capabilities.supportsStartOnUpload)
+                assertTrue(transport.uploadJob(file, "cube.gcode", true) is TransportCommandResult.Failure)
+                assertEquals(0, server.requestCount)
+            } finally { file.delete() }
+        }
     }
 }

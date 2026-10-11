@@ -17,11 +17,13 @@ fun buildSyncPreviewEntries(
     slots: List<FilamentSlot>,
     library: FilamentLibrary?,
     includeAllPrinterSlots: Boolean = false,
+    slotCount: Int = 4,
 ): List<PrinterViewModel.SyncPreviewEntry> {
+    val activeSlotCount = slotCount.coerceIn(1, 4)
     val slotIndices = if (includeAllPrinterSlots) {
         slots.map { it.index }.distinct().sorted()
     } else {
-        (0..3).toList()
+        (0 until activeSlotCount).toList()
     }
     return slotIndices.map { i ->
         val preset = presets.firstOrNull { it.index == i } ?: ExtruderPreset(i)

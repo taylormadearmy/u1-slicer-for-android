@@ -3,6 +3,7 @@ package com.u1.slicer.printer
 import com.u1.slicer.AppEventNotifier
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.MoonrakerClient
 import com.u1.slicer.network.PrinterStatus
@@ -80,7 +81,7 @@ class PrinterRepository(
             activePrinter = newPrinter
             _activeNickname.value = newPrinter.nickname
             _printerUrl.value = when (newPrinter.kind) {
-                PrinterKind.MOONRAKER -> MoonrakerClient.normalizeUrl(newPrinter.moonrakerUrl)
+                PrinterKind.MOONRAKER -> normalizePrintHostUrl(newPrinter.moonrakerUrl, newPrinter.hostType)
                 PrinterKind.BAMBU_LAN -> newPrinter.bambu?.ip.orEmpty()
                 PrinterKind.ELEGOO_CC1, PrinterKind.OCTOPRINT -> newPrinter.host?.url.orEmpty()
             }
@@ -95,7 +96,7 @@ class PrinterRepository(
         consecutiveFailures = 0
         previousEffectiveState = "disconnected"
         _printerUrl.value = when (newPrinter.kind) {
-            PrinterKind.MOONRAKER -> MoonrakerClient.normalizeUrl(newPrinter.moonrakerUrl)
+            PrinterKind.MOONRAKER -> normalizePrintHostUrl(newPrinter.moonrakerUrl, newPrinter.hostType)
             PrinterKind.BAMBU_LAN -> newPrinter.bambu?.ip.orEmpty()
             PrinterKind.ELEGOO_CC1, PrinterKind.OCTOPRINT -> newPrinter.host?.url.orEmpty()
         }
@@ -110,15 +111,16 @@ class PrinterRepository(
 
     /** Convenience: update the active printer's URL via PrintersRepository. */
     suspend fun updateActiveUrl(url: String) {
-        val normalized = MoonrakerClient.normalizeUrl(url)
         val cfg = printersRepo.config.first() ?: return
         val active = cfg.active
         if (active.kind != PrinterKind.MOONRAKER) return
+        val normalized = normalizePrintHostUrl(url, active.hostType)
         printersRepo.update(
             active.copy(
                 moonrakerUrl = normalized,
                 selectedWebcamUid = active.selectedWebcamUid.takeIf {
-                    normalized == MoonrakerClient.normalizeUrl(active.moonrakerUrl)
+                    active.hostType == HostType.MOONRAKER &&
+                        normalized == normalizePrintHostUrl(active.moonrakerUrl, active.hostType)
                 },
             )
         )
@@ -229,10 +231,22 @@ class PrinterRepository(
             return TransportCommandResult.Failure("Printer configuration changed; please send again")
         }
         val uploadName = buildPrinterUploadFilename(filename)
-        when (val uploaded = transport.uploadJob(gcodeFile, uploadName)) {
+        val startsOnUpload = transport.capabilities.supportsStartOnUpload
+        if (startsOnUpload) {
+            val allowed = validateBeforeStart() && matchesCurrentPrinter(selectedPrinter)
+            currentCoroutineContext().ensureActive()
+            if (!allowed || currentTransport !== transport) {
+                return TransportCommandResult.Failure("Printer configuration changed; the print was not started")
+            }
+        }
+        when (val uploaded = transport.uploadJob(gcodeFile, uploadName, startAfterUpload = startsOnUpload)) {
             TransportCommandResult.Success -> Unit
             is TransportCommandResult.Unsupported -> return uploaded
             is TransportCommandResult.Failure -> return uploaded
+        }
+        if (startsOnUpload) {
+            if (currentTransport === transport) transport.hintJobStarting()
+            return TransportCommandResult.Success
         }
         currentCoroutineContext().ensureActive()
         val allowed = validateBeforeStart() && matchesCurrentPrinter(selectedPrinter)
@@ -257,7 +271,7 @@ class PrinterRepository(
             return TransportCommandResult.Failure("Printer configuration changed; please send again")
         }
         val uploadName = buildPrinterUploadFilename(filename)
-        return transport.uploadJob(gcodeFile, uploadName)
+        return uploadOnlyWithTransport(transport, gcodeFile, uploadName)
     }
 
     private suspend fun matchesCurrentPrinter(expected: Printer): Boolean {
@@ -359,6 +373,16 @@ class PrinterRepository(
     }
 
     companion object {
+        internal suspend fun uploadOnlyWithTransport(
+            transport: PrinterTransport,
+            gcodeFile: java.io.File,
+            uploadName: String,
+        ): TransportCommandResult = transport.uploadJob(
+            file = gcodeFile,
+            remoteName = uploadName,
+            startAfterUpload = false,
+        )
+
         /** Number of consecutive "disconnected" polls required before PrinterOffline fires. */
         internal const val OFFLINE_GRACE_FAILURES = 3
 
@@ -446,11 +470,13 @@ class PrinterRepository(
             if (current == null) return true
             if (current.id != next.id || current.machine != next.machine ||
                 current.machineProfile?.fingerprint != next.machineProfile?.fingerprint) return true
+            if (current.hostType != next.hostType || current.apiKey != next.apiKey ||
+                current.username != next.username || current.password != next.password) return true
             if (current.kind != next.kind) return true
             return when (next.kind) {
                 PrinterKind.MOONRAKER ->
-                    MoonrakerClient.normalizeUrl(current.moonrakerUrl) !=
-                        MoonrakerClient.normalizeUrl(next.moonrakerUrl)
+                    normalizePrintHostUrl(current.moonrakerUrl, current.hostType) !=
+                        normalizePrintHostUrl(next.moonrakerUrl, next.hostType)
                 PrinterKind.BAMBU_LAN -> current.bambu != next.bambu
                 PrinterKind.ELEGOO_CC1, PrinterKind.OCTOPRINT -> current.host != next.host
             }

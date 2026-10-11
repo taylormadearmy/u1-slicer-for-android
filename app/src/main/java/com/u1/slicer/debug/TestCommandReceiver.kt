@@ -14,6 +14,13 @@ import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.printer.PrinterViewModel
 import com.u1.slicer.slice.SliceArtifact
 import java.io.File
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import com.u1.slicer.U1SlicerApplication
+import com.u1.slicer.aipaint.AiPaintUiState
+import com.u1.slicer.aipaint.AiPaintViewModel
+import com.u1.slicer.data.CanonicalColourDestination
+import com.u1.slicer.data.CanonicalColourRemap
 
 /**
  * Debug-only BroadcastReceiver for reliable ADB-driven E2E testing.
@@ -109,6 +116,9 @@ class TestCommandReceiver(
         const val ACTION_ADD_FILE_FOR_PLATE = "${PREFIX}ADD_FILE_FOR_PLATE"
         const val ACTION_CREATE_MIX = "${PREFIX}CREATE_MIX"
         const val ACTION_ASSIGN_FILAMENT = "${PREFIX}ASSIGN_FILAMENT"
+        const val ACTION_START_SMART_PAINT = "${PREFIX}START_SMART_PAINT"
+        const val ACTION_ACCEPT_SMART_PAINT = "${PREFIX}ACCEPT_SMART_PAINT"
+        const val ACTION_SET_COLOUR_REMAP = "${PREFIX}SET_COLOUR_REMAP"
 
         fun intentFilter(): IntentFilter = IntentFilter().apply {
             addAction(ACTION_LOAD_FILE)
@@ -131,6 +141,9 @@ class TestCommandReceiver(
             addAction(ACTION_ADD_FILE_FOR_PLATE)
             addAction(ACTION_CREATE_MIX)
             addAction(ACTION_ASSIGN_FILAMENT)
+            addAction(ACTION_START_SMART_PAINT)
+            addAction(ACTION_ACCEPT_SMART_PAINT)
+            addAction(ACTION_SET_COLOUR_REMAP)
         }
     }
 
@@ -167,6 +180,37 @@ class TestCommandReceiver(
             ACTION_ADD_FILE_FOR_PLATE -> handleAddFileForPlate(context, intent)
             ACTION_CREATE_MIX -> handleCreateMix(intent)
             ACTION_ASSIGN_FILAMENT -> handleAssignFilament(intent)
+            ACTION_START_SMART_PAINT -> {
+                val aiVm = (context.applicationContext as U1SlicerApplication).container.aiPaintViewModel
+                val path = slicerViewModel.currentModelPath ?: return
+                aiVm.reset()
+                aiVm.runPipeline(path, slicerViewModel.nativeLib,
+                    printerColours = slicerViewModel.activeExtruderColors.value,
+                    sourceDisplayName = slicerViewModel.modelFileName.value)
+                navigateTo("ai_paint")
+            }
+            ACTION_SET_COLOUR_REMAP -> {
+                val index = intent.getIntExtra("index", -1)
+                val slot = intent.getIntExtra("slot", -1)
+                require(index >= 0 && slot in 0..3)
+                slicerViewModel.setCanonicalColourRemaps(listOf(
+                    CanonicalColourRemap(index, CanonicalColourDestination.PhysicalSlot(slot))))
+            }
+            ACTION_ACCEPT_SMART_PAINT -> {
+                val aiVm = (context.applicationContext as U1SlicerApplication).container.aiPaintViewModel
+                val result = (aiVm.uiState.value as? AiPaintUiState.Result)?.state ?: return
+                // Exercise a real region edit before the normal save/reload handoff.
+                result.triangleSegments.firstOrNull()?.let { aiVm.setSegmentSlot(it, 1) }
+                slicerViewModel.viewModelScope.launch {
+                    try {
+                        val path = aiVm.finalizePainting() ?: error("No painted model")
+                        slicerViewModel.loadModelFromFile(File(path), preserveDisplayName = result.sourceDisplayName)
+                        navigateTo("prepare")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "ACCEPT_SMART_PAINT: failed", e)
+                    }
+                }
+            }
             else -> Log.w(TAG, "Unknown action: $action")
         }
     }
@@ -355,6 +399,18 @@ class TestCommandReceiver(
         val filamentSlots = printerViewModel.printerFilamentSlots.value
         Log.i(TAG, "=== DUMP_STATE ===")
         Log.i(TAG, "State: $state")
+        val aiState = (context.applicationContext as U1SlicerApplication).container.aiPaintViewModel.uiState.value
+        val painted = (aiState as? AiPaintUiState.Result)?.state
+        val expectedTriangles = painted?.let {
+            if (it.cascadeStride > 1 && it.sourceTrianglePositions.isNotEmpty()) it.sourceTrianglePositions.size / 9
+            else it.trianglePositions.size / 9
+        }
+        val actualTriangles = slicerViewModel.modelInfo.value?.triangleCount
+        val accepted = painted != null && state is SlicerViewModel.SlicerState.ModelLoaded &&
+            AiPaintViewModel.isSamePainting(painted.paintedModelPath, slicerViewModel.currentModelPath) &&
+            actualTriangles == expectedTriangles
+        Log.i(TAG, "SmartPaintResult: ${painted != null} triangles=$expectedTriangles state=${aiState.javaClass.simpleName}")
+        Log.i(TAG, "SmartPaintAccepted: $accepted triangles=$actualTriangles remaps=${slicerViewModel.canonicalColourRemaps.value.size}")
         Log.i(TAG, "ShowPlateSelector: ${slicerViewModel.showPlateSelector.value}")
         Log.i(TAG, "PrinterStatus: $printerStatus")
         Log.i(TAG, "SendingState: $sendingState")

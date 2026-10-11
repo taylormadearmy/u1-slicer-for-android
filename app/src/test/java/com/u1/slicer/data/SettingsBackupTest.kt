@@ -1,6 +1,12 @@
 package com.u1.slicer.data
 
 import com.u1.slicer.SlicerViewModel
+import com.u1.slicer.machine.AssetProvider
+import com.u1.slicer.machine.MachineFamily
+import com.u1.slicer.machine.MachineProfile
+import com.u1.slicer.machine.MachineProfileRepository
+import com.u1.slicer.machine.resolveMachineSliceConfig
+import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -8,6 +14,26 @@ import org.junit.Test
 // Printer / PrintersConfig are in the same package — no import needed.
 
 class SettingsBackupTest {
+
+    @Test
+    fun `backup preserves host credentials under PrusaSlicer keys`() {
+        val printer = Printer(
+            id = "prusa",
+            nickname = "PrusaLink",
+            hostType = HostType.PRUSALINK,
+            moonrakerUrl = "http://prusa.local",
+            apiKey = "api",
+            username = "user",
+            password = "pass",
+        )
+        val json = SettingsBackup.export(SettingsBackup.BackupData(null, null,
+            PrintersConfig(listOf(printer), printer.id), null))
+        val record = JSONObject(json).getJSONArray("printers").getJSONObject(0)
+        assertEquals("prusalink", record.getString("host_type"))
+        assertEquals("http://prusa.local", record.getString("print_host"))
+        assertEquals("api", record.getString("printhost_apikey"))
+        assertEquals(printer, requireNotNull(SettingsBackup.import(json).printersConfig).active)
+    }
 
     @Test
     fun `export produces valid JSON with version field`() {
@@ -289,6 +315,95 @@ class SettingsBackupTest {
         assertNotNull(cfg)
         assertEquals(2, cfg!!.printers.size)
         assertEquals("b", cfg.activeId)
+    }
+
+    @Test
+    fun `backup round-trip preserves machine profile id per printer`() {
+        val original = PrintersConfig(
+            printers = listOf(
+                Printer(
+                    id = "small",
+                    nickname = "Small printer",
+                    moonrakerUrl = "http://small",
+                    machineProfileId = "generic-180",
+                ),
+                Printer(
+                    id = "large",
+                    nickname = "Large printer",
+                    moonrakerUrl = "http://large",
+                    machineProfileId = "generic-300",
+                ),
+            ),
+            activeId = "large",
+        )
+
+        val json = SettingsBackup.export(
+            SettingsBackup.BackupData(null, null, original, null),
+        )
+        val printerJson = JSONObject(json).getJSONArray("printers")
+        val restored = requireNotNull(SettingsBackup.import(json).printersConfig)
+
+        assertEquals("generic-180", printerJson.getJSONObject(0).getString("machineProfileId"))
+        assertEquals("generic-300", printerJson.getJSONObject(1).getString("machineProfileId"))
+        assertEquals(listOf("generic-180", "generic-300"), restored.printers.map { it.machineProfileId })
+        assertEquals("large", restored.activeId)
+    }
+
+    @Test
+    fun `restored printers retain their profile-derived geometry`() {
+        val u1Json = requireNotNull(
+            javaClass.classLoader?.getResource("machine/snapmaker_u1_resolved.json"),
+        ).readText()
+        val genericJson = requireNotNull(
+            javaClass.classLoader?.getResource("machine/generic_klipper_300.json"),
+        ).readText()
+        val genericProfile = requireNotNull(
+            MachineProfile.fromResolvedOrcaJson(genericJson, MachineFamily.GENERIC),
+        )
+        val cache = createTempDir(prefix = "backup-machine-profiles-").also { it.deleteOnExit() }
+        File(cache, "${genericProfile.id}.json").writeText(genericJson)
+        val repository = MachineProfileRepository(
+            assets = AssetProvider { path ->
+                check(path == MachineProfileRepository.U1_MACHINE_ASSET)
+                u1Json
+            },
+            cacheDir = cache,
+        )
+        val original = PrintersConfig(
+            printers = listOf(
+                Printer(id = "u1", nickname = "U1", moonrakerUrl = "http://u1"),
+                Printer(
+                    id = "generic",
+                    nickname = "Generic 300",
+                    moonrakerUrl = "http://generic",
+                    machineProfileId = genericProfile.id,
+                ),
+            ),
+            activeId = "generic",
+        )
+
+        val restored = requireNotNull(
+            SettingsBackup.import(
+                SettingsBackup.export(SettingsBackup.BackupData(null, null, original, null)),
+            ).printersConfig,
+        )
+        val restoredById = restored.printers.associateBy { it.id }
+        val u1Config = resolveMachineSliceConfig(
+            repository.activeFor(requireNotNull(restoredById["u1"])),
+            SliceConfig(),
+        )
+        val genericConfig = resolveMachineSliceConfig(
+            repository.activeFor(requireNotNull(restoredById["generic"])),
+            SliceConfig(),
+        )
+
+        assertEquals("generic", restored.activeId)
+        assertEquals(270f, u1Config.bedSizeX)
+        assertEquals(270f, u1Config.bedSizeY)
+        assertEquals(270f, u1Config.maxPrintHeight)
+        assertEquals(300f, genericConfig.bedSizeX)
+        assertEquals(300f, genericConfig.bedSizeY)
+        assertEquals(350f, genericConfig.maxPrintHeight)
     }
 
     @Test

@@ -168,7 +168,8 @@ class ElegooCc1Transport(
     override suspend fun resumeJob() = command(ElegooCc1Protocol.Command.RESUME)
     override suspend fun cancelJob() = command(ElegooCc1Protocol.Command.CANCEL)
 
-    override suspend fun uploadJob(file: File, remoteName: String): TransportCommandResult = withContext(Dispatchers.IO) {
+    override suspend fun uploadJob(file: File, remoteName: String, startAfterUpload: Boolean): TransportCommandResult = withContext(Dispatchers.IO) {
+        if (startAfterUpload) return@withContext TransportCommandResult.Unsupported("CC1 requires a separate confirmed start request")
         try {
             ElegooCc1Protocol.validateFilename(remoteName)
             require(file.isFile && file.length() > 0) { "G-code file is empty or missing" }

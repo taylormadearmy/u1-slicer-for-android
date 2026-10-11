@@ -63,12 +63,14 @@ enum class SlicerTarget(
         supportsLocalSlicing = true,
     ),
     ElegooCentauriCarbon(SliceTargetFamily.GENERIC, beta = true, supportsLocalSlicing = true),
-    GenericKlipper(SliceTargetFamily.GENERIC, beta = true, supportsLocalSlicing = true);
+    GenericKlipper(SliceTargetFamily.GENERIC, beta = true, supportsLocalSlicing = true),
+    GenericMarlin(SliceTargetFamily.GENERIC, beta = true, supportsLocalSlicing = true);
 
     fun isCompatibleWith(printer: Printer?): Boolean = when (this) {
         SnapmakerU1 -> printer?.machine == MachineKind.SNAPMAKER_U1
         ElegooCentauriCarbon -> printer?.machine == MachineKind.ELEGOO_CENTAURI_CARBON
         GenericKlipper -> printer?.machine == MachineKind.GENERIC_KLIPPER && printer.machineProfile != null
+        GenericMarlin -> printer?.machine == MachineKind.GENERIC_MARLIN && printer.machineProfile != null
         else -> printer?.machine == MachineKind.BAMBU && printer.bambu?.model?.let(::forBambuModel) == this
     }
 
@@ -86,7 +88,7 @@ enum class SlicerTarget(
         BambuA1Mini -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.A1_MINI
         BambuH2D -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.H2D
         ElegooCentauriCarbon -> kind == PrinterKind.ELEGOO_CC1
-        GenericKlipper -> false
+        GenericKlipper, GenericMarlin -> false
     }
 
     companion object {

@@ -927,7 +927,7 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
 - **Why**: User has standard presets they want to reuse across many prints (e.g. "0.16 fine" with tuned speed / walls / supports). Per-print manual override re-entry is friction.
 - **Persistence**: DataStore alongside existing filament library. `SettingsBackup` schema bump to include profiles (forward-compat: importing a v2 backup just doesn't see the section).
 - **Out of scope**: in-app profile editing (UI for 100+ keys is non-trivial); filament / printer profile import (those are A2).
-- **Relationship to A2**: A2 covers full Orca profile import (printer + filament + process) as part of v3.0.0 multi-printer architecture. F87 is the focused process-only first slice that can ship independently. A2 may later subsume or expand it.
+- **Relationship to A2**: A2 now implements the v5.0.0 machine-profile and `.orca_printer` path. F87 is the already-shipped process-only import path and remains separate from machine-profile selection.
 - **Source**: Kevin, 2026-05-23 (post-v2.4.0).
 
 ### F86: Prepare page — indicate overridden settings + reset button (GitHub #146) — DONE v2.3.0

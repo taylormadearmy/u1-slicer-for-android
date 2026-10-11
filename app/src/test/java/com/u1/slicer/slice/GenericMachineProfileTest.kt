@@ -57,10 +57,70 @@ class GenericMachineProfileTest {
         assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.import(a.toString(), listOf(b.toString())) }
     }
 
-    @Test fun rejectsOtherFirmwareAndMultiNozzleMachines() {
-        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("gcode_flavor" to "marlin")) }
-        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("nozzle_diameter" to JSONArray(listOf("0.4", "0.4")))) }
-        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("extruder_offset" to JSONArray(listOf("10x0")))) }
+    @Test fun rejectsUnsupportedFirmwareAndTopology() {
+        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("gcode_flavor" to "reprap")) }
+        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("nozzle_diameter" to JSONArray(List(5) { "0.4" }))) }
+        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("nozzle_diameter" to JSONArray(listOf("0.4", "0.6")))) }
+        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("single_extruder_multi_material" to "1")) }
+        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("extruder_offset" to JSONArray(listOf("NaNx0")))) }
+    }
+
+    @Test fun marlinFourPhysicalToolsNormalizeFilamentsAndIsolateMachineHooks() {
+        val parsed = GenericMachineProfile.fromJson(profile("gcode_flavor" to "marlin2", "nozzle_diameter" to JSONArray(List(4) { "0.4" }), "machine_change_filament_gcode" to "T[next_extruder]"))
+        val composed = parsed.compose(mapOf("filament_type" to listOf("PETG", "ABS"), "change_filament_gcode" to "SM_TOOL_CHANGE", "machine_start_gcode" to "FOREIGN"))
+        assertEquals(4, parsed.extruderCount)
+        assertEquals("marlin2", parsed.gcodeFlavor)
+        assertEquals(listOf("PETG", "ABS", "ABS", "ABS"), composed["filament_type"])
+        assertEquals(List(4) { "210" }, composed["nozzle_temperature"])
+        assertEquals(List(4) { "" }, composed["filament_start_gcode"])
+        assertEquals("T[next_extruder]", composed["change_filament_gcode"])
+        val applied = parsed.applyTo(SliceConfig(extruderCount = 1), SlicerTarget.GenericMarlin)
+        assertEquals("GENERIC_MARLIN", applied.machineTarget)
+        assertEquals(4, applied.extruderCount)
+        assertEquals("T[next_extruder]", applied.machineChangeFilamentGcode)
+    }
+
+    @Test fun manualSingleToolMetadataDoesNotEnableAutomaticMultiMaterial() {
+        val manual = GenericMachineProfile.fromJson(profile("single_extruder_multi_material" to "1", "manual_filament_change" to "1"))
+        assertEquals(1, manual.extruderCount)
+        assertEquals("0", manual.compose()["single_extruder_multi_material"])
+        assertEquals("0", manual.compose()["enable_prime_tower"])
+        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("single_extruder_multi_material" to "1", "manual_filament_change" to "0")) }
+        assertThrows(IllegalArgumentException::class.java) { GenericMachineProfile.fromJson(profile("single_extruder_multi_material" to "1", "manual_filament_change" to "1", "nozzle_diameter" to JSONArray(listOf("0.4", "0.4")))) }
+    }
+
+    @Test fun relativeMarlinAddsOnlyAppOwnedLayerResetAndRejectsSourceHooks() {
+        listOf("marlin", "marlin2").forEach { flavor ->
+            val parsed = GenericMachineProfile.fromJson(profile("gcode_flavor" to flavor))
+            val config = parsed.compose(mapOf("before_layer_change_gcode" to "SM_PRINT_AUTO_FEED EXTRUDER=3", "layer_change_gcode" to "M620 S3"))
+            assertEquals("G92 E0", config["before_layer_change_gcode"])
+            assertNull(config["layer_change_gcode"])
+            assertEquals(parsed.fingerprint, GenericMachineProfile.fromJson(parsed.resolvedJson).fingerprint)
+        }
+    }
+
+    @Test fun selectedMarlinLayerHooksRemainAndExistingResetIsNotDuplicated() {
+        val selected = GenericMachineProfile.fromJson(profile("gcode_flavor" to "marlin2", "use_relative_e_distances" to "1", "before_layer_change_gcode" to "; selected hook", "layer_change_gcode" to "G92 E0\n; selected after hook"))
+        val config = selected.compose()
+        assertEquals("; selected hook", config["before_layer_change_gcode"])
+        assertEquals("G92 E0\n; selected after hook", config["layer_change_gcode"])
+        val withoutReset = GenericMachineProfile.fromJson(profile("gcode_flavor" to "marlin", "before_layer_change_gcode" to "; selected hook"))
+        assertEquals("; selected hook\nG92 E0", withoutReset.compose()["before_layer_change_gcode"])
+    }
+
+    @Test fun absoluteMarlinAndKlipperDoNotGetAppLayerResets() {
+        val absolute = GenericMachineProfile.fromJson(profile("gcode_flavor" to "marlin2", "use_relative_e_distances" to "0"))
+        assertNull(absolute.compose()["before_layer_change_gcode"])
+        assertNull(absolute.compose()["layer_change_gcode"])
+        assertNull(GenericMachineProfile.fromJson(profile()).compose()["before_layer_change_gcode"])
+    }
+
+    @Test fun arrayBackedMachineTemplatesPreserveSnapshotAndUnwrapAtNativeBoundary() {
+        val parsed = GenericMachineProfile.fromJson(profile("machine_start_gcode" to JSONArray(listOf("G28")), "machine_end_gcode" to JSONArray(listOf("M84"))))
+        assertEquals(listOf("G28"), parsed.settings["machine_start_gcode"])
+        assertEquals(parsed.fingerprint, GenericMachineProfile.fromJson(parsed.resolvedJson).fingerprint)
+        assertEquals("G28", parsed.compose()["machine_start_gcode"])
+        assertEquals("M84", parsed.applyTo(SliceConfig(), SlicerTarget.GenericKlipper).machineEndGcode)
     }
 
     @Test fun rejectsInvalidGeometryAndLimits() {

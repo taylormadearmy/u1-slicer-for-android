@@ -12,9 +12,9 @@ fun resolveTargetedSliceConfig(
     require(target.supportsLocalSlicing) {
         "Local slicing is not yet supported for $target"
     }
-    if (target == SlicerTarget.ElegooCentauriCarbon || target == SlicerTarget.GenericKlipper) {
+    if (target.family == com.u1.slicer.slice.SliceTargetFamily.GENERIC) {
         val profile = if (target == SlicerTarget.ElegooCentauriCarbon) GenericMachineProfile.centauriCarbon()
-            else requireNotNull(machineProfile) { "Import a Klipper machine profile before slicing" }
+            else requireNotNull(machineProfile) { "Choose a machine profile before slicing" }
         return profile.applyTo(base, target)
     }
     return bambuMachineProfileFor(target)?.let { profile ->
@@ -94,4 +94,5 @@ private val SlicerTarget.nativeMachineTarget: String
         SlicerTarget.BambuH2D -> "BAMBU_H2D"
         SlicerTarget.ElegooCentauriCarbon -> "ELEGOO_CC1"
         SlicerTarget.GenericKlipper -> "GENERIC_KLIPPER"
+        SlicerTarget.GenericMarlin -> "GENERIC_MARLIN"
     }

@@ -237,7 +237,7 @@ internal object BambuImportedConfigComposer {
         SlicerTarget.BambuA1 -> "0.20mm Standard @BBL A1"
         SlicerTarget.BambuA1Mini -> "0.20mm Standard @BBL A1M"
         SlicerTarget.BambuH2D -> "0.20mm Standard @BBL H2D"
-        SlicerTarget.SnapmakerU1, SlicerTarget.ElegooCentauriCarbon, SlicerTarget.GenericKlipper -> error("Not a Bambu target")
+        SlicerTarget.SnapmakerU1, SlicerTarget.ElegooCentauriCarbon, SlicerTarget.GenericKlipper, SlicerTarget.GenericMarlin -> error("Not a Bambu target")
     }
 
     private fun SlicerTarget.nativeTargetName(): String = when (this) {
@@ -249,7 +249,7 @@ internal object BambuImportedConfigComposer {
         SlicerTarget.BambuA1 -> "BAMBU_A1"
         SlicerTarget.BambuA1Mini -> "BAMBU_A1_MINI"
         SlicerTarget.BambuH2D -> "BAMBU_H2D"
-        SlicerTarget.SnapmakerU1, SlicerTarget.ElegooCentauriCarbon, SlicerTarget.GenericKlipper -> error("Not a Bambu target")
+        SlicerTarget.SnapmakerU1, SlicerTarget.ElegooCentauriCarbon, SlicerTarget.GenericKlipper, SlicerTarget.GenericMarlin -> error("Not a Bambu target")
     }
 
     private fun rectangle(width: Float, height: Float, x: Float = 0f, y: Float = 0f): String =

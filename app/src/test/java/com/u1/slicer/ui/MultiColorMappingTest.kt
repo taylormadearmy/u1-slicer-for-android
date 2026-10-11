@@ -19,6 +19,18 @@ import org.junit.Test
  */
 class MultiColorMappingTest {
 
+    @Test
+    fun `single slot never invents a second slot`() {
+        assertEquals(listOf(0, 0, 0), ensureMultiSlotMapping(listOf(0, 0, 0), 3, slotCount = 1))
+    }
+
+    @Test
+    fun `two slots distribute collapsed mapping within active range`() {
+        val result = ensureMultiSlotMapping(listOf(0, 0, 0, 0), 4, slotCount = 2)
+        assertEquals(listOf(0, 1, 0, 1), result)
+        assertTrue(result.all { it in 0..1 })
+    }
+
     // ─── Tests that MUST FAIL on the stub ─────────────────────────────────────
 
     /**

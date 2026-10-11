@@ -151,7 +151,7 @@ class SemmSlicingTest {
             t1Count > 0
         )
 
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "SEMM Benchy G-code out of bed bounds: X=[${bounds.minX}, ${bounds.maxX}] Y=[${bounds.minY}, ${bounds.maxY}]",
             bounds.withinBounds

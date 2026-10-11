@@ -2,7 +2,7 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders), with opt-in early-beta LAN support for selected Bambu Lab printers, powered by [Snapmaker Orca 2.2.4](https://github.com/Snapmaker/OrcaSlicer) (OrcaSlicer fork).
+Native Android slicer for the **Snapmaker U1** and supported rectangular-bed FDM printers, powered by [Snapmaker Orca 2.2.4](https://github.com/Snapmaker/OrcaSlicer). The U1 remains the default. Selected Bambu Lab printers use a separate opt-in beta path.
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
@@ -15,6 +15,9 @@ Current release: `v4.0.5` (`versionCode 405`)
 Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for the preferred reporting flow.
 
 ## Features
+
+- **Multi-printer profiles (v5.0.0 candidate)**: browse the eligible subset of a pinned `taylormadearmy/OrcaSlicer` v2.2.4 source catalogue containing 326 models across 56 usable vendors, or import an `.orca_printer` bundle. Eligibility checks require rectangular FDM geometry, 1 to 4 physical slots, and Klipper or Marlin G-code. Upload uses Moonraker, OctoPrint, or PrusaLink when the selected transport supports it.
+- **Elegoo Centauri Carbon 1 beta**: its experimental add route uses the dedicated Elegoo transport and bundled machine profile. Carbon 2 is not supported. Physical CC1 compatibility remains unverified.
 
 - **STL and 3MF slicing** — single-color, multi-color (up to 4 extruders), and paint-based (SEMM)
 - **Bambu support (early beta, opt-in)** — native slicing, monitoring, camera, upload and print flows for A1 Mini, A1, P1P, P1S, X1C, X1E and H2D; imported safe process/filament settings are preserved while target-owned machine and protocol fields are replaced
@@ -39,7 +42,15 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 
 ### Bambu support
 
-Bambu support is disabled by default. Enable it in Settings and explicitly accept the early-beta warning before adding or selecting a Bambu printer. Real-hardware print validation has been completed on H2D and A1 Mini; the other supported targets have configuration, protocol, native slicing, artifact and regression coverage but have not been physically tested by the developer. Firmware and LAN-mode requirements vary by printer generation.
+Bambu support is disabled by default. Open **Settings > Printers > Add**, then enable **Experimental printer support** to show the Bambu LAN route. Real-hardware print validation has been completed on H2D and A1 Mini; the other supported targets have configuration, protocol, native slicing, artifact and regression coverage but have not been physically tested by the developer. Firmware and LAN-mode requirements vary by printer generation.
+
+### Add another printer
+
+Open **Settings**, select **Add** under **Printers**, and choose **Snapmaker U1**. To add another model, enable **Experimental printer support** in the Add Printer dialog. This reveals Bambu LAN, the OrcaSlicer catalogue, and `.orca_printer` import. The wizard resolves inherited Orca JSON, validates the machine before saving it, and caches the resolved profile for offline use. Each printer keeps its own profile and physical slot count.
+
+![Add Printer dialog with experimental printer support enabled](docs/images/multi-printer-wizard.png)
+
+The first v5.0.0 candidate supports rectangular beds, standard single-extruder and independent multi-extruder machines, and up to four physical slots. Delta and circular beds, shared-extruder multi-material systems, SDCP and Duet transports, and more than four physical extruders are deferred. ColorMix and Smart Paint mix encoding remain available only on four-slot printers.
 
 ### Smart Paint
 
@@ -80,7 +91,7 @@ Optional **AI region naming** sends 4 angle screenshots to a vision LLM so gener
 - **MVVM**: SlicerViewModel (StateFlow) + Compose UI
 - **DI**: Manual via AppContainer
 - **Persistence**: Room DB (filaments, jobs) + DataStore (settings)
-- **Network**: OkHttp (Moonraker printer API)
+- **Network**: OkHttp transports for Moonraker, OctoPrint, PrusaLink, and Elegoo CC1, plus the separate Bambu LAN path
 - **Native**: Snapmaker Orca C++ via JNI — pre-built `.so` in `jniLibs/`
 - **3D**: OpenGL ES 3.0 via GLSurfaceView
 
@@ -98,11 +109,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 2044 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 468 instrumented tests (ARM64 device required)
+./gradlew testDebugUnitTest              # 2235 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 493 independent device tests (ARM64 required)
 ```
 
-**2512 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more.
+**2739 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2235 JVM tests and 504 device tests. The default device run includes 493 tests; another 11 require upgrade or mock-host fixtures.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 
@@ -127,8 +138,10 @@ multi-colour output (B62). Verify with: `llvm-readelf -p .comment libprusaslicer
 
 **Quick rebuild** (existing build directory):
 
+Verify that the cache uses NDK 26, `CMAKE_BUILD_TYPE=Release`, and `ANDROID_STL=c++_static` before rebuilding.
+
 ```bash
-ninja -j1    # in app/.cxx/Debug/<hash>/arm64-v8a/
+ninja -j1    # in app/.cxx/Release/<hash>/arm64-v8a/
 llvm-strip --strip-unneeded libprusaslicer-jni.so
 cp libprusaslicer-jni.so app/src/main/jniLibs/arm64-v8a/
 ./gradlew clean installDebug
@@ -143,10 +156,12 @@ cmake -Happ/src/main/cpp \
   -DANDROID_ABI=arm64-v8a -DANDROID_NDK="$NDK" \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DCMAKE_BUILD_TYPE=Release -DSLICER_BACKEND=orca \
-  -DANDROID_STL=c++_shared -GNinja \
+  -DANDROID_STL=c++_static -GNinja \
   -B<build-dir>
 ninja -j1 -C <build-dir>
 ```
+
+Validate the packaged APK with `python scripts/validate-native-page-size.py <apk> --aapt D:/Android/Sdk/build-tools/35.0.0/aapt.exe`.
 
 Use `-j1` — higher parallelism OOMs on most machines. See `CLAUDE.md` for full details.
 

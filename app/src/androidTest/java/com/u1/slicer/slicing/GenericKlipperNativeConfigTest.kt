@@ -169,6 +169,53 @@ class GenericKlipperNativeConfigTest {
         assertTrue(result?.errorMessage?.contains("bed exclusion") == true)
     }
 
+    @Test fun genericRejectsModelLargerThanSelectedBed() {
+        val profile = GenericMachineProfile.fromJson(JSONObject(generic().resolvedJson).apply {
+            put("printable_area", JSONArray(listOf("0x0", "5x0", "5x5", "0x5")))
+        }.toString())
+        select(profile)
+        val result = native.slice(resolveTargetedSliceConfig(SlicerTarget.GenericKlipper, SliceConfig(), profile))
+        assertFalse(result?.success == true)
+        assertTrue(result?.errorMessage?.contains("larger than") == true)
+    }
+
+    @Test fun genericRejectsGeneratedSkirtBeyondSelectedBed() {
+        val profile = generic()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        profileFile.writeText(ProfileEmbedder(context).serializeConfig(profile.compose(overrides = mapOf(
+            "skirt_loops" to "1", "skirt_distance" to "20", "skirt_height" to "1",
+        ))))
+        assertTrue(native.loadProfile(profileFile.absolutePath))
+        assertTrue(native.setModelInstances(floatArrayOf(1f, 100f)))
+        val result = native.slice(resolveTargetedSliceConfig(SlicerTarget.GenericKlipper, SliceConfig(), profile))
+        assertFalse(result?.success == true)
+        assertTrue(result?.errorMessage?.contains("printable volume") == true)
+    }
+
+    @Test fun genericRejectsToolOutsideSelectedTopology() {
+        val profile = generic()
+        select(profile)
+        assertTrue(native.nativeSetVolumeExtruder(0, 0, 2))
+        val result = native.slice(resolveTargetedSliceConfig(SlicerTarget.GenericKlipper, SliceConfig(), profile))
+        assertFalse(result?.success == true)
+        assertTrue(result?.errorMessage?.contains("Model tool") == true)
+    }
+
+    @Test fun selectedMarlinProfileRejectsKlipperTargetAndAcceptsMarlinAlias() {
+        val json = JSONObject(generic().resolvedJson).put("gcode_flavor", "marlin")
+        select(GenericMachineProfile.fromJson(json.toString()))
+        val klipperConfig = resolveTargetedSliceConfig(SlicerTarget.GenericKlipper, SliceConfig(), generic())
+        val rejected = native.slice(klipperConfig)
+        assertFalse(rejected?.success == true)
+        assertTrue(rejected?.errorMessage?.contains("missing or inconsistent") == true)
+        val accepted = native.slice(klipperConfig.copy(machineTarget = "GENERIC_MARLIN"))
+        assertTrue(accepted?.errorMessage, accepted?.success == true)
+        val gcode = File(accepted!!.gcodePath).readText()
+        assertTrue(gcode.contains("; gcode_flavor = marlin"))
+        assertFalse(gcode.contains("EXCLUDE_OBJECT_"))
+        assertFalse(gcode.contains("SM_PRINT"))
+    }
+
     @Test fun importedPerLayerMacroDoesNotLeakIntoGenericOutput() {
         val source = File(model.parentFile, "generic-foreign-hook.3mf")
         try {

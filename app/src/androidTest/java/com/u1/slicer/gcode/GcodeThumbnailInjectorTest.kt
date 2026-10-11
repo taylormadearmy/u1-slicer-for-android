@@ -72,6 +72,17 @@ class GcodeThumbnailInjectorTest {
     }
 
     @Test
+    fun buildThumbnailBlocks_uses_Prusa_wrappers_for_Marlin() {
+        val bitmap = GcodeThumbnailInjector.extractPreviewImage(threeMfFile)!!
+        val blocks = GcodeThumbnailInjector.buildThumbnailBlocks(bitmap, MarlinDialect)
+
+        assertEquals(2, "; THUMBNAIL_BLOCK_START".toRegex().findAll(blocks).count())
+        assertEquals(2, "; THUMBNAIL_BLOCK_END".toRegex().findAll(blocks).count())
+        assertTrue(blocks.contains("; thumbnail begin 48x48"))
+        assertTrue(blocks.contains("; thumbnail begin 300x300"))
+    }
+
+    @Test
     fun buildThumbnailBlocks_lines_are_commented() {
         val bitmap = GcodeThumbnailInjector.extractPreviewImage(threeMfFile)!!
         val blocks = GcodeThumbnailInjector.buildThumbnailBlocks(bitmap)

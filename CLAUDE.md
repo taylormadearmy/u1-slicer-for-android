@@ -92,8 +92,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2044 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 468 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 2235 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 493 independent device tests, uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -108,13 +108,21 @@ For the repo-defined confidence sweep, use:
 ```
 The default smoke set is defined in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1). When touching session resume, copy-count / bed-fit, or Prepare/slice state, include the recent-change add-ons from the manifest rather than inventing a new subset.
 
+When changing the pinned Orca catalogue or its recorded fetched-profile snapshots, run the pinned upstream profile checks before the confidence sweep:
+
+```powershell
+python .\scripts\validate-machine-profiles.py
+```
+
+The wrapper uses `app/src/main/cpp/orcaslicer/scripts/orca_extra_profile_check.py` without network access. It validates the recorded subpaths present in the partial vendor-index snapshots under `app/src/test/resources/machine/catalogue/`.
+
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2044 tests across 219 reported test suites
+### Unit tests (`app/src/test/`) - 2235 tests across 249 reported test suites
 - Generic printer coverage includes imported machine-profile validation and identity, saved-job compatibility, filament temperature composition, CC1 and OctoPrint protocol handling, and draft connection/preset persistence.
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
@@ -131,7 +139,8 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `data/SliceJobMappingResolutionTest.kt` (10) — historical job export mapping: legacy physical rows, single-colour selected slot, canonical-wide CSV, blank/malformed fallbacks, physical/canonical G-code tool-space rows
 - `data/PlateTypeTest.kt` (21) — PlateType.bedTempFor per-material presets, fromName, case-insensitivity
 - `data/SlicingOverridesTest.kt` (108) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, B24 stale config, B31 brim_type, F30/F31 plus F41/F42/F43 override/file-value coverage, F57/F58 primeTowerWidth + wipeTowerRotationAngle, B53 computeTogglePrimeTower, B71 nozzle temp extruderTemps + nozzleTemps slice-time override, B79 resolveInto supportType/supportAngle, B100 buildProfileOverrides layer_height omitted for USE_FILE mode, B105 single-slot nozzle_temperature/filament_type 1-element guard, B125 support_filament emitted/omitted for Bambu file depending on OverrideMode, B125 sibling per-field OVERRIDE respected when supports=USE_FILE
-- `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution, stale skirt-loop import normalization, F76 legacy cookie key import regression
+- `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution, stale skirt-loop import normalization, F76 legacy cookie key import regression, and v4 schema import into the current multi-printer shape
+- `data/Phase7MigrationFixtureTest.kt` (4) — Released-v4 printer and settings-backup fixtures preserve printer identity, active selection, credentials, presets, and Snapmaker U1 fallback
 - `data/SessionStateTest.kt` (16) — F89 session-resume schema: toJson/fromJson round-trip (basic fields, FloatArray positions, empty/multi additionalFiles, all-nullables-null), malformed JSON returns null, missing version returns null, unknown future schema version returns null, past schema version returns null, missing required modelName/rawInputPath returns null, odd-length customObjectPositions array returns null, G-code tool-space round-trip/default
 - `bambu/ThreeMfParserTest.kt` (12) - 3MF data model construction, isMultiPlate detection, hasPaintSupports field (B57)
 - `bambu/BambuSanitizerTest.kt` (25) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard, group recentering
@@ -146,7 +155,8 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `model/CopyArrangeCalculatorTest.kt` (42) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance, B109 computeRotatedFootprint (5 rotation cases), B109 v2.2.6 effectivePlacementFootprint (6 cases: mesh-AABB priority, scale handling, null fallback, fallback applies scale, zero-rotation shortcut, Dragon-Scale-class divergence proof), F77 buildMultiObjectPositions (5 cases: empty, single, two-in-row, row-wrap, row-height tracking), F92 autoArrange (5 cases: two-object no-tower, reserved wipe-tower keep-out, overflow-never-off-bed, single-object clear-of-reserved, row-wrap)
 - `ui/SendPreparingBannerTest.kt` (4) — F94 structural guard: PrinterViewModel `SendingState.Preparing` + `beginSendPreparing`/`reportSendError`; PrinterScreen Preparing card arm; ≥3 `beginSendPreparing()` + ≥3 `reportSendError(` calls across the MainActivity send sites
 - `ui/UploadOnlyUxTest.kt` (6) — Upload Only confirmation dialog wiring, sliced-material display, physical tool-space threading for mix G-code, button label guard
-- `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
+- `UpgradeDetectorTest.kt` (18) — APK upgrade detection logic, version/timestamp comparison, transient-file clearing, and preservation of DataStore, diagnostics, jobs, and machine profiles
+- `UpgradeSoakScriptTest.kt` (4) — Upgrade-soak launch component, adb error handling, seed-to-candidate ordering, and failure-safe device cleanup
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 - `MergeThreeMfInfoTest.kt` (49) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates), B60 hasPaintSupports preservation, B82 per-plate layer-tool secondary colour matching (palette-match = real, off-palette = artefact)
 - `printer/PrinterRepositoryTest.kt` (2) — upload filename sanitization and unique suffix generation
@@ -214,7 +224,13 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 468 tests across 74 reported test suites
+### Instrumented tests (`app/src/androidTest/`) - 504 tests across 86 Kotlin source files
+
+The default runner executes 493 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
+
+- `slicing/GenericIndependentExtruderNativeTest.kt` has three checks for two- and four-tool Klipper and Marlin output, actual extrusion, selected offsets and heating, and numeric test-oracle correctness.
+- `ui/printer/PrinterEditDialogInstrumentedTest.kt` has nine checks for the experimental add gate, the CC1 route, saved third-party editing, immutable Marlin snapshots, host credentials, and refusal to save a generic machine without its profile.
+- `migration/V405UpgradeMigrationTest.kt` seeds the published schema-9 app and verifies printer identity, credentials, job fingerprints, files, upgrade, and reinstall.
 - New device coverage includes generic native slicing and ViewModel filament propagation, saved-job migration, printer-edit validation, compact filament mapping rows, and large painted-model colour remapping.
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
@@ -298,8 +314,19 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 - **Persistence**: Room DB (filaments, jobs) + DataStore (settings)
 - **Network**: OkHttp (Moonraker printer API)
 - **Native**: Snapmaker Orca C++ via JNI (`app/src/main/cpp/`) — pre-built `.so` in `jniLibs/`
-- Keep `app/src/main/jniLibs/arm64-v8a/libc++_shared.so` alongside `libprusaslicer-jni.so` — clean worktrees and connected tests need both packaged into the APK
+- The single JNI library links the NDK 26 C++ runtime statically. Do not package `libc++_shared.so`; its old 4KB alignment causes Android compatibility warnings. Both LOAD and GNU_RELRO alignment and APK packaging must pass `scripts/validate-native-page-size.py`.
 - **3D**: OpenGL ES 3.0 via GLSurfaceView (`viewer/` package)
+
+### Machine-profile conventions
+
+- `GenericMachineProfile` is the immutable selected-machine snapshot and fingerprint for generic native slicing. `MachineProfile` derives catalogue/display metadata from that snapshot. `MachineConfigResolver.resolveActiveMachineSliceConfig()` applies the captured slice binding.
+- `MachineProfileRepository` prefers each printer's embedded snapshot, then an explicit cached profile ID. An unavailable explicit binding fails instead of becoming U1. Legacy U1 configurations keep the U1 default.
+- `VendorCatalogClient` is pinned to `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Its source index contains 326 models across 56 usable vendors. The wizard exposes the eligible subset after rectangular-FDM, physical-slot, and firmware checks.
+- The generic path supports rectangular FDM machines with Klipper or Marlin G-code. Moonraker, OctoPrint, and PrusaLink transports expose features through capability checks.
+- The Add Printer dialog shows only Snapmaker U1 by default. Its persisted **Experimental printer support** switch reveals Bambu LAN, Elegoo Centauri Carbon 1 beta, the Orca catalogue, and `.orca_printer` import. Existing configured printers remain visible and editable when the switch is off. The Bambu path remains separate from generic profile handling until the Bambu convergence follow-up lands.
+- `ProfileEmbedder` writes `snapmaker_authored_profile` for every app-authored profile. Native code uses that marker to admit `profile_keys[]`. The `PRINT_START` check remains a fallback only for old Snapmaker-family files. `ProfileKeyCoverageTest` checks that `profile_keys[]` covers keys written by `applyConfigToPrusa()`.
+- The wizard resolves inheritance and validates a profile before saving it. Cached resolved profiles work offline. Supported imports are `.orca_printer` bundles and machine JSON from the pinned catalogue. Delta and circular beds, shared-extruder multi-material machines, SDCP and Duet transports, more than four physical slots, and generalized mix encoding remain deferred.
+- Do not describe an upgrade-persistence path as validated until the Phase 7.3 migration tests pass.
 
 ## Key Conventions
 
@@ -323,7 +350,7 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 
 ## Profile Key Pipeline
 
-Settings reach OrcaSlicer's native engine through **two paths** — a setting that's only in one path will silently fall back to OrcaSlicer's compiled default (often wrong for Snapmaker U1):
+Settings reach OrcaSlicer's native engine through **two paths**. A setting that exists in only one path can silently fall back to OrcaSlicer's compiled default.
 
 ### Path 1: `applyConfigToPrusa()` in `sapil_print.cpp`
 - Hardcoded fallback values, always applied (even for raw STL files without embedded profiles)
@@ -331,16 +358,18 @@ Settings reach OrcaSlicer's native engine through **two paths** — a setting th
 
 ### Path 2: `profile_keys[]` whitelist in `sapil_print.cpp`
 - Keys in this array are read from the embedded `project_settings.config` JSON in the 3MF
-- Only applied when `is_snapmaker_profile = true` (start gcode contains "PRINT_START")
-- **Add new settings here** when they come from the Snapmaker profiles
+- Applied to app-authored embedded profiles when `snapmaker_authored_profile` is present
+- Also applied to legacy Snapmaker-family files when their start G-code contains `PRINT_START`; this fallback does not admit generic non-Snapmaker files
+- **Add new overridable embedded-profile settings here** regardless of machine vendor
 
 ### Checklist for adding a new slicer setting
 1. Check the OrcaSlicer default in `PrintConfig.cpp` (`set_default_value` call) — is it acceptable?
 2. If not, add a fallback in `applyConfigToPrusa()` with the correct `ConfigOption` type
 3. **For per-extruder options**: size the vector to `n_ext`, not 1 — `WipeTowerIntegration` copies raw vectors without bounds checking
 4. Add the key name to `profile_keys[]` so the embedded profile can override the fallback
-5. If the setting should be user-controllable, add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
-6. **Rebuild the native `.so`** (use `ninja -j1` to avoid OOM, strip with `llvm-strip`, copy to `jniLibs/`)
+5. Update `ProfileKeyCoverageTest` only when a key is intentionally non-overridable; never bypass its coverage invariant for convenience
+6. If the setting should be user-controllable, add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
+7. **Rebuild the native `.so`** (use `ninja -j1` to avoid OOM, strip with `llvm-strip`, copy to `jniLibs/`)
 
 For clarity: rebuilding the native library is not something to avoid on principle. If a feature depends on C++ changes, rebuild it so the shipped app actually gets the functionality.
 
@@ -436,7 +465,7 @@ is the fast one).
 
 ### Using an existing build directory (preferred — faster)
 
-If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous build:
+If `app/.cxx/Release/<hash>/arm64-v8a/build.ninja` already exists from a previous build:
 
 1. **Verify NDK 26** — check `CMakeCache.txt`:
    ```
@@ -448,11 +477,12 @@ If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous 
    CMAKE_BUILD_TYPE:STRING=Release
    ```
    Do NOT set `CMAKE_CXX_FLAGS_RELEASE` — leave it empty so the toolchain default (`-O3 -DNDEBUG`) is used.
+   Verify `ANDROID_STL` is `c++_static`. Reconfigure caches that use the shared runtime.
 3. **CRITICAL when building from a worktree**: the existing build dir is bound to a specific source directory (see `CMAKE_HOME_DIRECTORY` in `CMakeCache.txt`). If you only modified `sapil_print.cpp` in the worktree but the worktree has additional/modified files in `app/src/main/cpp/src/` that the bound source tree is missing (Phase 1+ added `sapil_bambu_*.cpp/h`, `sapil_diagnostics.cpp/h` changes, `sapil_model.cpp` changes, `slicer_wrapper.cpp` changes, plus `CMakeLists.txt` and `include/sapil.h`), the resulting `.so` will be missing native methods and instrumented tests will fail with `UnsatisfiedLinkError`. **Always copy the full set of worktree-modified files (`diff -rq` between `cpp/src` and `cpp/include` and `CMakeLists.txt`) into the bound source tree before running ninja, then `cmake .` to rescan globs, then `ninja -j1`, then restore the source tree afterwards.** The pre-existing pattern of "copy only sapil_print.cpp, build, restore" is unsafe across worktrees with multi-file native diffs.
 4. Run `ninja -j1` in the directory (OOMs at `-j2`+)
 5. Strip: `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip --strip-unneeded libprusaslicer-jni.so`
 6. Copy to `app/src/main/jniLibs/arm64-v8a/`
-7. **Verify size**: stripped Release `.so` should be ~19-21MB. If it's 50MB+, you built with Debug — redo.
+7. **Verify size**: stripped Release `.so` should be ~20-23MB with the static runtime. If it's 50MB+, you built with Debug — redo.
 8. **Verify compiler**: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17.0.2`.
 9. **Verify JNI symbol completeness**: `llvm-readelf --dyn-syms libprusaslicer-jni.so | grep Java_com_u1_slicer_NativeLibrary | wc -l` should match the count of `external fun` declarations in `app/src/main/java/com/u1/slicer/NativeLibrary.kt`. A mismatch means the build dropped JNI methods (often: a worktree-only source file wasn't picked up by CMake — see step 3).
 10. `./gradlew clean installDebug` — incremental builds may cache old APK
@@ -464,7 +494,7 @@ Create a new build directory configured directly for Release with NDK 26:
 ```bash
 CMAKE=D:/Android/Sdk/cmake/3.22.1/bin/cmake.exe
 NDK=D:/Android/Sdk/ndk/26.1.10909125
-BUILD_DIR=app/.cxx/Debug/ndk26release/arm64-v8a
+BUILD_DIR=app/.cxx/Release/ndk26release/arm64-v8a
 mkdir -p "$BUILD_DIR"
 "$CMAKE" \
   -Happ/src/main/cpp \
@@ -481,6 +511,6 @@ mkdir -p "$BUILD_DIR"
   -B"$BUILD_DIR" \
   -GNinja \
   -DSLICER_BACKEND=orca \
-  -DANDROID_STL=c++_shared
+  -DANDROID_STL=c++_static
 ```
-Then follow steps 3-8 from "Using an existing build directory" above.
+Then follow steps 3-10 from "Using an existing build directory" above. Validate the packaged APK with `python scripts/validate-native-page-size.py <apk> --aapt D:/Android/Sdk/build-tools/35.0.0/aapt.exe`.

@@ -52,7 +52,7 @@ class ElegooCc1TransportTest {
             assertEquals("standby", transport.status.value.state)
             assertEquals(TransportCommandResult.Failure("Printer rejected command, code 2"), transport.pauseJob())
             assertEquals(1, server.requestCount)
-            assertFalse(transport.capabilities.supportsCustomGcode)
+            assertFalse(transport.capabilities.supportsConsole)
             assertFalse(transport.capabilities.supportsHeaterControl)
         } finally { transport.stop(); server.shutdown() }
     }

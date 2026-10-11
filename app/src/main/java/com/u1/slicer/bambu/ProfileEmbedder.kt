@@ -2,6 +2,8 @@ package com.u1.slicer.bambu
 
 import android.content.Context
 import android.util.Log
+import com.u1.slicer.machine.MachineProfile
+import com.u1.slicer.machine.MachineProfileRepository
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -156,15 +158,20 @@ class ProfileEmbedder(private val context: Context) {
     private var printerProfile: MutableMap<String, Any>? = null
     private var processProfile: MutableMap<String, Any>? = null
     private var filamentProfile: MutableMap<String, Any>? = null
+    private var loadedMachineProfileId: String? = null
 
-    /**
-     * Load Snapmaker U1 profiles from assets.
-     */
-    private fun loadProfiles() {
-        if (printerProfile != null) return
-        printerProfile = loadJsonAsMap("orca_profiles/printer/snapmaker_u1.json")
-        processProfile = loadJsonAsMap("orca_profiles/process/standard_0.20mm.json")
-        filamentProfile = loadJsonAsMap("orca_profiles/filament/pla.json")
+    /** Load the active machine profile plus the bundled process and filament profiles. */
+    private fun loadProfiles(machineProfile: MachineProfile? = null) {
+        val profileKey = machineProfile?.id ?: MachineProfileRepository.U1_MACHINE_ASSET
+        if (printerProfile != null && loadedMachineProfileId == profileKey) return
+        printerProfile = if (machineProfile == null) {
+            loadJsonAsMap(MachineProfileRepository.U1_MACHINE_ASSET)
+        } else {
+            jsonToMap(JSONObject(machineProfile.machineJson))
+        }
+        processProfile = loadJsonAsMap(MachineProfileRepository.U1_PROCESS_ASSET)
+        filamentProfile = loadJsonAsMap(MachineProfileRepository.U1_FILAMENT_ASSET)
+        loadedMachineProfileId = profileKey
         Log.i(TAG, "Loaded profiles: printer=${printerProfile!!.size} keys, " +
                 "process=${processProfile!!.size} keys, filament=${filamentProfile!!.size} keys")
     }
@@ -200,6 +207,7 @@ class ProfileEmbedder(private val context: Context) {
      * @param filamentSettings Per-extruder filament settings (temps, colors, materials)
      * @param overrides User overrides (layer height, infill, supports, etc.)
      * @param targetExtruderCount Number of active extruders
+     * @param machineProfile Active machine profile; null keeps the bundled U1 profile.
      */
     fun buildConfig(
         info: ThreeMfInfo,
@@ -212,8 +220,9 @@ class ProfileEmbedder(private val context: Context) {
         // (preserve path), but BEFORE filamentSettings and overrides, so user-set
         // SlicingOverrides still win.
         processProfileKeys: Map<String, Any> = emptyMap(),
+        machineProfile: MachineProfile? = null,
     ): MutableMap<String, Any> {
-        loadProfiles()
+        loadProfiles(machineProfile)
 
         val config: MutableMap<String, Any>
 
@@ -553,7 +562,10 @@ class ProfileEmbedder(private val context: Context) {
         plateId: Int? = null
     ): File {
         val outputFile = File(outputDir, "embedded_${inputFile.name}")
-        val configIni = serializeConfig(config)
+        // An embed written by this app is safe for native profile_keys[]. Keep the
+        // provenance on the output boundary so every app-authored embed is marked,
+        // including callers that do not use the U1-oriented buildConfig() helper.
+        val configIni = serializeConfig(config + ("snapmaker_authored_profile" to "1"))
 
         ZipFile(inputFile).use { srcZip ->
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->

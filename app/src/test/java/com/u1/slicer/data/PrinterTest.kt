@@ -6,6 +6,57 @@ import org.junit.Test
 class PrinterTest {
 
     @Test
+    fun `host type and credentials round-trip using PrusaSlicer keys`() {
+        val p = Printer(
+            id = "octo",
+            nickname = "Octo",
+            hostType = HostType.OCTOPRINT,
+            moonrakerUrl = "http://octo.local",
+            apiKey = "secret",
+            username = "alice",
+            password = "pw",
+        )
+        val json = Printer.toJsonObject(p)
+        assertEquals("octoprint", json.getString("host_type"))
+        assertEquals("http://octo.local", json.getString("print_host"))
+        assertEquals("secret", json.getString("printhost_apikey"))
+        assertEquals(p, Printer.fromJsonObject(json))
+    }
+
+    @Test
+    fun `legacy kind JSON migrates to Moonraker host`() {
+        val json = org.json.JSONObject().apply {
+            put("id", "legacy")
+            put("nickname", "Legacy")
+            put("kind", PrinterKind.MOONRAKER.name)
+            put("moonrakerUrl", "http://legacy")
+        }
+        val back = Printer.fromJsonObject(json)
+        assertEquals(HostType.MOONRAKER, back.hostType)
+        assertEquals("http://legacy", back.moonrakerUrl)
+        assertNull(back.apiKey)
+    }
+
+    @Test
+    fun `host type without legacy keys restores PrusaLink credentials`() {
+        val back = Printer.fromJsonObject(org.json.JSONObject().apply {
+            put("id", "prusa")
+            put("nickname", "MK4")
+            put("host_type", "prusalink")
+            put("print_host", "http://mk4.local")
+            put("printhost_apikey", "key")
+            put("printhost_user", "maker")
+            put("printhost_password", "secret")
+        })
+
+        assertEquals(HostType.PRUSALINK, back.hostType)
+        assertEquals("http://mk4.local", back.moonrakerUrl)
+        assertEquals("key", back.apiKey)
+        assertEquals("maker", back.username)
+        assertEquals("secret", back.password)
+    }
+
+    @Test
     fun `Moonraker printer round-trip through JSON preserves all fields`() {
         val p = Printer(
             id = "uuid-1",
@@ -21,6 +72,22 @@ class PrinterTest {
         val json = Printer.toJsonObject(p).toString()
         val back = Printer.fromJsonObject(org.json.JSONObject(json))
         assertEquals(p as Any, back as Any)
+    }
+
+    @Test
+    fun `PrintersConfig round-trip preserves machine profile id`() {
+        val printer = Printer(
+            id = "uuid-profile",
+            nickname = "Generic",
+            moonrakerUrl = "http://192.168.1.51",
+            machineProfileId = "generic-klipper-300",
+        )
+        val config = PrintersConfig(printers = listOf(printer), activeId = printer.id)
+
+        val roundTripped = PrintersConfig.fromJson(PrintersConfig.toJson(config))
+
+        assertEquals("generic-klipper-300", roundTripped.active.machineProfileId)
+        assertEquals(config, roundTripped)
     }
 
     @Test

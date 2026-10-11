@@ -16,8 +16,35 @@ Run before release:
 ```bash
 ./gradlew testDebugUnitTest
 ./gradlew connectedDebugAndroidTest
-./gradlew assembleRelease
+./gradlew clean assembleRelease
 ```
+
+Validate native packaging on both debug and release APKs before device testing:
+
+```powershell
+python scripts/test_validate_native_page_size.py
+python scripts/validate-native-page-size.py app/build/outputs/apk/debug/app-debug.apk --aapt D:/Android/Sdk/build-tools/35.0.0/aapt.exe
+python scripts/validate-native-page-size.py app/build/outputs/apk/release/app-release.apk --aapt D:/Android/Sdk/build-tools/35.0.0/aapt.exe
+./scripts/test-batch-e2e-process.ps1
+./scripts/test-batch-e2e-exit.ps1
+./scripts/test-v405-upgrade-arguments.ps1
+python scripts/test_phase6_printer_host_mock.py
+```
+
+The native checker verifies the single ARM64 JNI library, static C++ runtime,
+16KB LOAD/RELRO alignment, ZIP placement, and the packaged extraction manifest.
+These checks do not prove runtime behavior on a 16KB kernel. Record the actual
+device value from `adb -s <approved-phone> shell getconf PAGE_SIZE` when reporting
+device coverage. The E2E driver rejects a changed or missing app process rather
+than accepting stale logs or waiting for a lost slice until its timeout.
+
+After the debug sweep, `run-release-native-regression.ps1` runs 18 native slicing
+checks against the actual signed release APK. It verifies installed app/test APK
+hashes, requires a fresh results directory, checks unique per-class coverage,
+then reinstalls the debug candidate and restores the full verified sandbox.
+Its inputs include the approved device, release/debug/test APKs, backup archive,
+backup SHA-256, and results directory. This is native release coverage, not a
+substitute for the full debug UI/E2E run.
 
 For the repo-defined confidence sweep with live progress output and a status file you can query mid-run, use:
 
@@ -27,10 +54,78 @@ For the repo-defined confidence sweep with live progress output and a status fil
 ```
 The default smoke list and E2E range are in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1).
 
+The device runner removes each test process's `files/transient/<session>` and
+`cache/transient/<session>` workspaces when that process finishes. The listener
+prevents a full Orchestrator run from filling the device with temporary copies
+of large 3MFs. Other tests delete jobs and change settings. Run against disposable
+app data, or preserve and byte-verify a complete sandbox backup after the suite.
+
+U1 ViewModel and mixed-filament scenarios use `OfflineU1PrinterRule` to select
+a four-slot U1 at a reserved offline address. The rule restores the previous
+printer configuration after each case, including failed cases. These tests
+must not inherit a single-nozzle printer selected on the phone.
+
+For a full Windows run across two approved phones, build once with
+`./gradlew assembleDebug assembleDebugAndroidTest`. Install both APKs and the
+Gradle-resolved Orchestrator/test-services APKs on each phone. In separate
+terminals, run:
+
+```powershell
+.\scripts\run-instrumented-shard.ps1 -Device <phone-1> -NumShards 2 -ShardIndex 0 -ResultsDir <results>
+.\scripts\run-instrumented-shard.ps1 -Device <phone-2> -NumShards 2 -ShardIndex 1 -ResultsDir <results>
+```
+
+The runner requires an explicit device, rejects the NF22E1, forwards the
+workspace-cleanup listener, and treats skipped tests or incomplete output as
+failures. Check both shard summaries and the combined test count before
+claiming the full suite passed. A complete sandbox backup is required if the
+phone contains user data.
+
+There are 493 independent device tests, three host-upload checks, six ordered
+4.0.4 upgrade-soak checks, and two published 4.0.5 upgrade checks. The ordinary
+Gradle and shard runners exclude `@RequiresExternalFixture` classes. For a complete
+device pass, run all three
+fixture drivers on their approved test phone after ordinary tests finish:
+
+```powershell
+.\scripts\run-phase6-printer-host-e2e.ps1 -Device <approved-phone> -Backend Python
+.\scripts\run-v4-upgrade-soak.ps1 -Device <approved-phone> -CandidateApk <candidate-apk> -V4Apk <published-404-apk> -ResultsDir <upgrade-results>
+.\scripts\run-v405-upgrade-soak.ps1 -Device <approved-phone> -CandidateApk <candidate-apk> -PublishedApk <published-405-apk>
+```
+
+That driver checks the released v4.0.4 APK hash, snapshots the current printer
+state, downgrades, seeds v4 data, upgrades, verifies a native U1 slice, reinstalls
+the candidate, verifies persistence again, and restores the snapshot. Its six
+checks require this install sequence and must not be shuffled or sharded. Its
+snapshot covers printer configuration and cached profiles, not the complete
+database, jobs, or session state. The published 4.0.5 driver additionally verifies
+schema-9 job fingerprints, credentials, immutable profiles, and same-version reinstall.
+
+For the complete reconciliation pass, `scripts/run-v5-reconciliation-regression.ps1`
+runs every group and the full U1 and Bambu E2E batch. Supply both published APKs,
+the debug candidate and test APK, and a verified complete app-data archive. Its
+`finally` step restores the original files and compares every file's SHA-256.
+Evidence stays outside `app/build` so a clean release build does not remove it.
+
+The host-upload driver starts the OctoPrint and PrusaLink mocks and reverses
+their loopback ports to the approved phone. Docker remains its default.
+`-Backend Python -PythonPath <python-executable>` runs the same handlers as
+hidden local processes bound to `127.0.0.1`. Both backends record requests and
+stop only the mocks and port mappings they created. The print-start request
+is checked against a mock, never a physical printer.
+
+If the pinned Orca catalogue or any recorded fetched-profile snapshot changed, validate those files before starting the confidence sweep:
+
+```powershell
+python .\scripts\validate-machine-profiles.py
+```
+
+This check is offline. It runs the applicable checks from the pinned Orca submodule against the recorded subpaths under `app/src/test/resources/machine/catalogue/`.
+
 If Gradle's connected-test wrapper is flaky on this Windows machine, run the device suite directly:
 
-```bash
-adb -s <pixel-8a-device-id> shell am instrument -w com.u1.slicer.orca.test/androidx.test.runner.AndroidJUnitRunner
+```powershell
+.\scripts\run-instrumented-shard.ps1 -Device <approved-phone> -ResultsDir <fresh-results>
 ```
 
 ## Manual release checklist
@@ -75,8 +170,19 @@ that broke in v2.2.0). Painted fixtures hit Branch A and bypass the regressed co
 (`ShouldSubsampleForAiPaintTest`) and the merge perf algorithm
 (`MeshSegmenterMergePerfTest`); the instrumented test
 `SmartPaintBenchyIntegrationTest` runs steps 1–5 on real `3DBenchy.stl` and asserts
-N < 200 leaves and < 30s wall time. Steps 6–7 (accept + slice) remain manual until
-a future test harness can drive the result-screen UI.
+N < 200 leaves and < 30s wall time. The batch runner also runs two Smart Paint
+round-trip scenarios after every U1 smoke or full batch, including `-Suite Both`:
+
+- Segment Benchy, change a region's slot, accept, reload, slice, export and capture Preview.
+- Repeat with a file-colour remap active before painting. Acceptance must clear that
+  remap, preserve the triangle count and complete within 30 seconds.
+
+Both scenarios require at least two physical tools in exported G-code and no T4–T9.
+They call the production painting and acceptance functions through debug-only commands,
+and save result, Prepare and Preview screenshots for visual review. Touch interactions
+such as lasso, brush strokes and the colour picker still require the SP-1–SP-5 checks below.
+`ThreeMfColourRemapperInstrumentedTest` separately bounds a 100,000-triangle remap's
+time and native allocations on Android; `SmartPaintLoadStateTest` checks remap reset.
 
 ## Universal post-slice rubric (every multi-colour file)
 

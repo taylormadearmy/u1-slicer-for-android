@@ -13,12 +13,13 @@ fun resolveDefaultSliceTarget(activePrinter: Printer?): SlicerTarget =
             ?: SlicerTarget.SnapmakerU1
         MachineKind.ELEGOO_CENTAURI_CARBON -> SlicerTarget.ElegooCentauriCarbon
         MachineKind.GENERIC_KLIPPER -> SlicerTarget.GenericKlipper
+        MachineKind.GENERIC_MARLIN -> SlicerTarget.GenericMarlin
         else -> SlicerTarget.SnapmakerU1
     }
 
 fun isLocalSliceAvailable(activePrinter: Printer?): Boolean {
     return when (activePrinter?.machine) {
-        MachineKind.GENERIC_KLIPPER -> activePrinter.machineProfile != null
+        MachineKind.GENERIC_KLIPPER, MachineKind.GENERIC_MARLIN -> activePrinter.machineProfile != null
         MachineKind.BAMBU -> activePrinter.bambu?.model
             ?.let(SlicerTarget::forBambuModel)
             ?.supportsLocalSlicing == true

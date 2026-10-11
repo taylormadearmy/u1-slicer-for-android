@@ -31,7 +31,7 @@ fun AiPaintTree(
     canonicalCount: Int = numPhysical,
     activeMixes: List<MixedFilamentRow> = emptyList(),
     physicalColours: List<Color> = emptyList(),
-    onCreateMix: () -> Unit = {},
+    onCreateMix: (() -> Unit)? = null,
     onEditMix: (MixedFilamentRow) -> Unit = {},
 ) {
     val totalLeaves = remember(tree) { tree.sumOf { it.leafCount() } }

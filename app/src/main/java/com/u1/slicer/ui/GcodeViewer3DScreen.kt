@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.normalizeGcodePreviewColors
 import com.u1.slicer.gcode.ParsedGcode
+import com.u1.slicer.machine.MachineFamily
 import com.u1.slicer.viewer.GcodeViewerView
 import kotlin.coroutines.resume
 import kotlin.math.roundToInt
@@ -30,8 +31,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 fun GcodeViewer3DScreen(
     parsedGcode: ParsedGcode,
     extruderColors: List<String> = emptyList(),
-    bedSizeXmm: Float = 270f,
-    bedSizeYmm: Float = bedSizeXmm,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
+    slotCount: Int = 4,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     // Phase 2 §4 Step 7 (Preview side) — file-derived per-filament colours
@@ -62,14 +66,27 @@ fun GcodeViewer3DScreen(
     // Set colors + upload gcode atomically on the GL thread.
     // suspendCancellableCoroutine waits for the GL work to finish before
     // clearing the loading indicator.
-    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
+    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors, slotCount) {
+        normalizeGcodePreviewColors(
+            extruderColors,
+            colorMapping,
+            resolvedFilamentColors,
+            slotCount,
+        )
     }
 
-    LaunchedEffect(parsedGcode, previewColors, viewerView, bedSizeXmm, bedSizeYmm) {
+    LaunchedEffect(
+        parsedGcode,
+        previewColors,
+        viewerView,
+        bedSizeXmm,
+        bedSizeYmm,
+        bedStlAsset,
+        machineFamily,
+    ) {
         val v = viewerView ?: return@LaunchedEffect
         isLoading = true
-        v.setBedSizeMm(bedSizeXmm, bedSizeYmm)
+        v.setBedProfile(bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily)
         val colors = previewColors
         val gcode = parsedGcode
         suspendCancellableCoroutine { cont ->
@@ -170,7 +187,7 @@ fun GcodeViewer3DScreen(
                     factory = { ctx ->
                         GcodeViewerView(ctx).also { view ->
                             viewerView = view
-                            view.setBedSizeMm(bedSizeXmm, bedSizeYmm)
+                            view.setBedProfile(bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily)
                             // Don't upload gcode here — the LaunchedEffect handles both
                             // colors and gcode atomically to avoid a race where VBOs are
                             // built with default colors before the real colors are set.

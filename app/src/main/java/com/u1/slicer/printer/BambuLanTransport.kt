@@ -117,7 +117,11 @@ class BambuLanTransport(
 
     override suspend fun queryFilamentSlots(): List<FilamentSlot> = _filamentSlots.value
 
-    override suspend fun uploadJob(file: File, remoteName: String): TransportCommandResult = try {
+    override suspend fun uploadJob(
+        file: File,
+        remoteName: String,
+        startAfterUpload: Boolean,
+    ): TransportCommandResult = try {
         BambuDiagnostics.record(
             "upload_started",
             config,

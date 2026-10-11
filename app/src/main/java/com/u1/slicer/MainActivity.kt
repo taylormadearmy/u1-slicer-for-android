@@ -57,6 +57,8 @@ import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.bambu.resolveTargetedSliceConfig
+import com.u1.slicer.machine.MachineFamily
+import com.u1.slicer.machine.resolveMachineSliceConfig
 import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
@@ -554,6 +556,8 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(previewActivePrinter) {
                     pendingPlainGcodePrint = null
                 }
+                val appMachineProfile by viewModel.activeMachineProfile.collectAsState()
+                val appSlotCount = appMachineProfile.extruderCount.coerceIn(1, 4)
                 // F88: collect model name so Save/Share G-code can suggest a meaningful filename.
                 val currentModelFileName by viewModel.modelFileName.collectAsState()
                 val sharedPreviewModelKey = when (val s = appSlicerState) {
@@ -575,6 +579,12 @@ class MainActivity : ComponentActivity() {
 
                 // F89: surface toast events from the ViewModel (e.g. "Couldn't resume <name>").
                 val toastContext = LocalContext.current
+                val machineProfileError by viewModel.activeMachineProfileError.collectAsState()
+                LaunchedEffect(machineProfileError) {
+                    machineProfileError?.let { message ->
+                        android.widget.Toast.makeText(toastContext, message, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
                 LaunchedEffect(Unit) {
                     viewModel.toastEvents.collect { msg ->
                         android.widget.Toast.makeText(toastContext, msg, android.widget.Toast.LENGTH_LONG).show()
@@ -747,10 +757,13 @@ class MainActivity : ComponentActivity() {
                     printerContent = {
                         val filaments by viewModel.filaments.collectAsState(initial = emptyList())
                         val excludeObjects by viewModel.excludeObjects.collectAsState()
+                        val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
                         PrinterScreen(
                             viewModel = printerViewModel,
                             filaments = filaments,
                             excludeObjects = excludeObjects,
+                            bedSizeXmm = activeMachineProfile.bedSizeX,
+                            bedSizeYmm = activeMachineProfile.bedSizeY,
                             onNavigateSettings = { navigateTab(Routes.SETTINGS) },
                             onNavigatePrepare = { navigateTab(Routes.PREPARE) },
                             onNavigatePreview = { navigateTab(Routes.PREVIEW) },
@@ -1154,7 +1167,7 @@ class MainActivity : ComponentActivity() {
                                             // over file-declared), matching the Per-Extruder
                                             // summary — e.g. PETG, not the file's PLA.
                                             slicedMaterials = if (uploadPhysicalSlotSpace)
-                                                (0 until 4).map { slot ->
+                                                (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
                                                     extruderPresets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
                                                 }
                                             else viewModel.sliceTimeMaterials(canonical, currentMapping),
@@ -1183,7 +1196,7 @@ class MainActivity : ComponentActivity() {
                                                             colorMapping = com.u1.slicer.gcode.sendRemapForAction(
                                                                 uploadOnly = true,
                                                                 physicalMapping = if (sourceToolSpace == com.u1.slicer.gcode.GcodeToolSpace.PHYSICAL) {
-                                                                    (0 until 4).toList()
+                                                                    (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).toList()
                                                                 } else {
                                                                     emptyList()
                                                                 },
@@ -1240,12 +1253,14 @@ class MainActivity : ComponentActivity() {
                                     // mapping shows no warning; re-mapping to a
                                     // different-material nozzle warns. Otherwise feed
                                     // the canonical slice mapping.
-                                    sliceTimeColorMapping = if (mixSlotSpace) (0 until 4).toList() else currentMapping,
+                                    sliceTimeColorMapping = if (mixSlotSpace) {
+                                        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).toList()
+                                    } else currentMapping,
                                     // B128: feed the actual sliced materials (file-declared
                                     // when applicable) so the "Sliced as X" mismatch check
                                     // matches the slice instead of the slot preset.
                                     sliceTimeMaterials = if (mixSlotSpace)
-                                        (0 until 4).map { slot ->
+                                        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
                                             extruderPresets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
                                         }
                                     else viewModel.sliceTimeMaterials(canonical, currentMapping),
@@ -1270,11 +1285,18 @@ class MainActivity : ComponentActivity() {
                                         val canonicalSize = canonical.size
                                         val maxFileIdx = plateFileIndices.maxOrNull() ?: (canonicalSize - 1)
                                         val expandedSize = maxOf(canonicalSize, maxFileIdx + 1)
-                                        val expanded = MutableList(expandedSize) { fileIdx -> fileIdx % 4 }
+                                        val mappingSlotCount = if (mixSlotSpace) {
+                                            com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+                                        } else {
+                                            appSlotCount
+                                        }
+                                        val expanded = MutableList(expandedSize) { fileIdx ->
+                                            fileIdx % mappingSlotCount
+                                        }
                                         plateFileIndices.forEachIndexed { posInPlate, fileIdx ->
                                             val slot = plateMapping.getOrNull(posInPlate)
                                             if (slot != null && fileIdx in 0 until expandedSize) {
-                                                // Physical slot (0..3). The explicit if/else
+                                                // Physical slot for the active profile. The explicit if/else
                                                 // avoids tripping the coerceIn grep guard in
                                                 // HardcodedExtruderCapTest.
                                                 expanded[fileIdx] = if (slot >= 0) slot else 0
@@ -1900,6 +1922,15 @@ fun PrepareScreen(
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val activePrinter by printerViewModel.activePrinter.collectAsState()
     val effectiveSliceTarget by viewModel.effectiveSliceTarget.collectAsState()
+    val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
+    val activeMachineConfig = remember(effectiveSliceTarget, activeMachineProfile, config) {
+        if (effectiveSliceTarget.family != com.u1.slicer.slice.SliceTargetFamily.BAMBU) {
+            config.copy(bedSizeX = activeMachineProfile.bedSizeX, bedSizeY = activeMachineProfile.bedSizeY,
+                maxPrintHeight = activeMachineProfile.maxPrintHeight)
+        } else {
+            resolveTargetedSliceConfig(effectiveSliceTarget, config)
+        }
+    }
     val h2dNozzleAssignments by viewModel.h2dFilamentNozzleAssignments.collectAsState()
     val anyMixAssigned by viewModel.anyMixAssigned.collectAsState()
     val filaments by viewModel.filaments.collectAsState(initial = emptyList())
@@ -1941,12 +1972,18 @@ fun PrepareScreen(
     val sessionResumeOffer by viewModel.sessionResumeOffer.collectAsState()
     val silentRestoreInProgress by viewModel.silentRestoreInProgress.collectAsState()
     val perVolumeExtruders by viewModel.perVolumeExtruders.collectAsState()
-    val displayedMixRecipe = resolveImportedMixRecipeDisplaySummary(
-        source = mixRecipeSource,
-        importedRecipe = importedMixRecipe,
-        mixedFilamentManager = viewModel.mixedFilamentManager,
-        numPhysicalFilaments = extruderPresets.size.coerceAtLeast(4),
-    )
+    val mixesAvailable = activeMachineProfile.extruderCount ==
+        com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+    val displayedMixRecipe = if (mixesAvailable) {
+        resolveImportedMixRecipeDisplaySummary(
+            source = mixRecipeSource,
+            importedRecipe = importedMixRecipe,
+            mixedFilamentManager = viewModel.mixedFilamentManager,
+            numPhysicalFilaments = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+        )
+    } else {
+        null
+    }
     var showImportedRecipeDialog by remember { mutableStateOf(false) }
     val embeddedGcodeProject = remember(threeMfInfo, currentPlateId, currentModelName) {
         viewModel.getEmbeddedBambuGcodeProject()
@@ -1965,6 +2002,8 @@ fun PrepareScreen(
     if (showPlateSelector && multiPlatePlates.isNotEmpty()) {
         com.u1.slicer.ui.PlateSelectDialog(
             plates = multiPlatePlates,
+            bedSizeXmm = activeMachineConfig.bedSizeX,
+            bedSizeYmm = activeMachineConfig.bedSizeY,
             onSelect = { viewModel.selectPlate(it) },
             onDismiss = { viewModel.dismissPlateSelector() },
             info = threeMfInfo
@@ -1973,6 +2012,8 @@ fun PrepareScreen(
         // F85: plate selector dialog — "Add to bed" multi-plate 3MF
         com.u1.slicer.ui.PlateSelectDialog(
             plates = addPending.plates,
+            bedSizeXmm = activeMachineConfig.bedSizeX,
+            bedSizeYmm = activeMachineConfig.bedSizeY,
             onSelect = { viewModel.confirmAddPlate(it) },
             onDismiss = { viewModel.cancelPendingAdd() },
             info = null
@@ -2208,12 +2249,7 @@ fun PrepareScreen(
                                 val b = f66LoadTimePoses[k] ?: com.u1.slicer.data.PerObjectPose()
                                 v.scaleX != b.scaleX || v.scaleY != b.scaleY || v.scaleZ != b.scaleZ
                             }
-                            val targetMachineConfig = if (viewModel.effectiveSliceTarget.value == com.u1.slicer.slice.SlicerTarget.GenericKlipper && activePrinter?.machineProfile == null) null else resolveTargetedSliceConfig(
-                                viewModel.effectiveSliceTarget.value,
-                                config,
-                                activePrinter?.machineProfile,
-                            )
-                            if (targetMachineConfig != null) InlineModelPreview(
+                            if (com.u1.slicer.slice.isLocalSliceAvailable(activePrinter)) InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
                                 selectedObjectIndex = f66Selection.objectIndex,
@@ -2229,8 +2265,10 @@ fun PrepareScreen(
                                 } else null,
                                 onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
                                     onNavigateModelViewer else ({}),
-                                bedSizeMm = targetMachineConfig.bedSizeX,
-                                bedSizeYMm = targetMachineConfig.bedSizeY,
+                                bedSizeMm = activeMachineConfig.bedSizeX,
+                                bedSizeYMm = activeMachineConfig.bedSizeY,
+                                bedStlAsset = activeMachineProfile.bedStlAsset,
+                                machineFamily = activeMachineProfile.family,
                                 extruderColors = extruderColors,
                                 extruderMap = viewModel.buildExtruderMap(),
                                 colorMapping = colorMapping,
@@ -2379,13 +2417,18 @@ fun PrepareScreen(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
                             colorMapping = colorMapping,
                             canonicalColourRemaps = canonicalColourRemaps,
-                            availableMixes = com.u1.slicer.data.MixSlotOrdering.activeOrder(
-                                projectMixes,
-                                libraryMixes,
-                                com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
-                            ),
+                            availableMixes = if (mixesAvailable) {
+                                com.u1.slicer.data.MixSlotOrdering.activeOrder(
+                                    projectMixes,
+                                    libraryMixes,
+                                    com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+                                )
+                            } else {
+                                emptyList()
+                            },
                             onCanonicalColourRemapsChange = viewModel::setCanonicalColourRemaps,
                             extruderPresets = extruderPresets,
+                            slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                             syncFilamentPresets = prepareSyncPresets,
                             isBambuPrinter = activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN,
                             filaments = filaments,
@@ -2418,11 +2461,16 @@ fun PrepareScreen(
                             hasPerVolumeOverrides = perVolumeExtruders.isNotEmpty(),
                             onRestoreAllFilamentAssignments = { viewModel.clearAllFilamentAssignments() },
                             // Task 3: Mixes subsection folded into this card.
-                            mixSlotsContent = {
-                                PrepareMixSlotsSectionContent(
-                                    viewModel = viewModel,
-                                    extruderPresets = extruderPresets,
-                                )
+                            mixSlotsContent = if (mixesAvailable) {
+                                {
+                                    PrepareMixSlotsSectionContent(
+                                        viewModel = viewModel,
+                                        extruderPresets = extruderPresets,
+                                        slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
+                                    )
+                                }
+                            } else {
+                                null
                             },
                         )
                         if (effectiveSliceTarget == SlicerTarget.BambuH2D) {
@@ -2456,6 +2504,9 @@ fun PrepareScreen(
                             ScaleSection(
                                 scale = modelScale,
                                 onScaleChange = { viewModel.setModelScale(it) },
+                                bedSizeX = activeMachineConfig.bedSizeX,
+                                bedSizeY = activeMachineConfig.bedSizeY,
+                                maxPrintHeight = activeMachineConfig.maxPrintHeight,
                                 copyCount = copyCount,
                                 onSetCopyCount = viewModel::setCopyCount,
                                 copyBedWarning = copyBedWarning,
@@ -2479,6 +2530,9 @@ fun PrepareScreen(
                         // Single-colour Smart Paint entry previously here is gone.
                         ConfigCard(
                             config, viewModel::updateConfig,
+                            bedSizeX = activeMachineConfig.bedSizeX,
+                            bedSizeY = activeMachineConfig.bedSizeY,
+                            maxPrintHeight = activeMachineConfig.maxPrintHeight,
                             slicingOverrides = slicingOverrides,
                             onOverridesChange = { viewModel.saveSlicingOverrides(it) },
                             plateType = plateType,
@@ -2740,6 +2794,15 @@ fun PreviewScreen(
     val printerCapabilities by printerViewModel.capabilities.collectAsState()
     val printerFilamentSlots by printerViewModel.printerFilamentSlots.collectAsState()
     val effectiveSliceTarget by viewModel.effectiveSliceTarget.collectAsState()
+    val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
+    val activeMachineConfig = remember(effectiveSliceTarget, activeMachineProfile, config) {
+        if (effectiveSliceTarget.family != com.u1.slicer.slice.SliceTargetFamily.BAMBU) {
+            config.copy(bedSizeX = activeMachineProfile.bedSizeX, bedSizeY = activeMachineProfile.bedSizeY,
+                maxPrintHeight = activeMachineProfile.maxPrintHeight)
+        } else {
+            resolveTargetedSliceConfig(effectiveSliceTarget, config)
+        }
+    }
     val latestSliceArtifact by viewModel.latestSliceArtifact.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
@@ -2854,16 +2917,14 @@ fun PreviewScreen(
                         // B142b: mix-assigned slices emit physical-slot tools — no
                         // canonical→slot mapping applies and the palette is slot-space.
                         val gcodeColorMapping = if (isH2c || sliceMixToolSpace) null else colorMapping
-                        val targetMachineConfig = if (effectiveSliceTarget == com.u1.slicer.slice.SlicerTarget.GenericKlipper && activePrinter?.machineProfile == null) null else resolveTargetedSliceConfig(
-                            effectiveSliceTarget,
-                            config,
-                            activePrinter?.machineProfile,
-                        )
-                        if (targetMachineConfig != null) InlineGcodePreview(
+                        if (com.u1.slicer.slice.isLocalSliceAvailable(activePrinter)) InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
-                            bedSizeMm = targetMachineConfig.bedSizeX,
-                            bedSizeYMm = targetMachineConfig.bedSizeY,
+                            bedSizeMm = activeMachineConfig.bedSizeX,
+                            bedSizeYMm = activeMachineConfig.bedSizeY,
+                            bedStlAsset = activeMachineProfile.bedStlAsset,
+                            machineFamily = activeMachineProfile.family,
+                            slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                             colorMapping = gcodeColorMapping,
                             slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D,
@@ -2924,6 +2985,7 @@ fun PreviewScreen(
                         filamentOverrides = filamentOverrides,
                         plateFileIndices = plateFileIndicesForSummary,
                         mixToolSpacePalette = if (sliceMixToolSpace) slotPaletteWithMixBlends else emptyList(),
+                        slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                     )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -3180,6 +3242,9 @@ fun InfoRow(label: String, value: String, valueColor: Color = Color.Unspecified)
 fun ConfigCard(
     config: com.u1.slicer.data.SliceConfig,
     onUpdate: ((com.u1.slicer.data.SliceConfig) -> com.u1.slicer.data.SliceConfig) -> Unit,
+    bedSizeX: Float,
+    bedSizeY: Float,
+    maxPrintHeight: Float,
     copyCount: Int = 1,
     onSetCopyCount: (Int) -> Unit = {},
     slicingOverrides: com.u1.slicer.data.SlicingOverrides = com.u1.slicer.data.SlicingOverrides(),
@@ -3281,7 +3346,7 @@ fun ConfigCard(
             // `config.filamentType` which is set only at file-load time and never
             // updates after a Prepare-screen material override — so it shows stale
             // info. The Filaments panel above is now the single source of truth.
-            InfoRow("Build Volume", "270 x 270 x 270 mm")
+            InfoRow("Build Volume", com.u1.slicer.ui.formatBuildVolume(bedSizeX, bedSizeY, maxPrintHeight))
         }
     }
 }
@@ -3690,9 +3755,10 @@ fun SliceCompleteSummaryCard(
      * E1..E4 + mix blends). Canonical/file lookups don't apply in that space.
      */
     mixToolSpacePalette: List<String> = emptyList(),
+    slotCount: Int = 4,
 ) {
-    val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
-        buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
+    val displaySlots = remember(perExtruderFilamentMm, colorMapping, slotCount) {
+        buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping, slotCount)
     }
     // v2.0.0 systematic fix — build the visible chip list from the canonical-
     // wide gcode-derived plateFileIndices when available; otherwise fall back
@@ -3868,8 +3934,13 @@ internal fun resolveExtruderMaterialType(slot: Int, presets: List<com.u1.slicer.
  * slots via colorMapping (e.g. compact [0,1] mapped to physical [2,1] => E3, E2). We show
  * used mapped slots first, then fill with remaining physical slots.
  */
-internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?): List<Int> {
+internal fun buildPerExtruderDisplaySlots(
+    count: Int,
+    colorMapping: List<Int>?,
+    slotCount: Int = 4,
+): List<Int> {
     if (count <= 0) return emptyList()
+    val slots = slotCount.coerceIn(1, 4)
     // Phase 2 §4 Step 6 — when colorMapping is missing for a multi-filament
     // file, return identity. Filament indices >= 4 fall through to the grey
     // fallback in the colour resolver downstream rather than being capped to
@@ -3879,9 +3950,9 @@ internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?):
 
     val ordered = mutableListOf<Int>()
     colorMapping.forEach { slot ->
-        if (slot in 0..3 && slot !in ordered) ordered += slot
+        if (slot in 0 until slots && slot !in ordered) ordered += slot
     }
-    for (slot in 0..3) {
+    for (slot in 0 until slots) {
         if (slot !in ordered) ordered += slot
     }
     while (ordered.size < count) {
@@ -4122,8 +4193,10 @@ fun InlineModelPreview(
     modelSizeX: Float = 0f,
     modelSizeY: Float = 0f,
     modelSizeZ: Float = 0f,
-    bedSizeMm: Float = 270f,
-    bedSizeYMm: Float = bedSizeMm,
+    bedSizeMm: Float,
+    bedSizeYMm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     wipeTowerEnabled: Boolean = false,
     wipeTowerX: Float = 0f,
     wipeTowerY: Float = 0f,
@@ -4158,7 +4231,7 @@ fun InlineModelPreview(
     // Used to restore the file's original plate position after prepareSlicer() has
     // clobbered native state; skipped when nativeSliceStateDirty is false so the
     // natural load state is preserved on first preview.
-    loadTimeInstanceOffsets: FloatArray = floatArrayOf(135f, 135f),
+    loadTimeInstanceOffsets: FloatArray,
     nativeSliceStateDirty: Boolean = false,
     // Per-object bounding boxes [sizeX0,sizeY0,sizeZ0, ...] for correct per-object hit-testing
     // when multiple distinct files have been added to the bed. Empty = use merged mesh AABB.
@@ -4751,7 +4824,7 @@ fun InlineModelPreview(
                             onViewerReady?.invoke(view)
                             view.onCameraChanged = onCameraStateChange
                             view.setOnContentReady { viewerLoading = false }
-                            view.setBedSizeMm(bedSizeMm, bedSizeYMm)
+                            view.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
                             mesh?.let { view.setMesh(it) }
                             cameraState?.let { view.applyCameraState(it) }
                             // F66: wire tap-to-select on the Prepare viewer. The existing
@@ -4786,7 +4859,7 @@ fun InlineModelPreview(
                         viewerView = view
                         view.onCameraChanged = onCameraStateChange
                         view.setOnContentReady { viewerLoading = false }
-                        view.setBedSizeMm(bedSizeMm, bedSizeYMm)
+                        view.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
                         cameraState?.let {
                             if (view.camera.snapshot() != it) {
                                 view.applyCameraState(it)
@@ -4987,6 +5060,8 @@ fun InlineModelPreview(
                     triangleCount = modelTriangleCount,
                     modelSizeX = effPlaceSizeX,
                     modelSizeY = effPlaceSizeY,
+                    bedSizeXmm = bedSizeMm,
+                    bedSizeYmm = bedSizeYMm,
                     wipeTowerDepth = wipeTowerDepth,
                     objectPositions = objPositions.copyOf(),
                     wipeTowerVisible = placementConfig.wipeTowerVisible,
@@ -5084,6 +5159,8 @@ private fun LargePreviewFallback(
     triangleCount: Int,
     modelSizeX: Float,
     modelSizeY: Float,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     wipeTowerDepth: Float,
     objectPositions: FloatArray,
     wipeTowerVisible: Boolean,
@@ -5104,6 +5181,8 @@ private fun LargePreviewFallback(
             modifier = Modifier.fillMaxSize(),
             modelSizeX = modelSizeX,
             modelSizeY = modelSizeY,
+            bedSizeXmm = bedSizeXmm,
+            bedSizeYmm = bedSizeYmm,
             towerDepthMm = wipeTowerDepth,
             copyCount = objPositions.size / 2,
             wipeTowerEnabled = wipeTowerVisible,
@@ -5339,6 +5418,7 @@ fun PrintSetupSection(
     availableMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     onCanonicalColourRemapsChange: (List<com.u1.slicer.data.CanonicalColourRemap>) -> Unit = {},
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    slotCount: Int = 4,
     syncFilamentPresets: List<com.u1.slicer.data.ExtruderPreset> = extruderPresets,
     isBambuPrinter: Boolean = false,
     filaments: List<com.u1.slicer.data.FilamentProfile>,
@@ -5442,7 +5522,10 @@ fun PrintSetupSection(
 
             if (detectedColors.isNotEmpty()) {
                 OutlinedButton(onClick = { showColourRemap = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Remap file colours to tools or ColorMix")
+                    Text(
+                        if (availableMixes.isEmpty()) "Remap file colours to tools"
+                        else "Remap file colours to tools or ColorMix"
+                    )
                 }
             }
             if (showColourRemap) {
@@ -5460,7 +5543,7 @@ fun PrintSetupSection(
                                 val current = draft[index]?.destination
                                 Text("Filament ${index + 1}")
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    (0..3).forEach { slot ->
+                                    (0 until slotCount.coerceIn(1, 4)).forEach { slot ->
                                         FilterChip(
                                             selected = current == com.u1.slicer.data.CanonicalColourDestination.PhysicalSlot(slot),
                                             onClick = {
@@ -5803,6 +5886,9 @@ private data class RotAxis(
 fun ScaleSection(
     scale: SlicerViewModel.ModelScale,
     onScaleChange: (SlicerViewModel.ModelScale) -> Unit,
+    bedSizeX: Float,
+    bedSizeY: Float,
+    maxPrintHeight: Float,
     copyCount: Int = 1,
     onSetCopyCount: (Int) -> Unit = {},
     copyBedWarning: String? = null,
@@ -5927,13 +6013,18 @@ fun ScaleSection(
                         fun formatField(scaleFactor: Float, axisSize: Float): String =
                             if (mmActive) "%.1f".format(scaleFactor * axisSize)
                             else "%.0f".format(scaleFactor * 100)
-                        // mm warning when scaled size exceeds the 270 mm bed on any axis.
-                        val mmBedWarning = if (mmActive) listOfNotNull(
-                            "X".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.x, sizeX) },
-                            "Y".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.y, sizeY) },
-                            "Z".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.z, sizeZ) }
-                        ).takeIf { it.isNotEmpty() }?.let {
-                            "Exceeds 270 mm bed on ${it.joinToString("/")}"
+                        // Warn when the scaled size exceeds the active machine on any axis.
+                        val mmBedWarning = if (mmActive) {
+                            com.u1.slicer.ui.formatBuildVolumeWarning(
+                                exceededAxes = listOfNotNull(
+                                    "X".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.x, sizeX, bedSizeX) },
+                                    "Y".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.y, sizeY, bedSizeY) },
+                                    "Z".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.z, sizeZ, maxPrintHeight) },
+                                ),
+                                widthMm = bedSizeX,
+                                depthMm = bedSizeY,
+                                heightMm = maxPrintHeight,
+                            )
                         } else null
                         if (uniformMode) {
                             // Reference axis for uniform mm input is Z (height) — the most
@@ -6197,7 +6288,10 @@ fun ScaleSection(
 fun PrepareMixSlotsSectionContent(
     viewModel: SlicerViewModel,
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    slotCount: Int = 4,
 ) {
+    if (slotCount != com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS) return
+
     val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
     val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
     // Bug B — drive the "current" highlight + re-evaluate after each assignment.
@@ -6219,8 +6313,8 @@ fun PrepareMixSlotsSectionContent(
     // Recomputed after assignment so the tapped row shows "· current".
     val currentModelSlot = remember(perVolumeExtruders) { viewModel.aggregatedModelFilament() }
 
-    val physicalColours = remember(extruderPresets) {
-        (0..3).map { i ->
+    val physicalColours = remember(extruderPresets, slotCount) {
+        (0 until slotCount.coerceIn(1, 4)).map { i ->
             val hex = extruderPresets.firstOrNull { it.index == i }?.color
                 ?.takeIf { it.isNotBlank() }
                 ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
@@ -6231,7 +6325,7 @@ fun PrepareMixSlotsSectionContent(
     if (showDialog) {
         com.u1.slicer.ui.CreateMixSlotDialog(
             physicalFilamentColours = physicalColours,
-            physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+            physicalFilamentLabels = physicalColours.indices.map { "E${it + 1}" },
             editingRow = editingRow,
             onConfirmN = { components, weights, mode, topMixMode, fineTopLines, ironingGlaze ->
                 val edit = editingRow
@@ -6441,8 +6535,11 @@ private fun PrepareMixSlotRow(
 fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
-    bedSizeMm: Float = 270f,
-    bedSizeYMm: Float = bedSizeMm,
+    bedSizeMm: Float,
+    bedSizeYMm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
+    slotCount: Int = 4,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     onExpand: () -> Unit,
@@ -6480,14 +6577,28 @@ fun InlineGcodePreview(
     val displayLayer =
         com.u1.slicer.ui.computeDisplayLayer(maxLayer, displayLayerCount, gcodeLayerCount)
 
-    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
+    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors, slotCount) {
+        normalizeGcodePreviewColors(
+            extruderColors,
+            colorMapping,
+            resolvedFilamentColors,
+            slotCount,
+        )
     }
 
-    LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState, bedSizeMm, bedSizeYMm) {
+    LaunchedEffect(
+        parsedGcode,
+        previewColors,
+        viewerView,
+        cameraState,
+        bedSizeMm,
+        bedSizeYMm,
+        bedStlAsset,
+        machineFamily,
+    ) {
         val v = viewerView ?: return@LaunchedEffect
         viewerLoading = true
-        v.setBedSizeMm(bedSizeMm, bedSizeYMm)
+        v.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
         if (previewColors.isNotEmpty()) {
             v.setExtruderColors(previewColors)
         }
@@ -6529,7 +6640,7 @@ fun InlineGcodePreview(
                             viewerView = view
                             view.onCameraChanged = onCameraStateChange
                             view.setOnContentReady { viewerLoading = false }
-                            view.setBedSizeMm(bedSizeMm, bedSizeYMm)
+                            view.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
                             cameraState?.let { view.applyCameraState(it) }
                         }
                     },
@@ -6537,7 +6648,7 @@ fun InlineGcodePreview(
                         viewerView = view
                         view.onCameraChanged = onCameraStateChange
                         view.setOnContentReady { viewerLoading = false }
-                        view.setBedSizeMm(bedSizeMm, bedSizeYMm)
+                        view.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
                         cameraState?.let {
                             if (view.camera.snapshot() != it) {
                                 view.applyCameraState(it)
@@ -6682,7 +6793,9 @@ internal fun normalizeGcodePreviewColors(
     extruderColors: List<String>,
     colorMapping: List<Int>?,
     resolvedFilamentColors: List<String> = emptyList(),
+    slotCount: Int = 4,
 ): List<String> {
+    val slots = slotCount.coerceIn(1, 4)
     if (resolvedFilamentColors.isNotEmpty() || !colorMapping.isNullOrEmpty()) {
         // Phase 2 canonical path. Palette length grows with the canonical
         // filament list (or colorMapping size, whichever is larger) so
@@ -6714,24 +6827,24 @@ internal fun normalizeGcodePreviewColors(
         val length = maxOf(
             resolvedFilamentColors.size,
             colorMapping?.size ?: 0,
-            4,
+            slots,
         )
         return MutableList(length) { i ->
             val fileColor = resolvedFilamentColors.getOrNull(i)
             val slot = colorMapping?.getOrNull(i)
-            val slotColor = slot?.takeIf { it in 0..3 }
+            val slotColor = slot?.takeIf { it in 0 until slots }
                 ?.let { extruderColors.getOrNull(it).orEmpty() }
             when {
                 !fileColor.isNullOrBlank() -> fileColor
                 !slotColor.isNullOrBlank() -> slotColor
-                else -> extruderColors.getOrNull(i % 4).orEmpty()
+                else -> extruderColors.getOrNull(i % slots).orEmpty()
             }
         }
     }
     // Legacy path: 4-slot palette indexed by physical slot. Used when
     // neither resolvedFilamentColors nor colorMapping is available
     // (single-colour STL, very early during load, etc.)
-    return MutableList(4) { extruderColors.getOrNull(it).orEmpty() }
+    return MutableList(slots) { extruderColors.getOrNull(it).orEmpty() }
 }
 
 @Composable

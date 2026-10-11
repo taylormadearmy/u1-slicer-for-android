@@ -34,7 +34,7 @@ class GcodeRendererGeometryTest {
         val layers = layerMoves.mapIndexed { i, moves ->
             GcodeLayer(i, (i + 1) * 0.2f, moves)
         }
-        return ParsedGcode(layers)
+        return ParsedGcode(layers, bedWidth = 270f, bedHeight = 270f)
     }
 
     private fun pack(gcode: ParsedGcode) =
@@ -269,7 +269,7 @@ class GcodeRendererGeometryTest {
 
     @Test
     fun `empty gcode returns empty result`() {
-        val gcode = ParsedGcode(emptyList())
+        val gcode = ParsedGcode(emptyList(), bedWidth = 270f, bedHeight = 270f)
         val result = pack(gcode)
         assertEquals(0, result.totalVertices)
         assertEquals(0, result.totalSegments)

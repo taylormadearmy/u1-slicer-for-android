@@ -31,8 +31,12 @@ import com.u1.slicer.data.MachineKind
 import com.u1.slicer.data.PrintHostConfig
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
+import com.u1.slicer.data.defaultHostType
+import com.u1.slicer.data.defaultMachineKind
 import com.u1.slicer.data.defaultExtruderPresets
 import com.u1.slicer.slice.GenericMachineProfile
+import com.u1.slicer.printer.normalizePrintHostUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -45,14 +49,21 @@ fun PrinterEditDialog(
     onSave: (Printer) -> Unit,
     onTest: suspend (Printer) -> String?,
     onDismiss: () -> Unit,
+    initialKind: PrinterKind = existing?.kind ?: PrinterKind.MOONRAKER,
     bambuEnabled: Boolean = false,
+    experimentalPrinterSupportEnabled: Boolean = bambuEnabled,
+    initialHostType: HostType = existing?.hostType
+        ?: defaultHostType(initialKind),
 ) {
     var nickname by remember { mutableStateOf(existing?.nickname.orEmpty()) }
-    var kind by remember { mutableStateOf(existing?.kind ?: PrinterKind.MOONRAKER) }
-    var machine by remember { mutableStateOf(existing?.machine ?: MachineKind.SNAPMAKER_U1) }
+    var kind by remember { mutableStateOf(existing?.kind ?: initialKind) }
+    var hostType by remember { mutableStateOf(initialHostType) }
+    var machine by remember { mutableStateOf(existing?.machine ?: defaultMachineKind(initialKind)) }
     var profile by remember { mutableStateOf(existing?.machineProfile) }
     var url by remember { mutableStateOf(existing?.host?.url ?: existing?.moonrakerUrl.orEmpty()) }
-    var apiKey by remember { mutableStateOf(existing?.host?.apiKey.orEmpty()) }
+    var apiKey by remember { mutableStateOf(existing?.host?.apiKey ?: existing?.apiKey.orEmpty()) }
+    var username by remember { mutableStateOf(existing?.username.orEmpty()) }
+    var password by remember { mutableStateOf(existing?.password.orEmpty()) }
     var ip by remember { mutableStateOf(existing?.bambu?.ip.orEmpty()) }
     var accessCode by remember { mutableStateOf(existing?.bambu?.accessCode.orEmpty()) }
     var serial by remember { mutableStateOf(existing?.bambu?.serial.orEmpty()) }
@@ -79,6 +90,7 @@ fun PrinterEditDialog(
                     } ?: error("Cannot read profile")
                     GenericMachineProfile.fromJson(text)
                 }
+                machine = if (profile?.gcodeFlavor == "klipper") MachineKind.GENERIC_KLIPPER else MachineKind.GENERIC_MARLIN
                 result = null
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -90,24 +102,48 @@ fun PrinterEditDialog(
         id = draftId,
         nickname = nickname.trim().ifBlank { existing?.nickname ?: "Printer" },
         kind = kind,
-        moonrakerUrl = if (kind == PrinterKind.MOONRAKER) com.u1.slicer.network.MoonrakerClient.normalizeUrl(url) else "",
+        hostType = hostType,
+        apiKey = if (kind == PrinterKind.MOONRAKER) apiKey.trim().takeIf { it.isNotBlank() } else existing?.apiKey,
+        username = username.trim().takeIf { it.isNotBlank() },
+        password = password.takeIf { it.isNotBlank() },
+        moonrakerUrl = if (kind == PrinterKind.MOONRAKER) normalizePrintHostUrl(url, hostType) else "",
         bambu = if (kind == PrinterKind.BAMBU_LAN) BambuConfig(ip.trim(), accessCode.trim(), serial.trim().uppercase(java.util.Locale.ROOT), model) else null,
         machine = machine,
-        machineProfile = profile.takeIf { machine == MachineKind.GENERIC_KLIPPER },
+        machineProfile = profile.takeIf { machine == MachineKind.GENERIC_KLIPPER || machine == MachineKind.GENERIC_MARLIN },
+        machineProfileId = existing?.machineProfileId.takeIf { existing?.machineProfile == profile },
         host = if (kind == PrinterKind.ELEGOO_CC1 || kind == PrinterKind.OCTOPRINT) PrintHostConfig(url.trim(), if (kind == PrinterKind.OCTOPRINT) apiKey.trim() else "") else null,
         extruderPresets = existing?.extruderPresets ?: if (machine == MachineKind.SNAPMAKER_U1) defaultExtruderPresets() else emptyList(),
         selectedWebcamUid = existing?.selectedWebcamUid.takeIf { kind == PrinterKind.MOONRAKER && existing?.moonrakerUrl == com.u1.slicer.network.MoonrakerClient.normalizeUrl(url) },
     )
     val addressValid = if (kind == PrinterKind.BAMBU_LAN) ip.isNotBlank() && accessCode.isNotBlank() && serial.isNotBlank() else url.isNotBlank()
-    val machineValid = machine != MachineKind.GENERIC_KLIPPER || profile != null
+    val allowExperimentalChoices = existing != null || experimentalPrinterSupportEnabled
+    val hostTypes = if (initialKind == PrinterKind.BAMBU_LAN) listOf(HostType.BAMBU_LAN)
+        else if (allowExperimentalChoices) listOf(HostType.MOONRAKER, HostType.OCTOPRINT, HostType.PRUSALINK)
+        else listOf(HostType.MOONRAKER)
+    val connectionKinds = when {
+        initialKind == PrinterKind.BAMBU_LAN -> listOf(PrinterKind.BAMBU_LAN)
+        initialKind == PrinterKind.ELEGOO_CC1 -> listOf(PrinterKind.ELEGOO_CC1)
+        !allowExperimentalChoices -> listOf(PrinterKind.MOONRAKER)
+        else -> PrinterKind.entries.filter { it != PrinterKind.BAMBU_LAN }
+    }
+    val machineKinds = if (allowExperimentalChoices) listOf(MachineKind.SNAPMAKER_U1, MachineKind.GENERIC_KLIPPER, MachineKind.GENERIC_MARLIN)
+        else listOf(MachineKind.SNAPMAKER_U1)
+    val machineValid = (machine != MachineKind.GENERIC_KLIPPER && machine != MachineKind.GENERIC_MARLIN) || profile != null
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "Add printer" else "Edit printer") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(nickname, { nickname = it }, label = { Text("Nickname") }, singleLine = true)
-                PrinterChoice("Connection", kind, PrinterKind.entries.filter { bambuEnabled || it != PrinterKind.BAMBU_LAN }, { it.connectionLabel() }, canChangePrinterKind(existing)) { selected ->
+                Text("Connects to your printer using the selected host service.", style = MaterialTheme.typography.bodySmall)
+                PrinterChoice("Connection", kind, connectionKinds, { it.connectionLabel() }, canChangePrinterKind(existing)) { selected ->
                     kind = selected
+                    hostType = when (selected) {
+                        PrinterKind.BAMBU_LAN -> HostType.BAMBU_LAN
+                        PrinterKind.ELEGOO_CC1 -> HostType.ELEGOO_CC1
+                        PrinterKind.OCTOPRINT -> HostType.OCTOPRINT
+                        PrinterKind.MOONRAKER -> HostType.MOONRAKER
+                    }
                     machine = when (selected) {
                         PrinterKind.BAMBU_LAN -> MachineKind.BAMBU
                         PrinterKind.ELEGOO_CC1 -> MachineKind.ELEGOO_CENTAURI_CARBON
@@ -117,11 +153,20 @@ fun PrinterEditDialog(
                     result = null
                 }
                 if (!canChangePrinterKind(existing)) Text("Add a new printer to change its connection type.", style = MaterialTheme.typography.bodySmall)
-                if (kind == PrinterKind.MOONRAKER) {
-                    PrinterChoice("Machine", machine, listOf(MachineKind.SNAPMAKER_U1, MachineKind.GENERIC_KLIPPER), { if (it == MachineKind.SNAPMAKER_U1) "Snapmaker U1" else "Generic Klipper" }) { machine = it; result = null }
+                if (kind == PrinterKind.MOONRAKER && machine != MachineKind.SNAPMAKER_U1) {
+                    PrinterChoice("Host type", hostType, hostTypes, { it.name }) { hostType = it; result = null }
                 }
-                if (machine == MachineKind.GENERIC_KLIPPER) {
-                    Text(profile?.name ?: "Import a resolved Orca machine JSON profile, or a JSON array containing the profile and its parents. Only single-nozzle Klipper machines are supported.", style = MaterialTheme.typography.bodySmall)
+                if (kind == PrinterKind.MOONRAKER) {
+                    PrinterChoice("Machine", machine, machineKinds, {
+                        when (it) {
+                            MachineKind.SNAPMAKER_U1 -> "Snapmaker U1"
+                            MachineKind.GENERIC_MARLIN -> "Generic Marlin"
+                            else -> "Generic Klipper"
+                        }
+                    }) { machine = it; result = null }
+                }
+                if (machine == MachineKind.GENERIC_KLIPPER || machine == MachineKind.GENERIC_MARLIN) {
+                    Text(profile?.name ?: "Import a resolved Orca machine JSON profile, or a JSON array containing the profile and its parents. Supported profiles use Klipper or Marlin with up to four independent nozzles.", style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) { Text("Import machine profile") }
                     Text("Start and end templates may call macros that must exist on your printer. Check the profile before starting a print.", style = MaterialTheme.typography.bodySmall)
                 }
@@ -133,7 +178,11 @@ fun PrinterEditDialog(
                     OutlinedTextField(serial, { serial = it; result = null }, label = { Text("Serial") }, singleLine = true)
                 } else {
                     OutlinedTextField(url, { url = it; result = null }, label = { Text(if (kind == PrinterKind.ELEGOO_CC1) "Printer IP or hostname" else "Printer URL") }, singleLine = true)
-                    if (kind == PrinterKind.OCTOPRINT) OutlinedTextField(apiKey, { apiKey = it; result = null }, label = { Text("OctoPrint API key") }, singleLine = true)
+                    if (hostType == HostType.OCTOPRINT || hostType == HostType.PRUSALINK) OutlinedTextField(apiKey, { apiKey = it; result = null }, label = { Text("API key (optional)") }, singleLine = true)
+                    if (hostType == HostType.PRUSALINK) {
+                        OutlinedTextField(username, { username = it; result = null }, label = { Text("Username (optional)") }, singleLine = true)
+                        OutlinedTextField(password, { password = it; result = null }, label = { Text("Password (optional)") }, singleLine = true)
+                    }
                 }
                 TextButton(enabled = !testing && addressValid && machineValid, onClick = {
                     testing = true

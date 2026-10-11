@@ -127,7 +127,7 @@ class BambuPipelineIntegrationTest {
 
     /** Assert all G-code X/Y coordinates stay within the 270×270mm bed. */
     private fun assertGcodeWithinBedBounds(gcode: String, label: String = "") {
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "${label}: G-code out of bed bounds — " +
                 "X=[${bounds.minX}, ${bounds.maxX}] Y=[${bounds.minY}, ${bounds.maxY}] " +

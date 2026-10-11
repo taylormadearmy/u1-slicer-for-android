@@ -163,12 +163,19 @@ class MoonrakerClient {
         }
 
         /**
-         * Build a SET_HEATER_TEMPERATURE G-code string with clamped target.
-         * Bed is clamped to [0, 120]; extruders to [0, 300].
+         * Build a SET_HEATER_TEMPERATURE G-code string clamped to the selected machine profile.
          */
-        internal fun buildSetHeaterGcode(heater: String, targetC: Int): String {
+        internal fun buildSetHeaterGcode(
+            heater: String,
+            targetC: Int,
+            maxBedTemperatureC: Int,
+            maxNozzleTemperatureC: Int,
+        ): String {
             val isBed = heater == "heater_bed"
-            val clamped = targetC.coerceIn(0, if (isBed) 120 else 300)
+            val clamped = targetC.coerceIn(
+                0,
+                if (isBed) maxBedTemperatureC else maxNozzleTemperatureC,
+            )
             return "SET_HEATER_TEMPERATURE HEATER=$heater TARGET=$clamped"
         }
     }
@@ -561,8 +568,14 @@ class MoonrakerClient {
      * @param heater  Klipper heater name: "heater_bed", "extruder", "extruder1", etc.
      * @param targetC Target temperature in Celsius (clamped to safe range).
      */
-    suspend fun setHeaterTemperature(heater: String, targetC: Int): Boolean =
-        sendGcode(buildSetHeaterGcode(heater, targetC))
+    suspend fun setHeaterTemperature(
+        heater: String,
+        targetC: Int,
+        maxBedTemperatureC: Int,
+        maxNozzleTemperatureC: Int,
+    ): Boolean = sendGcode(
+        buildSetHeaterGcode(heater, targetC, maxBedTemperatureC, maxNozzleTemperatureC)
+    )
 
     private fun postCommand(path: String): Boolean {
         return try {

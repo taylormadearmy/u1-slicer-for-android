@@ -36,6 +36,8 @@ class OctoPrintTransport(
     private val config: PrintHostConfig,
     client: OkHttpClient = OkHttpClient(),
 ) : PrinterTransport {
+    constructor(baseUrl: String, apiKey: String?, client: OkHttpClient = OkHttpClient()) :
+        this(PrintHostConfig(baseUrl, apiKey.orEmpty()), client)
     private val client = client.newBuilder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).callTimeout(60, TimeUnit.SECONDS).build()
     private val address = config.url.trim()
@@ -77,7 +79,8 @@ class OctoPrintTransport(
     } catch (e: CancellationException) { throw e }
     catch (e: Exception) { e.message ?: "OctoPrint connection failed" }
 
-    override suspend fun uploadJob(file: File, remoteName: String): TransportCommandResult = command {
+    override suspend fun uploadJob(file: File, remoteName: String, startAfterUpload: Boolean): TransportCommandResult = command {
+        require(!startAfterUpload) { "OctoPrint requires a separate confirmed start request" }
         requireRemoteName(remoteName)
         require(file.isFile && file.length() > 0) { "G-code file is empty or missing" }
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -95,6 +98,29 @@ class OctoPrintTransport(
     override suspend fun pauseJob() = jobCommand("pause", "pause")
     override suspend fun resumeJob() = jobCommand("pause", "resume")
     override suspend fun cancelJob() = jobCommand("cancel")
+
+    suspend fun fetchStatus(): PrinterStatus {
+        val job = JSONObject(request("api/job"))
+        val state = job.optString("state", "Offline").lowercase().let {
+            when {
+                it.contains("paused") || it.contains("pausing") -> "paused"
+                it.contains("printing") || it.contains("starting") -> "printing"
+                it.contains("error") || it.contains("closed") -> "error"
+                it.contains("complete") || it.contains("finished") -> "complete"
+                it.contains("offline") -> "disconnected"
+                else -> "standby"
+            }
+        }
+        val progress = job.optJSONObject("progress")
+        val filament = job.optJSONObject("job")?.optJSONObject("filament")
+        return PrinterStatus(
+            state = state,
+            progress = ((progress?.optDouble("completion", 0.0)?.takeIf { it.isFinite() } ?: 0.0) / 100.0).toFloat().coerceIn(0f, 1f),
+            filename = job.optJSONObject("job")?.optJSONObject("file")?.optString("name").orEmpty(),
+            printDuration = progress?.optDouble("printTime", 0.0)?.toFloat() ?: 0f,
+            filamentUsed = filament?.keys()?.asSequence()?.sumOf { key -> filament.optJSONObject(key)?.optDouble("length", 0.0) ?: 0.0 }?.toFloat() ?: 0f,
+        )
+    }
 
     private suspend fun jobCommand(command: String, action: String? = null) = command {
         val payload = JSONObject().put("command", command)
@@ -114,7 +140,13 @@ class OctoPrintTransport(
                 override fun onResponse(call: Call, response: Response) {
                     val result = runCatching {
                         response.use {
-                            check(it.isSuccessful) { "OctoPrint returned HTTP ${it.code}" }
+                            check(it.isSuccessful) {
+                                when (it.code) {
+                                    401, 403 -> "OctoPrint authentication failed (HTTP ${it.code})"
+                                    409 -> "OctoPrint upload conflict (HTTP 409)"
+                                    else -> "OctoPrint returned HTTP ${it.code}"
+                                }
+                            }
                             it.body?.string().orEmpty()
                         }
                     }

@@ -5,7 +5,14 @@ import com.u1.slicer.data.AppDatabase
 import com.u1.slicer.data.FilamentLibraryRepository
 import com.u1.slicer.data.PrintersRepository
 import com.u1.slicer.data.ProcessProfilesRepository
+import com.u1.slicer.data.ProcessProfileParser
 import com.u1.slicer.data.SettingsRepository
+import com.u1.slicer.machine.MachineProfileRepository
+import com.u1.slicer.machine.CachedOrcaProfileLookup
+import com.u1.slicer.machine.NativeMachineProfileValidator
+import com.u1.slicer.machine.ProfileCache
+import com.u1.slicer.machine.VendorCatalogClient
+import com.u1.slicer.machine.OrcaProfileBundleImporter
 import com.u1.slicer.printer.DefaultPrinterTransportFactory
 import com.u1.slicer.printer.BambuDiagnostics
 import com.u1.slicer.printer.PrinterRepository
@@ -26,9 +33,25 @@ class AppContainer(context: Context) {
         )
     }
     val printersRepository = PrintersRepository(context.applicationContext)
+    private val machineProfilesDir = java.io.File(context.filesDir, "machine_profiles")
+    val machineProfileRepository = MachineProfileRepository.fromContext(
+        context.applicationContext,
+        machineProfilesDir,
+    )
+    val vendorCatalogClient = VendorCatalogClient()
+    val profileCache = ProfileCache(machineProfilesDir)
+    val cachedOrcaProfileLookup = CachedOrcaProfileLookup(profileCache, vendorCatalogClient)
+    val machineProfileValidator = NativeMachineProfileValidator(context.applicationContext)
+    val orcaProfileBundleImporter = OrcaProfileBundleImporter(
+        loadMissing = cachedOrcaProfileLookup::resolveByName,
+        validateMachine = machineProfileValidator::validate,
+        parseFilaments = { json -> com.u1.slicer.ui.parseFilamentJson(json) },
+        parseProcesses = ProcessProfileParser::parse,
+    )
     val processProfilesRepository = ProcessProfilesRepository(context.applicationContext)
     val printerTransportFactory = DefaultPrinterTransportFactory(
         bambuClientFactory = bambuLanClientFactory,
+        machineProfileFactory = machineProfileRepository::activeFor,
     )
     val printerRepository = PrinterRepository(
         context.applicationContext,

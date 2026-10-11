@@ -11,6 +11,27 @@ class CanonicalColourRemapTest {
         label = "Grey", inLibrary = false,
     )
 
+    @Test fun `one physical slot clamps implicit and explicit destinations`() {
+        assertEquals(
+            mapOf(0 to 1, 1 to 1),
+            resolveCanonicalColourRemap(
+                canonicalSize = 2,
+                remaps = listOf(
+                    CanonicalColourRemap(0, CanonicalColourDestination.PhysicalSlot(0)),
+                    CanonicalColourRemap(1, CanonicalColourDestination.PhysicalSlot(0)),
+                ),
+                projectMixes = emptyList(), libraryMixes = emptyList(), physicalCount = 1,
+            ),
+        )
+    }
+
+    @Test fun `two physical slots use the active count for implicit mapping`() {
+        assertEquals(
+            mapOf(0 to 1, 1 to 2, 2 to 1),
+            resolveCanonicalColourRemap(3, emptyList(), emptyList(), emptyList(), physicalCount = 2),
+        )
+    }
+
     @Test fun `resolves by canonical file index and stable mix id`() {
         val result = resolveCanonicalColourRemap(
             canonicalSize = 3,

@@ -419,9 +419,10 @@ Java_com_u1_slicer_NativeLibrary_nativeSplitObject(JNIEnv* env, jobject, jint ob
 }
 
 JNIEXPORT jint JNICALL
-Java_com_u1_slicer_NativeLibrary_nativeSplitVolume(JNIEnv*, jobject, jint objIdx, jint volIdx) {
+Java_com_u1_slicer_NativeLibrary_nativeSplitVolume(JNIEnv*, jobject, jint objIdx, jint volIdx,
+                                                    jint configuredExtruders) {
     if (!g_engine) return -1;
-    return g_engine->splitVolume(objIdx, volIdx);
+    return g_engine->splitVolume(objIdx, volIdx, configuredExtruders);
 }
 
 // B132c follow-up (v2.10.4): per-object duplicate. Returns the new object's

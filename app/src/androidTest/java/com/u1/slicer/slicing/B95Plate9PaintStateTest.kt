@@ -11,6 +11,8 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
+import com.u1.slicer.OfflineU1PrinterRule
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.zip.ZipFile
@@ -33,6 +35,7 @@ import java.util.zip.ZipFile
  */
 @RunWith(AndroidJUnit4::class)
 class B95Plate9PaintStateTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private lateinit var lib: NativeLibrary
     private lateinit var cacheDir: File

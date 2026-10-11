@@ -19,8 +19,6 @@ object GcodeToolRemapper {
     private val TOOL_LINE_RE = Regex("""^T(\d+)\s*(?:;.*)?$""")
     // Captures the M104/M109 prefix up to (but not including) the T parameter
     private val MTEMP_T_RE = Regex("""(M10[49]\b.*?)\bT(\d+)""")
-    // Snapmaker SM_ commands: SM_PRINT_AUTO_FEED EXTRUDER=N, SM_PRINT_FLOW_CALIBRATE INDEX=N, etc.
-    private val SM_PARAM_RE = Regex("""((?:EXTRUDER|INDEX)=)(\d+)""")
     private val BAMBU_AMS_S_RE = Regex("""(\bS)(\d+)(A\b)""")
     private val BAMBU_RETRACT_I_RE = Regex("""(\bI)(\d+)(?=\s|$)""")
     private val FILAMENT_VECTOR_PREFIXES = listOf(
@@ -38,12 +36,16 @@ object GcodeToolRemapper {
      *                     E.g. [2, 3] means T0→T2, T1→T3.
      *                     If this is already the identity (0,1,…) nothing is written.
      */
-    fun remap(gcodePath: String, targetSlots: List<Int>) {
+    fun remap(
+        gcodePath: String,
+        targetSlots: List<Int>,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
+    ) {
         if (targetSlots.isEmpty()) return
         val toolMap = targetSlots.mapIndexed { compact, actual -> compact to actual }.toMap()
         val src = File(gcodePath)
         val tmp = File("$gcodePath.remap.tmp")
-        remapFile(src, tmp, toolMap, emptyList())
+        remapFile(src, tmp, toolMap, emptyList(), dialect)
         // Atomic replace; fall back to copy+delete if rename fails (cross-device)
         if (!tmp.renameTo(src)) {
             tmp.copyTo(src, overwrite = true)
@@ -57,10 +59,11 @@ object GcodeToolRemapper {
         outputPath: String,
         toolMap: Map<Int, Int>,
         filamentIndices: List<Int> = emptyList(),
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
     ) {
         val output = File(outputPath)
         output.parentFile?.mkdirs()
-        remapFile(File(sourcePath), output, toolMap, filamentIndices)
+        remapFile(File(sourcePath), output, toolMap, filamentIndices, dialect)
     }
 
     private fun remapFile(
@@ -68,11 +71,12 @@ object GcodeToolRemapper {
         output: File,
         toolMap: Map<Int, Int>,
         filamentIndices: List<Int>,
+        dialect: GcodeDialect,
     ) {
         output.bufferedWriter().use { out ->
             src.bufferedReader().use { inp ->
                 for (line in inp.lineSequence()) {
-                    val remapped = remapLine(line.trimEnd(), toolMap)
+                    val remapped = remapLine(line.trimEnd(), toolMap, dialect)
                     out.write(compactFilamentVector(remapped, filamentIndices))
                     out.write("\n")
                 }
@@ -81,7 +85,11 @@ object GcodeToolRemapper {
     }
 
     /** Remap a single G-code line. Visible for testing. */
-    internal fun remapLine(line: String, toolMap: Map<Int, Int>): String {
+    internal fun remapLine(
+        line: String,
+        toolMap: Map<Int, Int>,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
+    ): String {
         // Standalone tool change: "T0", "T1 ; comment", …
         val tMatch = TOOL_LINE_RE.matchEntire(line)
         if (tMatch != null) {
@@ -111,15 +119,7 @@ object GcodeToolRemapper {
                 "${mr.groupValues[1]}$remapped"
             }
         }
-        // Snapmaker SM_ commands with EXTRUDER=N or INDEX=N
-        if (line.startsWith("SM_") && SM_PARAM_RE.containsMatchIn(line)) {
-            return SM_PARAM_RE.replace(line) { mr ->
-                val compact = mr.groupValues[2].toIntOrNull() ?: return@replace mr.value
-                val actual = toolMap[compact] ?: compact
-                "${mr.groupValues[1]}$actual"
-            }
-        }
-        return line
+        return dialect.remapToolLine(line, toolMap)
     }
 
     private fun compactFilamentVector(line: String, filamentIndices: List<Int>): String {

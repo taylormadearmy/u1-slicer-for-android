@@ -40,6 +40,9 @@ fun SliceArtifact.isCompatibleWith(printer: Printer?): Boolean {
         SlicerTarget.GenericKlipper -> printer.machine == MachineKind.GENERIC_KLIPPER &&
             this is SliceArtifact.MoonrakerGcodeArtifact && machineProfileFingerprint != null &&
             machineProfileFingerprint == printer.machineProfile?.fingerprint
+        SlicerTarget.GenericMarlin -> printer.machine == MachineKind.GENERIC_MARLIN &&
+            this is SliceArtifact.MoonrakerGcodeArtifact && machineProfileFingerprint != null &&
+            machineProfileFingerprint == printer.machineProfile?.fingerprint
         else -> printer.machine == MachineKind.BAMBU && target.isCompatibleWith(printer.kind, printer.bambu?.model)
     }
 }
@@ -52,7 +55,9 @@ fun sliceArtifactForJob(job: SliceJob): SliceArtifact.MoonrakerGcodeArtifact {
         sourceModelName = job.modelName,
         gcodeFile = File(job.gcodePath),
         target = target,
-        machineProfileFingerprint = job.machineProfileFingerprint.takeIf { job.sliceTarget == SlicerTarget.GenericKlipper.name },
+        machineProfileFingerprint = job.machineProfileFingerprint.takeIf {
+            job.sliceTarget in setOf(SlicerTarget.GenericKlipper.name, SlicerTarget.GenericMarlin.name)
+        },
     )
 }
 
