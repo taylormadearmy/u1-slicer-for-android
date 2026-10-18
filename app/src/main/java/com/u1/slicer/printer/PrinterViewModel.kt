@@ -762,12 +762,18 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
                 // F84: prefer the original model name over the on-disk gcode name
+                val nozzles = com.u1.slicer.machine.U1SliceNozzles.read(file)
+                if (nozzles != null) {
+                    nozzles.validate(requireNotNull(expectedPrinter).u1Nozzles, null)
+                }
                 // so the printer's file browser shows distinct, recognisable jobs.
                 val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
                 val result = printerRepo.uploadAndPrint(
                     file, filename,
                     validateBeforeStart = {
-                        isCurrentPrinterAction(actionContext) && allowsPhysicalGcodeSend(printersRepo.config.first()?.active)
+                        val current = printersRepo.config.first()?.active
+                        isCurrentPrinterAction(actionContext) && allowsPhysicalGcodeSend(current) &&
+                            (nozzles == null || runCatching { nozzles.validate(requireNotNull(current).u1Nozzles, null) }.isSuccess)
                     },
                     expectedPrinter = expectedPrinter,
                 )

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.u1.slicer.machine.MachineProfile
 import com.u1.slicer.machine.MachineProfileRepository
+import com.u1.slicer.machine.U1NozzlePolicy
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -221,6 +222,7 @@ class ProfileEmbedder(private val context: Context) {
         // SlicingOverrides still win.
         processProfileKeys: Map<String, Any> = emptyMap(),
         machineProfile: MachineProfile? = null,
+        nozzleDiameter: Float? = null,
     ): MutableMap<String, Any> {
         loadProfiles(machineProfile)
 
@@ -269,6 +271,10 @@ class ProfileEmbedder(private val context: Context) {
             config.putAll(processProfile!!)
             config.putAll(filamentProfile!!)
             Log.i(TAG, "Using standard profile stack")
+        }
+
+        nozzleDiameter?.let {
+            U1NozzlePolicy.applyDefaults(config, it, targetExtruderCount)
         }
 
         // F87: layer on user-imported process profile keys. Sits above the bundled
@@ -325,6 +331,9 @@ class ProfileEmbedder(private val context: Context) {
         config["printer_settings_id"] = "Snapmaker U1 (0.4 nozzle) - multiplate"
         config["print_settings_id"] = "0.20mm Standard @Snapmaker U1"
         config["print_compatible_printers"] = mutableListOf("Snapmaker U1 (0.4 nozzle) - multiplate")
+        nozzleDiameter?.let {
+            U1NozzlePolicy.finalize(config, it, targetExtruderCount)
+        }
 
         // Phase 2 B.3 (2026-04-28, post-adversarial-review) — explicit
         // marker for native `is_snapmaker_profile` detection. The pre-
@@ -559,13 +568,19 @@ class ProfileEmbedder(private val context: Context) {
         outputDir: File,
         info: ThreeMfInfo,
         extruderRemap: Map<Int, Int>? = null,
-        plateId: Int? = null
+        plateId: Int? = null,
+        nozzleDiameter: Float? = null,
     ): File {
         val outputFile = File(outputDir, "embedded_${inputFile.name}")
         // An embed written by this app is safe for native profile_keys[]. Keep the
         // provenance on the output boundary so every app-authored embed is marked,
         // including callers that do not use the U1-oriented buildConfig() helper.
-        val configIni = serializeConfig(config + ("snapmaker_authored_profile" to "1"))
+        val resolvedConfig = config.toMutableMap()
+        nozzleDiameter?.let {
+            val count = (config["extruder_count"]?.toString()?.toIntOrNull() ?: 1)
+            U1NozzlePolicy.finalize(resolvedConfig, it, count)
+        }
+        val configIni = serializeConfig(resolvedConfig + ("snapmaker_authored_profile" to "1"))
 
         ZipFile(inputFile).use { srcZip ->
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->

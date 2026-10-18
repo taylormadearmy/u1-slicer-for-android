@@ -2,6 +2,10 @@ package com.u1.slicer.ui.printer
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
@@ -22,6 +26,32 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PrinterEditDialogInstrumentedTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun existingOfflineU1SavesInstalledNozzleDiameterForEachHead() {
+        val existing = Printer("offline-u1", "Offline U1")
+        var saved: Printer? = null
+        compose.setContent {
+            MaterialTheme {
+                PrinterEditDialog(existing, onSave = { saved = it },
+                    onTest = { error("Offline settings must not contact a printer") }, onDismiss = {})
+            }
+        }
+        repeat(4) { slot ->
+            compose.onNodeWithText("E${slot + 1} nozzle").performScrollTo()
+                .assertTextContains("0.4 mm")
+        }
+        listOf(0.2f, 0.4f, 0.6f, 0.8f).forEachIndexed { slot, diameter ->
+            compose.onNodeWithText("E${slot + 1} nozzle").performScrollTo().performClick()
+            compose.onNode(hasText("$diameter mm") and hasAnyAncestor(isPopup())).performClick()
+        }
+        compose.onNodeWithText("Test connection").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("Save").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(0.2f, 0.4f, 0.6f, 0.8f), saved?.u1Nozzles?.diametersMm)
+            assertEquals("", saved?.moonrakerUrl)
+            assertEquals(existing.id, saved?.id)
+        }
+    }
 
     @Test fun defaultU1AddRouteHidesExperimentalConnectionsAndMachines() {
         compose.setContent {

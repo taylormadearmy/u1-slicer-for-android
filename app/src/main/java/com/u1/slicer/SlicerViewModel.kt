@@ -78,6 +78,10 @@ import com.u1.slicer.slice.buildSliceArtifact
 import com.u1.slicer.slice.buildSliceArtifactWithTimings
 import com.u1.slicer.slice.resolveDefaultSliceTarget
 import com.u1.slicer.machine.MachineProfile
+import com.u1.slicer.machine.U1NozzlePolicy
+import com.u1.slicer.machine.U1SliceNozzles
+import com.u1.slicer.machine.resolveU1SliceDiameter
+import com.u1.slicer.data.U1NozzleConfiguration
 import com.u1.slicer.machine.machineGcodeForSlice
 import com.u1.slicer.machine.resolveActiveMachineSliceConfig
 import org.json.JSONObject
@@ -5201,9 +5205,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         outputDir: java.io.File,
         plateId: Int? = null,
         canonicalForEmbed: com.u1.slicer.data.CanonicalFilamentList? = null,
+        nozzleDiameter: Float? = null,
     ): java.io.File {
         val embedSetupT0 = System.currentTimeMillis()
-        val cfg = _config.value
+        val cfg = if (nozzleDiameter != null && nozzleDiameter != 0.4f) {
+            val defaults = U1NozzlePolicy.defaults(nozzleDiameter)
+            _config.value.copy(
+                nozzleDiameter = nozzleDiameter,
+                layerHeight = defaults.getValue("layer_height").toString().toFloat(),
+                firstLayerHeight = defaults.getValue("initial_layer_print_height").toString().toFloat(),
+            )
+        } else _config.value
         if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
             val machine = requireNotNull(selectedGenericProfile()) { "Import a Klipper machine profile before slicing" }
             require(!info.hasLayerToolChanges && info.usedExtruderIndices.all { it <= machine.extruderCount }) {
@@ -5395,6 +5407,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 targetExtruderCount = targetCount,
                 processProfileKeys = activeProcessKeys,
                 machineProfile = activeMachineProfile.value.takeIf { sliceTarget == SlicerTarget.SnapmakerU1 },
+                nozzleDiameter = nozzleDiameter,
             )
         if (resolvedF99 != null) {
             val physicalPresets = extruderPresets.value.sortedBy { it.index }
@@ -5888,6 +5901,54 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun u1DiameterForSlice(): Float {
+        val hardware = activePrinterForSlicing.value?.u1Nozzles ?: U1NozzleConfiguration()
+        hardware.diametersMm.distinct().singleOrNull()?.let { return it }
+        val info = _threeMfInfo.value ?: sourceModelInfo
+        val sourceTools = if (_perVolumeExtruders.value.isNotEmpty() && info?.hasPaintData != true) {
+            _meshSourceExtruders0Based.value.map { it + 1 }
+        } else info?.usedExtruderIndices.orEmpty().filter { it > 0 }
+        val tools = sourceTools.ifEmpty { listOf(1) }.toMutableSet()
+        val effective = slicingOverrides.value.resolveInto(_config.value)
+        val source = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+        val overrides = slicingOverrides.value
+        val supportsActive = if (overrides.supports.mode == OverrideMode.USE_FILE) {
+            source["enable_support"]?.toString()?.let { it == "1" || it == "true" } ?: effective.supportEnabled
+        } else effective.supportEnabled
+        if (supportsActive) {
+            val support = if (overrides.supportFilament.mode == OverrideMode.USE_FILE)
+                source["support_filament"]?.toString()?.toIntOrNull() ?: effective.supportFilament else effective.supportFilament
+            val interfaceTool = if (overrides.supportInterfaceFilament.mode == OverrideMode.USE_FILE)
+                source["support_interface_filament"]?.toString()?.toIntOrNull() ?: effective.supportInterfaceFilament else effective.supportInterfaceFilament
+            tools.addAll(listOf(support, interfaceTool).filter { it > 0 })
+        }
+        val recipe = resolveMixedFilamentDefinitionsForSlice(
+            _mixRecipeSource.value, _importedMixRecipeState.value, mixedFilamentManager, 4,
+        )
+        val mixes = parseMixedFilamentRecipe(recipe).rows
+        val remaps = _canonicalColourRemaps.value
+        val lowered = if (remaps.isNotEmpty()) resolveCanonicalColourRemap(
+            canonicalSize = _canonicalFilamentList.value?.size ?: 0,
+            remaps = remaps,
+            projectMixes = mixedFilamentManager.projectMixes.value,
+            libraryMixes = mixedFilamentManager.libraryMixes.value,
+        ) ?: error("Choose valid file-colour destinations before slicing.") else null
+        val mixSpace = lowered != null || _perVolumeExtruders.value.values.any { it > 4 } ||
+            (info?.fullSpectrumPhysicalCount ?: 0) > 0
+        val mixBase = if (lowered != null || (info?.fullSpectrumPhysicalCount ?: 0) > 0) 4 else
+            maxOf(4, _canonicalFilamentList.value?.size ?: 0)
+        val mapping = resolveExportMapping(GcodeToolSpace.CANONICAL)
+        val physicalSlots = tools.flatMap { tool ->
+            val loweredTool = lowered?.get(tool - 1) ?: tool
+            if (mixSpace && loweredTool > mixBase) {
+                val row = mixes.getOrNull(loweredTool - mixBase - 1)
+                    ?: error("A selected ColorMix recipe is unavailable. Choose a valid mix before slicing.")
+                row.componentIds.map { it - 1 }
+            } else listOf(if (mixSpace) loweredTool - 1 else mapping?.getOrNull(tool - 1) ?: tool - 1)
+        }
+        return resolveU1SliceDiameter(hardware, physicalSlots)
+    }
+
     fun startSlicing() {
         if (!com.u1.slicer.slice.isLocalSliceAvailable(
                 activePrinter = activePrinterForSlicing.value,
@@ -5951,6 +6012,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 val printerForSlice = activePrinterForSlicing.value
                 val target = resolveDefaultSliceTarget(printerForSlice)
+                val u1NozzleDiameter = if (target == SlicerTarget.SnapmakerU1) u1DiameterForSlice() else null
                 val genericMachineForSlice = when (target) {
                     SlicerTarget.ElegooCentauriCarbon -> GenericMachineProfile.centauriCarbon()
                     SlicerTarget.GenericKlipper, SlicerTarget.GenericMarlin -> printerForSlice?.machineProfile
@@ -6041,7 +6103,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // stripAssembleSection + stripUnreferencedConfigObjects).
                         val activePlateId = _currentPlateId.value
                         val reembedPlateId = activePlateId.takeIf { it > 0 }
-                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir(), plateId = reembedPlateId)
+                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir(), plateId = reembedPlateId, nozzleDiameter = u1NozzleDiameter)
                         // Acquire previewMutex before touching native model — prevents SIGSEGV
                         // when getPreparePreviewMesh is concurrently iterating model volumes
                         // on the preview coroutine while we clear+reload here.
@@ -6365,7 +6427,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // USE_FILE passthrough: base values from _config.value are used as-is.
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
-                val resolvedSliceConfig = resolveActiveMachineSliceConfig(target, machineForSlice, ov.resolveInto(_config.value), genericMachineForSlice).let { cfg ->
+                val u1Base = if (u1NozzleDiameter != null) {
+                    val defaults = U1NozzlePolicy.defaults(u1NozzleDiameter)
+                    val base = _config.value.copy(nozzleDiameter = u1NozzleDiameter)
+                    if (u1NozzleDiameter != 0.4f) base.copy(
+                        layerHeight = defaults.getValue("layer_height").toString().toFloat(),
+                        firstLayerHeight = defaults.getValue("initial_layer_print_height").toString().toFloat(),
+                    ) else base
+                } else _config.value
+                val resolvedSliceConfig = resolveActiveMachineSliceConfig(target, machineForSlice, ov.resolveInto(u1Base), genericMachineForSlice).let { cfg ->
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
                     if (cfg.wipeTowerEnabled) {
@@ -6559,7 +6629,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // immediately before native.slice() — so it captures any row added after
                 // the last config change.
                 val jniSliceConfig = targetAwareSliceConfig.copy(
-                    layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE)
+                    layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE ||
+                        (u1NozzleDiameter != null && u1NozzleDiameter != 0.4f && sourceModelFile == null))
                         targetAwareSliceConfig.layerHeight else 0.0f,
                     ironingType = resolveNativeIroningType(ov.ironing),
                     machineStartGcode = jniMachineStartGcode,
@@ -6610,6 +6681,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 check(activePrinterForSlicing.value == printerForSlice) { "Printer configuration changed during slice preparation. Slice again for the selected printer." }
+                if (u1NozzleDiameter != null) {
+                    U1NozzlePolicy.validate(mapOf(
+                        "layer_height" to targetAwareSliceConfig.layerHeight,
+                        "initial_layer_print_height" to targetAwareSliceConfig.firstLayerHeight,
+                    ), u1NozzleDiameter)
+                    val variableLayers = native.nativeGetVariableLayerHeightRange()
+                    require(variableLayers == null || variableLayers[1] <= u1NozzleDiameter * 0.8f + 0.00001f) {
+                        "Variable layer heights exceed the limit for the $u1NozzleDiameter mm nozzle. Set variable layers to Off or regenerate them with a compatible nozzle profile."
+                    }
+                    check(u1DiameterForSlice() == u1NozzleDiameter) { "Nozzle assignments changed. Slice again." }
+                }
                 if (genericMachineForSlice != null) {
                     val explicit = buildExplicitBambuProfileOverrides(
                         profileOverrides, ov, hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
@@ -6830,6 +6912,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Preview exposes upload actions. Previously SliceComplete was emitted
                     // first, allowing FTPS to read output.gcode.3mf while this block
                     // truncated and rewrote it for the new slice.
+                    if (u1NozzleDiameter != null) {
+                        val gcode = File(result.gcodePath)
+                        val tools = com.u1.slicer.slice.readUsedFilamentIndicesFromGcodeHeader(gcode).ifEmpty { listOf(0) }
+                        val requirements = U1SliceNozzles(
+                            u1NozzleDiameter, tools,
+                            if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL,
+                        )
+                        requirements.validate(printerForSlice?.u1Nozzles ?: U1NozzleConfiguration(), resolveExportMapping())
+                        gcode.appendText("\n${requirements.toGcodeLine()}\n")
+                    }
                     val preparedBambuArtifact = if (
                         target.family == SliceTargetFamily.BAMBU && target.supportsLocalSlicing
                     ) {
@@ -6902,7 +6994,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             estimatedTimeSeconds = result.estimatedTimeSeconds,
                             estimatedFilamentMm = result.estimatedFilamentMm,
                             estimatedFilamentGrams = result.estimatedFilamentGrams,
-                            layerHeight = cfg.layerHeight,
+                            layerHeight = if (u1NozzleDiameter != null && u1NozzleDiameter != 0.4f) targetAwareSliceConfig.layerHeight else cfg.layerHeight,
                             fillDensity = cfg.fillDensity,
                             nozzleTemp = cfg.nozzleTemp,
                             bedTemp = cfg.bedTemp,
@@ -7457,7 +7549,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             //     pre-schema-v5 multi-colour job. Identity-mod-4 fallback
             //     via the helper.
             val mapping = resolveExportMapping(job)
-            if (!prepareExportableGcodeWithMapping(sourceFile, shareFile, mapping)) return@launch
+            try {
+                if (!prepareExportableGcodeWithMapping(sourceFile, shareFile, mapping)) return@launch
+            } catch (error: IllegalArgumentException) {
+                _toastEvents.tryEmit(error.message ?: "Cannot share this nozzle configuration")
+                return@launch
+            }
 
             val uri = FileProvider.getUriForFile(
                 context,
@@ -8293,7 +8390,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * `_selectedExtruder`. See [com.u1.slicer.gcode.resolveCanonicalExportMapping]
      * for the four-case logic.
      */
-    internal fun resolveExportMapping(): List<Int>? {
+    internal fun resolveExportMapping(
+        toolSpace: GcodeToolSpace = if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL,
+    ): List<Int>? {
         val canonical = _canonicalFilamentList.value
         // Phase 2 (post-round-2-review, Reviewer 3 P1; tightened
         // post-round-3-review for F2 fallback gap) — supply
@@ -8344,7 +8443,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         } else null
 
         return resolveExportMappingForToolSpace(
-            toolSpace = if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL,
+            toolSpace = toolSpace,
             canonicalSize = canonicalSize,
             confirmedMapping = confirmed,
             selectedExtruder = _selectedExtruder.value,
@@ -8368,6 +8467,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         mapping: List<Int>?,
     ): Boolean {
         if (!sourceFile.exists()) return false
+        validateU1NozzleMapping(sourceFile, mapping)
+        val nozzleRequirements = U1SliceNozzles.read(sourceFile)
         if (mapping.isNullOrEmpty()) {
             sourceFile.copyTo(destFile, overwrite = true)
         } else {
@@ -8377,7 +8478,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 colorMapping = mapping,
             )
         }
+        nozzleRequirements?.let { requirements ->
+            val toolMap = mapping.orEmpty().mapIndexed { index, slot -> index to slot }.toMap()
+            destFile.appendText("\n${requirements.remap(toolMap).toGcodeLine()}\n")
+        }
         return true
+    }
+
+    internal fun validateU1NozzleMapping(sourceFile: File, mapping: List<Int>?) {
+        val printer = activePrinterForSlicing.value
+        val requirements = U1SliceNozzles.read(sourceFile)
+        if (requirements == null) {
+            require(printer?.machine != com.u1.slicer.data.MachineKind.SNAPMAKER_U1 ||
+                printer.u1Nozzles.diametersMm.all { it == 0.4f }) {
+                "This older G-code has no saved nozzle requirements. Slice it again for the installed nozzles."
+            }
+            return
+        }
+        require(printer == null || printer.machine == com.u1.slicer.data.MachineKind.SNAPMAKER_U1) {
+            "This G-code was sliced for a Snapmaker U1. Select the matching printer."
+        }
+        requirements.validate(printer?.u1Nozzles ?: U1NozzleConfiguration(), mapping)
     }
 
     fun shareGcode() {
@@ -8423,6 +8544,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
                 }
+            } catch (error: IllegalArgumentException) {
+                _toastEvents.tryEmit(error.message ?: "Cannot share this nozzle configuration")
             } finally {
                 endLongOp(longOpCtx)
             }

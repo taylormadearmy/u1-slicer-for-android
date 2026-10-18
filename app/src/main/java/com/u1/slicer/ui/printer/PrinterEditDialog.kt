@@ -31,6 +31,7 @@ import com.u1.slicer.data.MachineKind
 import com.u1.slicer.data.PrintHostConfig
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.U1NozzleConfiguration
 import com.u1.slicer.data.HostType
 import com.u1.slicer.data.defaultHostType
 import com.u1.slicer.data.defaultMachineKind
@@ -56,6 +57,7 @@ fun PrinterEditDialog(
         ?: defaultHostType(initialKind),
 ) {
     var nickname by remember { mutableStateOf(existing?.nickname.orEmpty()) }
+    var u1Nozzles by remember { mutableStateOf(existing?.u1Nozzles ?: U1NozzleConfiguration()) }
     var kind by remember { mutableStateOf(existing?.kind ?: initialKind) }
     var hostType by remember { mutableStateOf(initialHostType) }
     var machine by remember { mutableStateOf(existing?.machine ?: defaultMachineKind(initialKind)) }
@@ -113,9 +115,11 @@ fun PrinterEditDialog(
         machineProfileId = existing?.machineProfileId.takeIf { existing?.machineProfile == profile },
         host = if (kind == PrinterKind.ELEGOO_CC1 || kind == PrinterKind.OCTOPRINT) PrintHostConfig(url.trim(), if (kind == PrinterKind.OCTOPRINT) apiKey.trim() else "") else null,
         extruderPresets = existing?.extruderPresets ?: if (machine == MachineKind.SNAPMAKER_U1) defaultExtruderPresets() else emptyList(),
+        u1Nozzles = u1Nozzles,
         selectedWebcamUid = existing?.selectedWebcamUid.takeIf { kind == PrinterKind.MOONRAKER && existing?.moonrakerUrl == com.u1.slicer.network.MoonrakerClient.normalizeUrl(url) },
     )
     val addressValid = if (kind == PrinterKind.BAMBU_LAN) ip.isNotBlank() && accessCode.isNotBlank() && serial.isNotBlank() else url.isNotBlank()
+    val canSaveWithoutAddress = canSaveOfflineU1(existing, machine, url)
     val allowExperimentalChoices = existing != null || experimentalPrinterSupportEnabled
     val hostTypes = if (initialKind == PrinterKind.BAMBU_LAN) listOf(HostType.BAMBU_LAN)
         else if (allowExperimentalChoices) listOf(HostType.MOONRAKER, HostType.OCTOPRINT, HostType.PRUSALINK)
@@ -165,6 +169,15 @@ fun PrinterEditDialog(
                         }
                     }) { machine = it; result = null }
                 }
+                if (machine == MachineKind.SNAPMAKER_U1) {
+                    Text("Installed nozzles", style = MaterialTheme.typography.titleSmall)
+                    repeat(4) { slot ->
+                        PrinterChoice("E${slot + 1} nozzle", u1Nozzles.diameterMm(slot),
+                            U1NozzleConfiguration.SUPPORTED_DIAMETERS_MM, { "$it mm" }) {
+                            u1Nozzles = u1Nozzles.withDiameter(slot, it)
+                        }
+                    }
+                }
                 if (machine == MachineKind.GENERIC_KLIPPER || machine == MachineKind.GENERIC_MARLIN) {
                     Text(profile?.name ?: "Import a resolved Orca machine JSON profile, or a JSON array containing the profile and its parents. Supported profiles use Klipper or Marlin with up to four independent nozzles.", style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) { Text("Import machine profile") }
@@ -195,7 +208,7 @@ fun PrinterEditDialog(
                 result?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         },
-        confirmButton = { TextButton(enabled = addressValid && machineValid && !testing, onClick = {
+        confirmButton = { TextButton(enabled = (addressValid || canSaveWithoutAddress) && machineValid && !testing, onClick = {
             try {
                 onSave(draft())
                 onDismiss()
@@ -227,3 +240,6 @@ internal fun PrinterKind.connectionLabel(): String = when (this) {
 }
 
 internal fun canChangePrinterKind(existing: Printer?): Boolean = existing == null
+
+internal fun canSaveOfflineU1(existing: Printer?, machine: MachineKind, url: String): Boolean =
+    existing != null && machine == MachineKind.SNAPMAKER_U1 && url.isBlank()

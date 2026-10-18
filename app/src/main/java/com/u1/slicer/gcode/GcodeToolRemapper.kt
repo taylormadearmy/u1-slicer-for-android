@@ -90,6 +90,9 @@ object GcodeToolRemapper {
         toolMap: Map<Int, Int>,
         dialect: GcodeDialect = KlipperSnapmakerDialect,
     ): String {
+        if (line.startsWith(com.u1.slicer.machine.U1SliceNozzles.PREFIX)) {
+            return requireNotNull(com.u1.slicer.machine.U1SliceNozzles.parse(line)).remap(toolMap).toGcodeLine()
+        }
         // Standalone tool change: "T0", "T1 ; comment", …
         val tMatch = TOOL_LINE_RE.matchEntire(line)
         if (tMatch != null) {

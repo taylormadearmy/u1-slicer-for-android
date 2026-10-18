@@ -1159,6 +1159,9 @@ class MainActivity : ComponentActivity() {
                                         val uploadPhysicalSlotSpace = sliceMixToolSpace && mixSlotMapping != null
                                         val (uploadList, uploadFileIndices) =
                                             if (uploadPhysicalSlotSpace) mixSlotMapping!! else (narrowedList to plateFileIndices)
+                                        val requiredNozzle = remember(pending.gcodePath) {
+                                            runCatching { com.u1.slicer.machine.U1SliceNozzles.read(java.io.File(pending.gcodePath))?.diameterMm }.getOrNull()
+                                        }
                                         com.u1.slicer.ui.UploadConfirmationDialog(
                                             canonicalList = uploadList,
                                             plateFileIndices = uploadFileIndices,
@@ -1172,6 +1175,9 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             else viewModel.sliceTimeMaterials(canonical, currentMapping),
                                             physicalToolSpace = uploadPhysicalSlotSpace,
+                                            noteText = requiredNozzle?.let {
+                                                "This file requires $it mm nozzles. Use matching toolheads in the printer's Filament Setup. Uploading does not start a print."
+                                            },
                                             onConfirm = {
                                                 val sourceFile = java.io.File(pending.gcodePath)
                                                 val heldFile = java.io.File(
@@ -1187,6 +1193,7 @@ class MainActivity : ComponentActivity() {
                                                     // the app is backgrounded.
                                                     LongOpService.start(toastContext, "Preparing G-code")
                                                     val physical = try {
+                                                        viewModel.validateU1NozzleMapping(sourceFile, viewModel.resolveExportMapping())
                                                         val sourceToolSpace =
                                                             if (sliceMixToolSpace) com.u1.slicer.gcode.GcodeToolSpace.PHYSICAL
                                                             else com.u1.slicer.gcode.GcodeToolSpace.CANONICAL
@@ -1319,11 +1326,8 @@ class MainActivity : ComponentActivity() {
                                                 physicalMapping = expanded,
                                             )
                                             val physical = try {
-                                                com.u1.slicer.gcode.applyPrintTimeRemap(
-                                                    source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
-                                                    output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
-                                                    colorMapping = sendMapping,
-                                                )
+                                                check(viewModel.prepareExportableGcodeWithMapping(sourceFile, remappedFile, sendMapping)) { "G-code file not found" }
+                                                com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile)
                                             } catch (ce: kotlinx.coroutines.CancellationException) {
                                                 throw ce
                                             } catch (t: Throwable) {
@@ -2413,6 +2417,14 @@ fun PrepareScreen(
                         // function the slice uses, so the chip strip shows the file's
                         // declared materials and never diverges from the slice.
                         val filamentMaterials by viewModel.displayedFilamentMaterials.collectAsState()
+                        if (effectiveSliceTarget == SlicerTarget.SnapmakerU1) {
+                            val nozzles = activePrinter?.u1Nozzles ?: com.u1.slicer.data.U1NozzleConfiguration()
+                            Text(
+                                text = "Nozzles: " + nozzles.diametersMm.mapIndexed { index, size -> "E${index + 1}: $size mm" }.joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text("Change installed nozzle sizes in Settings → Printers → Edit.", style = MaterialTheme.typography.bodySmall)
+                        }
                         PrintSetupSection(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
                             colorMapping = colorMapping,
@@ -2547,6 +2559,10 @@ fun PrepareScreen(
                             adaptiveLayerHeight = adaptiveLayerHeight,
                             adaptiveLayerHeightRange = adaptiveLayerHeightRange,
                             onAdaptiveLayerHeightChange = viewModel::setAdaptiveLayerHeight,
+                            nozzleDescription = if (effectiveSliceTarget == SlicerTarget.SnapmakerU1) {
+                                (activePrinter?.u1Nozzles ?: com.u1.slicer.data.U1NozzleConfiguration()).diametersMm
+                                    .distinct().joinToString(" / ") { "$it mm" }
+                            } else null,
                         )
                     }
                 }
@@ -3264,6 +3280,7 @@ fun ConfigCard(
     adaptiveLayerHeight: com.u1.slicer.data.AdaptiveLayerHeightState = com.u1.slicer.data.AdaptiveLayerHeightState(),
     adaptiveLayerHeightRange: FloatArray? = null,
     onAdaptiveLayerHeightChange: ((com.u1.slicer.data.AdaptiveLayerHeightState) -> Unit)? = null,
+    nozzleDescription: String? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3341,7 +3358,7 @@ fun ConfigCard(
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-            InfoRow("Nozzle Diameter", "${config.nozzleDiameter} mm")
+            InfoRow("Nozzle Diameter", nozzleDescription ?: "${config.nozzleDiameter} mm")
             // B117: removed the "Filament: PLA" InfoRow. It was sourced from
             // `config.filamentType` which is set only at file-load time and never
             // updates after a Prepare-screen material override — so it shows stale

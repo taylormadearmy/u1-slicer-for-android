@@ -84,6 +84,7 @@ data class Printer(
     val username: String? = null,
     val password: String? = null,
     val extruderPresets: List<ExtruderPreset> = defaultExtruderPresets(),
+    val u1Nozzles: U1NozzleConfiguration = U1NozzleConfiguration(),
     /** Stable Moonraker webcam UID chosen for this printer, or null for automatic choice. */
     val selectedWebcamUid: String? = null,
     val machineProfile: GenericMachineProfile? = null,
@@ -155,6 +156,7 @@ data class Printer(
             p.host?.let { put("host", JSONObject().put("url", it.url).put("apiKey", it.apiKey)) }
             if (p.bambu != null) put("bambu", BambuConfig.toJsonObject(p.bambu))
             put("extruderPresets", JSONArray(serializeExtruderPresets(p.extruderPresets)))
+            put("u1Nozzles", JSONArray(p.u1Nozzles.diametersMm.map(Float::toDouble)))
             p.selectedWebcamUid?.takeIf { it.isNotBlank() }?.let { put("selectedWebcamUid", it) }
             p.machineProfileId?.takeIf { it.isNotBlank() }?.let { put("machineProfileId", it) }
         }
@@ -192,6 +194,10 @@ data class Printer(
                 username = obj.optString("printhost_user", "").takeIf { it.isNotBlank() },
                 password = obj.optString("printhost_password", "").takeIf { it.isNotBlank() },
                 extruderPresets = extruderPresets,
+                u1Nozzles = if (obj.has("u1Nozzles")) {
+                    val nozzles = obj.getJSONArray("u1Nozzles")
+                    U1NozzleConfiguration((0 until nozzles.length()).map { nozzles.getDouble(it).toFloat() })
+                } else U1NozzleConfiguration(),
                 selectedWebcamUid = obj.optString("selectedWebcamUid", "").takeIf { it.isNotBlank() },
                 machine = machine,
                 machineProfile = profile,

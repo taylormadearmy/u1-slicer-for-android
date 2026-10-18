@@ -92,8 +92,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2235 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 493 independent device tests, uses Orchestrator
+./gradlew testDebugUnitTest                        # 2270 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 507 independent device tests, uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -122,7 +122,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2235 tests across 249 reported test suites
+### Unit tests (`app/src/test/`) - 2270 tests across 253 reported test suites
 - Generic printer coverage includes imported machine-profile validation and identity, saved-job compatibility, filament temperature composition, CC1 and OctoPrint protocol handling, and draft connection/preset persistence.
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
@@ -224,9 +224,9 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 504 tests across 86 Kotlin source files
+### Instrumented tests (`app/src/androidTest/`) - 518 tests across 88 Kotlin source files
 
-The default runner executes 493 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
+The default runner executes 507 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
 
 - `slicing/GenericIndependentExtruderNativeTest.kt` has three checks for two- and four-tool Klipper and Marlin output, actual extrusion, selected offsets and heating, and numeric test-oracle correctness.
 - `ui/printer/PrinterEditDialogInstrumentedTest.kt` has nine checks for the experimental add gate, the CC1 route, saved third-party editing, immutable Marlin snapshots, host credentials, and refusal to save a generic machine without its profile.

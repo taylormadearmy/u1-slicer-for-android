@@ -14,6 +14,8 @@
         'com.u1.slicer.B131B132B133DiagnosticTest'
         'com.u1.slicer.slicing.MixSlotObjectAssignBlendGateTest'
         'com.u1.slicer.slicing.SlicingIntegrationTest'
+        'com.u1.slicer.slicing.U1NozzleSlicingTest'
+        'com.u1.slicer.slicing.U1NozzleViewModelTest'
         'com.u1.slicer.slicing.MachineBedSizeTest'
         'com.u1.slicer.slicing.SingleExtruderMachineTest'
         'com.u1.slicer.slicing.MarlinFlavorTest'
