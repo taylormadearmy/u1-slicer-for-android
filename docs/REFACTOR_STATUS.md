@@ -1,10 +1,10 @@
-# Printer architecture status for the v5.0.0 candidate
+# Printer architecture status for v5.0.1
 
 Living status of the multi-phase Bambu file-handling refactor. Updated when a phase ships or scope changes.
 
 ## A2 multi-printer pipeline
 
-**Status:** IMPLEMENTED. The validated v5.0.0 release candidate awaits publication authorization.
+**Status:** RELEASED v5.0.1 (2026-10-18). The v5 machine-profile pipeline ships alongside U1 installed-nozzle settings.
 
 The generic printer path now resolves Orca-native machine JSON into `MachineProfile`, then derives `SliceConfig`, embedded profile settings, the G-code dialect, and transport capabilities. Each configured printer stores its profile ID. The repository keeps resolved profiles in its offline cache, and the built-in Snapmaker U1 remains the default.
 
@@ -26,10 +26,10 @@ For background see [`docs/architecture/2026-04-23-bambu-via-native-loader.md`](a
 - **Phase 2.0 (UX exploration):** ✅ DONE — direction settled in `docs/superpowers/specs/2026-04-26-canonical-filament-list-ux.md` §7
 - **Phase 2.6 (Prepare-screen reshape):** ✅ DONE in v2.0.0 (4 of 5 spec items; STL-default-from-syncFilaments deferred to v2.1.0)
 - **v2.1.0 (hardening release):** ⏸ NOT STARTED — bounded ~2-3 days. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A1**.
-- **v5.0.0 (multi-printer epic):** IMPLEMENTED, validated release candidate awaiting publication authorization. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A2**.
+- **v5.0.1 (multi-printer pipeline):** RELEASED 2026-10-18; the broader architecture epic retains deferred scope. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A2**.
 - **Phase 3+ adjacent platform work:** 🔭 ROADMAP — see GitHub #16, #18, #33
 
-The core Bambu file-handling refactor is complete and shipping. The A2 multi-printer epic is implemented and validated as a v5.0.0 release candidate. Remaining work is the authorized publication sequence plus the deferred follow-up issues listed in the A2 section.
+The core Bambu file-handling refactor is complete and shipping. The A2 machine-profile pipeline shipped in v5.0.1. The broader A2 issue remains open for deferred topology support and the proposed full JNI replacement.
 
 ---
 
@@ -132,9 +132,9 @@ New code shipped in v2.0.0:
 
 ---
 
-## v5.0.0 candidate: multi-printer via Orca profiles
+## v5.0.1: multi-printer via Orca profiles
 
-**Status:** IMPLEMENTED and locally validated. Awaiting publication authorization.
+**Status:** RELEASED v5.0.1 (2026-10-18). Deferred scope remains tracked in BACKLOG A2.
 
 **Shipped design:** The app supports multiple configured printers through persisted `MachineProfile` IDs and resolved Orca-native JSON. The implementation includes:
 

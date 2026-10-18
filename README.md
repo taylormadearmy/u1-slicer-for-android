@@ -6,7 +6,7 @@ Native Android slicer for the **Snapmaker U1** and supported rectangular-bed FDM
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v4.0.5` (`versionCode 405`)
+Current release: `v5.0.1` (`versionCode 501`)
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -16,7 +16,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 
 ## Features
 
-- **Multi-printer profiles (v5.0.0 candidate)**: browse the eligible subset of a pinned `taylormadearmy/OrcaSlicer` v2.2.4 source catalogue containing 326 models across 56 usable vendors, or import an `.orca_printer` bundle. Eligibility checks require rectangular FDM geometry, 1 to 4 physical slots, and Klipper or Marlin G-code. Upload uses Moonraker, OctoPrint, or PrusaLink when the selected transport supports it.
+- **Multi-printer profiles (v5.0.1)**: browse the eligible subset of a pinned `taylormadearmy/OrcaSlicer` v2.2.4 source catalogue containing 326 models across 56 usable vendors, or import an `.orca_printer` bundle. Eligibility checks require rectangular FDM geometry, 1 to 4 physical slots, and Klipper or Marlin G-code. Upload uses Moonraker, OctoPrint, or PrusaLink when the selected transport supports it.
 - **Elegoo Centauri Carbon 1 beta**: its experimental add route uses the dedicated Elegoo transport and bundled machine profile. Carbon 2 is not supported. Physical CC1 compatibility remains unverified.
 
 - **STL and 3MF slicing** — single-color, multi-color (up to 4 extruders), and paint-based (SEMM)
@@ -51,7 +51,7 @@ Open **Settings**, select **Add** under **Printers**, and choose **Snapmaker U1*
 
 ![Add Printer dialog with experimental printer support enabled](docs/images/multi-printer-wizard.png)
 
-The first v5.0.0 candidate supports rectangular beds, standard single-extruder and independent multi-extruder machines, and up to four physical slots. Delta and circular beds, shared-extruder multi-material systems, SDCP and Duet transports, and more than four physical extruders are deferred. ColorMix and Smart Paint mix encoding remain available only on four-slot printers.
+The v5.0.1 release supports rectangular beds, standard single-extruder and independent multi-extruder machines, and up to four physical slots. Delta and circular beds, shared-extruder multi-material systems, SDCP and Duet transports, and more than four physical extruders are deferred. ColorMix and Smart Paint mix encoding remain available only on four-slot printers.
 
 ### Smart Paint
 

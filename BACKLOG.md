@@ -8,6 +8,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Evidence** (2026-10-09): Android 17 displayed its native-library compatibility warning during the v4.0.5 UI tests. `libc++_shared.so` has 4 KB ELF LOAD alignment; the JNI library has 16 KB LOAD alignment, but the APK's uncompressed native entries fail 16 KB ZIP alignment checks.
 - **Current validation**: the Pixel 9a uses 4 KB pages. All 468 device checks and all 34 U1/H2D E2E cases passed on that phone; these results do not prove 16 KB compatibility.
 - **Acceptance**: make the C++ runtime, JNI library, RELRO boundaries, and APK packaging 16 KB compliant while retaining the required NDK 26 Release compiler for Orca. Pass ELF and ZIP alignment checks, then run the native, colour-mix, UI, and E2E tests in an actual 16 KB environment. See [issue #190](https://github.com/taylormadearmy/u1-slicer-for-android/issues/190).
+- **v5.0.1 (2026-10-18)**: the clean release APK passes the actual-package checker for 16 KB LOAD/RELRO boundaries, static C++ runtime dependencies, compressed native entries, and extraction manifest. Actual 16 KB device validation remains outstanding, so this issue stays open.
 
 ### B147: Smart-Paint + STRIPES mode (and STRIPES + fine_top_lines) still not mixing top surface after B146 — FIXED on `feature/colormix-topsurface`
 - **Symptoms** (Kevin, 2026-06-12): after B146, STRIPES mode via Smart Paint still produced no within-layer top-surface split; STRIPES + fine_top_lines also failed; only PROPORTIONAL, DITHER, or STRIPES + ironing_glaze worked.
@@ -723,7 +724,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) §v2.1.0.
 
 ### A2: v3.0.0 multi-printer via Orca profile import (GitHub #152)
-- **Status**: PARTIAL v4.0.5 (released 2026-10-09). Separate machine/connection selection, immutable imported single-nozzle Klipper profiles, CC1 and OctoPrint beta adapters, native generic-machine policy, and saved-job profile compatibility are delivered. Full printer/filament/process import, general slot-count parameterisation, and the proposed JNI pipeline replacement remain open. GitHub #152 stays open.
+- **Status**: PARTIAL, expanded in v5.0.1 (released 2026-10-18). The pinned Orca catalogue, `.orca_printer` import, rectangular Klipper/Marlin geometry, 1–4 physical slots, and Moonraker/OctoPrint/PrusaLink transport selection are delivered, alongside the dedicated CC1 and Bambu paths. Resolved profiles persist for offline use and saved-job compatibility. The proposed full JNI pipeline replacement and broader machine/topology support remain deferred; GitHub #152 stays open for that remaining scope.
 - **Driver**: support multiple printers in a single Android app, profile-driven via OrcaSlicer profile import. Replaces the hardcoded U1 assumptions threaded through `applyConfigToPrusa`, the `profile_keys[]` whitelist, the `is_snapmaker_profile` heuristic, and the 4-slot `coerceIn(0, 3)` clamps.
 - **Scope**:
   - **Profile import system.** Read `.orca_printer`, `.orca_filament`, `.orca_process` JSON. Handle 3MF-embedded variants. Validation (schema, required keys, conflict detection).
@@ -763,6 +764,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Note**: while here, correct the stale "no Compose UI harness in project" line in `CLAUDE.md` — the dependency exists, it is just unused.
 
 ## Open Features
+
+### F103: U1 installed nozzle diameters (GitHub #189) — DONE v5.0.1 (released 2026-10-18)
+- **Delivered**: Settings → Printers → Edit stores 0.2, 0.4, 0.6 or 0.8 mm independently for E1–E4, including offline U1 configurations. `U1NozzleConfiguration` persists hardware separately from filament profiles; legacy settings default to four 0.4 mm heads.
+- **Slicing and saved jobs**: `U1NozzlePolicy` adjusts layer/line-width defaults and validates explicit overrides. Used heads, supports and ColorMix components must share one diameter; unused heads can differ. `U1SliceNozzles` retains job requirements through history/remapping/export and rejects incompatible hardware or mappings with a reslice instruction.
+- **Verification**: 2,270 JVM tests and 25 focused device tests passed. New device coverage includes actual STL and 3MF slicing for all four diameters, persistence, support/mix compatibility, and saved-job/export safeguards. The full 507 independent device tests were not rerun for this change. Clean release build, APK version/signature and native package checks passed.
 
 ### F98: Global ironing override in slicing settings — DONE v4.0.3 (released 2026-08-29)
 - **Request**: expose OrcaSlicer's ordinary ironing setting in the phone slicer's settings, independently of the existing ColorMix-only “ironing glaze”.
@@ -1158,6 +1164,8 @@ The following are candidate options for M5. We'll choose which to build next. Al
 - Useful for both routine Snapmaker Orca updates and the eventual FullSpectrum fork evaluation (F14)
 
 ## Closed (recent)
+
+- **v5.0.1 (released 2026-10-18):** Added U1 per-head 0.2/0.4/0.6/0.8 mm nozzle settings, nozzle-aware slicing defaults, and durable compatibility checks for saved/exported jobs (F103 / #189). Published the v5 catalogue, Orca printer import, profile-driven geometry/slot counts/dialects and PrusaLink transport work. Validation: all 2,270 JVM tests and 25 focused device tests passed; clean signed release APK and native layout checks passed. The full independent device sweep was not rerun for the nozzle change. A2 and B150 remain open for the explicitly deferred scope and actual 16 KB device validation respectively.
 
 - **v4.0.5 (released 2026-10-09):** Fixed oversized Map & Upload filament rows by giving the dropdown container its row width, and fixed painted-model colour-mix remapping stalls by using one Java matcher across the XML. Added beta CC1 and imported single-nozzle Klipper support through Moonraker and OctoPrint, with saved-job machine/profile identity and separate upload/start actions. Review fixes preserve filament edits, selected and first-layer temperatures, native generic headers, valid upload filenames, and active connections during printer renames. Validation: 2,044 JVM tests, all 468 device checks, and 34/34 U1/H2D E2E cases passed. Two device layout checks passed after their setup dismissed Android's system warning, with visibility assertions unchanged. A2 remains partial; B150 / GitHub #190 tracks 16 KB compatibility, and physical operation of the new adapters remains unverified.
 
