@@ -907,6 +907,7 @@ PreparePreviewSceneHandle SlicerEngine::buildPreparePreviewScene(int max_triangl
 
     if (g_preview_mesh_valid && !g_cached_preview_mesh.extruder_indices.empty()) {
         scene->ready_batches.push_back(PrepareRenderBatch::fromPreviewMesh(g_cached_preview_mesh));
+        scene->is_complete = true;
         return scene;
     }
 

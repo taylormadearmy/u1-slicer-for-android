@@ -1908,6 +1908,7 @@ fun PrepareScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val config by viewModel.config.collectAsState()
+    val prepareConfig by viewModel.prepareConfig.collectAsState()
     val slicingOverrides by viewModel.slicingOverrides.collectAsState()
     val adaptiveLayerHeight by viewModel.adaptiveLayerHeight.collectAsState()
     val adaptiveLayerHeightRange by viewModel.adaptiveLayerHeightRange.collectAsState()
@@ -2418,12 +2419,12 @@ fun PrepareScreen(
                         // declared materials and never diverges from the slice.
                         val filamentMaterials by viewModel.displayedFilamentMaterials.collectAsState()
                         if (effectiveSliceTarget == SlicerTarget.SnapmakerU1) {
-                            val nozzles = activePrinter?.u1Nozzles ?: com.u1.slicer.data.U1NozzleConfiguration()
-                            Text(
-                                text = "Nozzles: " + nozzles.diametersMm.mapIndexed { index, size -> "E${index + 1}: $size mm" }.joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall,
+                            com.u1.slicer.ui.printer.U1PrepareNozzleSettings(
+                                printer = activePrinter,
+                                onSave = printerViewModel::savePrinterDraft,
+                                onTest = printerViewModel::testPrinterDraft,
+                                onNavigateSettings = onNavigateSettings,
                             )
-                            Text("Change installed nozzle sizes in Settings → Printers → Edit.", style = MaterialTheme.typography.bodySmall)
                         }
                         PrintSetupSection(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
@@ -2541,7 +2542,8 @@ fun PrepareScreen(
                         // fix35: Smart Paint moved to the 3D-viewer overlay (top-right icon).
                         // Single-colour Smart Paint entry previously here is gone.
                         ConfigCard(
-                            config, viewModel::updateConfig,
+                            prepareConfig.getOrNull() ?: config, viewModel::updateConfig,
+                            settingsError = prepareConfig.exceptionOrNull()?.message,
                             bedSizeX = activeMachineConfig.bedSizeX,
                             bedSizeY = activeMachineConfig.bedSizeY,
                             maxPrintHeight = activeMachineConfig.maxPrintHeight,
@@ -3281,6 +3283,7 @@ fun ConfigCard(
     adaptiveLayerHeightRange: FloatArray? = null,
     onAdaptiveLayerHeightChange: ((com.u1.slicer.data.AdaptiveLayerHeightState) -> Unit)? = null,
     nozzleDescription: String? = null,
+    settingsError: String? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3301,10 +3304,11 @@ fun ConfigCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                QuickStat("Layer", "%.2f mm".format(config.layerHeight))
+                QuickStat("Layer", if (settingsError == null) "%.2f mm".format(config.layerHeight) else "—")
                 QuickStat("Infill", "%.0f%%".format(config.fillDensity * 100))
                 QuickStat("Support", if (config.supportEnabled) "On" else "Off")
             }
+            settingsError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
 
@@ -3354,6 +3358,7 @@ fun ConfigCard(
                     filamentCount = filamentCount,
                     extruderPresets = extruderPresets,
                     colorMapping = colorMapping,
+                    effectiveLayerHeight = if (settingsError == null) config.layerHeight else null,
                 )
             }
 
@@ -4722,7 +4727,7 @@ fun InlineModelPreview(
         }
         if (!isInitialFetch) viewerStreaming = false
         } finally {
-            if (!isInitialFetch) viewerStreaming = false
+            viewerStreaming = false
             LongOpService.stop(previewPrepContext)
         }
     }

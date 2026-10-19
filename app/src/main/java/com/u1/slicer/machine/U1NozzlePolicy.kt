@@ -6,6 +6,15 @@ import java.util.Locale
 object U1NozzlePolicy {
     val supportedDiameters = com.u1.slicer.data.U1NozzleConfiguration.SUPPORTED_DIAMETERS_MM
 
+    fun baseConfig(base: com.u1.slicer.data.SliceConfig, diameter: Float): com.u1.slicer.data.SliceConfig {
+        requireSupported(diameter)
+        return if (diameter == 0.4f) base.copy(nozzleDiameter = diameter) else base.copy(
+            nozzleDiameter = diameter,
+            layerHeight = diameter / 2,
+            firstLayerHeight = diameter / 2,
+        )
+    }
+
     private val widthMultipliers = mapOf(
         "line_width" to 1.125f,
         "outer_wall_line_width" to 1.05f,

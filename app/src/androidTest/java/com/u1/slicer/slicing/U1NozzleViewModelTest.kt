@@ -29,6 +29,9 @@ import java.util.zip.ZipOutputStream
 /** Real app pipeline and saved-job export preparation, without any printer network calls. */
 @RunWith(AndroidJUnit4::class)
 class U1NozzleViewModelTest {
+    @Test fun selectedE4With02NozzleShows01BeforeSlicing() = runBlocking {
+        verifySlice(0.2f, slot = 3)
+    }
     @Test fun selectedE3With02NozzleSlicesWhileUnusedHeadsRemain04() = runBlocking {
         verifySlice(0.2f, slot = 2)
     }
@@ -100,6 +103,12 @@ class U1NozzleViewModelTest {
             assertTrue("Load failed: $loaded", loaded is SlicerViewModel.SlicerState.ModelLoaded)
             vm.setSelectedExtruder(slot)
             assertEquals(slot, vm.selectedExtruder.value)
+            if (!incompatibleSupport) {
+                val prepared = withTimeout(15_000) { vm.prepareConfig.first {
+                    it.getOrNull()?.nozzleDiameter == diameter
+                } }.getOrThrow()
+                assertEquals("Prepare must show the layer height before Slice is tapped", diameter / 2, prepared.layerHeight)
+            }
             vm.startSlicing()
             val sliced = withTimeout(120_000) { vm.state.first {
                 it is SlicerViewModel.SlicerState.SliceComplete || it is SlicerViewModel.SlicerState.Error

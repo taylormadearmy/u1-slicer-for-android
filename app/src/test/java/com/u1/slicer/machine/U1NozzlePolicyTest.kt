@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class U1NozzlePolicyTest {
+    @Test fun `prepare and slicing share nozzle specific layer baseline`() {
+        val source = com.u1.slicer.data.SliceConfig(layerHeight = 0.2f, firstLayerHeight = 0.3f)
+        for (diameter in listOf(0.2f, 0.6f, 0.8f)) {
+            val config = U1NozzlePolicy.baseConfig(source, diameter)
+            assertEquals(diameter, config.nozzleDiameter)
+            assertEquals(diameter / 2, config.layerHeight)
+            assertEquals(diameter / 2, config.firstLayerHeight)
+        }
+        assertEquals(source, U1NozzlePolicy.baseConfig(source, 0.4f))
+    }
+
+    @Test fun `explicit layer override survives the nozzle baseline`() {
+        val overrides = com.u1.slicer.data.SlicingOverrides(layerHeight = com.u1.slicer.data.OverrideValue(
+            com.u1.slicer.data.OverrideMode.OVERRIDE, 0.08f))
+        val config = overrides.resolveInto(U1NozzlePolicy.baseConfig(com.u1.slicer.data.SliceConfig(), 0.2f))
+        assertEquals(0.08f, config.layerHeight)
+        assertEquals(0.1f, config.firstLayerHeight)
+    }
+
     @Test fun `all supported sizes produce compatible process defaults`() {
         for (diameter in U1NozzlePolicy.supportedDiameters) {
             val config = U1NozzlePolicy.defaults(diameter).toMutableMap()

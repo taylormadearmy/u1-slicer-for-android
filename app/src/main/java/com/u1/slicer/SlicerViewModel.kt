@@ -5208,14 +5208,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         nozzleDiameter: Float? = null,
     ): java.io.File {
         val embedSetupT0 = System.currentTimeMillis()
-        val cfg = if (nozzleDiameter != null && nozzleDiameter != 0.4f) {
-            val defaults = U1NozzlePolicy.defaults(nozzleDiameter)
-            _config.value.copy(
-                nozzleDiameter = nozzleDiameter,
-                layerHeight = defaults.getValue("layer_height").toString().toFloat(),
-                firstLayerHeight = defaults.getValue("initial_layer_print_height").toString().toFloat(),
-            )
-        } else _config.value
+        val cfg = nozzleDiameter?.let { U1NozzlePolicy.baseConfig(_config.value, it) } ?: _config.value
         if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
             val machine = requireNotNull(selectedGenericProfile()) { "Import a Klipper machine profile before slicing" }
             require(!info.hasLayerToolChanges && info.usedExtruderIndices.all { it <= machine.extruderCount }) {
@@ -5901,6 +5894,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Prepare observes the same tool assignments and nozzle baseline used at slice time. */
+    val prepareConfig: StateFlow<Result<SliceConfig>> = combine(listOf<Flow<Any?>>(
+        config, slicingOverrides, activePrinterForSlicing, effectiveSliceTarget, activeProcessProfile,
+        _threeMfInfo, _perVolumeExtruders, _meshSourceExtruders0Based, _selectedExtruder,
+        _colorMapping, _canonicalFilamentList, _canonicalColourRemaps, _mixRecipeSource,
+        _importedMixRecipeState, mixedFilamentManager.projectMixes, mixedFilamentManager.libraryMixes,
+    )) {
+        runCatching {
+            if (effectiveSliceTarget.value != SlicerTarget.SnapmakerU1) return@runCatching _config.value
+            val diameter = u1DiameterForSlice()
+            val base = U1NozzlePolicy.baseConfig(_config.value, diameter)
+            val overrides = slicingOverrides.value
+            val processHeight = if (sourceModelFile != null && overrides.layerHeight.mode == OverrideMode.USE_FILE) {
+                activeProcessProfile.value?.keys?.get("layer_height")?.toString()?.toFloatOrNull()
+            } else null
+            overrides.resolveInto(base.copy(layerHeight = processHeight ?: base.layerHeight))
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, Result.success(SliceConfig()))
+
     private fun u1DiameterForSlice(): Float {
         val hardware = activePrinterForSlicing.value?.u1Nozzles ?: U1NozzleConfiguration()
         hardware.diametersMm.distinct().singleOrNull()?.let { return it }
@@ -6427,14 +6439,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // USE_FILE passthrough: base values from _config.value are used as-is.
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
-                val u1Base = if (u1NozzleDiameter != null) {
-                    val defaults = U1NozzlePolicy.defaults(u1NozzleDiameter)
-                    val base = _config.value.copy(nozzleDiameter = u1NozzleDiameter)
-                    if (u1NozzleDiameter != 0.4f) base.copy(
-                        layerHeight = defaults.getValue("layer_height").toString().toFloat(),
-                        firstLayerHeight = defaults.getValue("initial_layer_print_height").toString().toFloat(),
-                    ) else base
-                } else _config.value
+                val u1Base = u1NozzleDiameter?.let { U1NozzlePolicy.baseConfig(_config.value, it) } ?: _config.value
                 val resolvedSliceConfig = resolveActiveMachineSliceConfig(target, machineForSlice, ov.resolveInto(u1Base), genericMachineForSlice).let { cfg ->
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.

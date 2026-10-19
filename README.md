@@ -27,7 +27,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 - **Wipe tower auto-positioning** — evaluates 8 candidates, picks spot with most clearance
 - **Moonraker connectivity** — send G-code directly to your printer; remote screen support for paxx12 extended firmware
 - **Slicer overrides** — per-job control over layer height, infill, support, shell layers, surface patterns, speeds, wipe tower, and more
-- **U1 nozzle sizes** — configure each installed toolhead as 0.2, 0.4, 0.6 or 0.8 mm in Settings → Printers → Edit. Nozzle-specific layer and line-width defaults follow the heads used by the job. All used heads, including supports and ColorMix components, must have the same size; unused heads can differ. Saved G-code retains nozzle requirements and incompatible export mappings require reslicing.
+- **U1 nozzle sizes** — configure each installed toolhead as 0.2, 0.4, 0.6 or 0.8 mm using Edit nozzles on Prepare, or Settings → Printers → Edit. Nozzle-specific layer and line-width defaults follow the heads used by the job. All used heads, including supports and ColorMix components, must have the same size; unused heads can differ. Saved G-code retains nozzle requirements and incompatible export mappings require reslicing.
 - **MakerWorld integration** — share models from Bambu Handy to slice locally
 - **Filament library** — manage profiles with temps, retraction, flow ratio, max volumetric speed, fan curves, pressure advance, and 10+ other OrcaSlicer per-filament settings. Imports Bambu Studio filament profile JSONs and resolves the `inherits` chain against bundled BBL / generic parents (v2.8.0)
 - **Process profile import** — Settings → Process Profiles imports OrcaSlicer `.orca_process` / `.json` files; the active profile's keys layer between bundled Snapmaker defaults and Prepare-screen overrides at slice time (v2.8.0)
@@ -110,11 +110,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 2270 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 507 independent device tests (ARM64 required)
+./gradlew testDebugUnitTest              # 2272 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 511 independent device tests (ARM64 required)
 ```
 
-**2788 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2270 JVM tests and 518 device tests. The default device run includes 507 tests; another 11 require upgrade or mock-host fixtures.
+**2794 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2272 JVM tests and 522 device tests. The default device run includes 511 tests; another 11 require upgrade or mock-host fixtures.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 
