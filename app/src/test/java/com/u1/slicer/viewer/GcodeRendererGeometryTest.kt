@@ -109,6 +109,47 @@ class GcodeRendererGeometryTest {
     // --- Angles ---
 
     @Test
+    fun `disconnected extrusions preserve their actual endpoints`() {
+        val result = pack(makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f),
+            GcodeMove(MoveType.EXTRUDE, 50f, 40f, 60f, 40f)
+        )))
+        val start = result.segmentIndices[1] * 3
+        assertEquals("Second extrusion must start at its own X", 50f, result.positions[start], 0f)
+        assertEquals("Second extrusion must start at its own Y", 40f, result.positions[start + 1], 0f)
+        assertEquals(60f, result.positions[start + 3], 0f)
+        assertEquals(40f, result.positions[start + 4], 0f)
+    }
+
+    @Test
+    fun `sampled preview segments match retained gcode moves`() {
+        val file = java.io.File.createTempFile("sampled-preview", ".gcode")
+        try {
+            file.writeText(buildString {
+                append("M83\nG1 Z0.2\n")
+                repeat(100) { i ->
+                    append("G1 X${i + 1} Y${i % 2} E1\n")
+                }
+            })
+            val parsed = GcodeParser.parse(file, 270f, 270f, maxMoves = 20)
+            assertTrue(parsed.isPreviewSimplified)
+            val moves = parsed.layers.flatMap { it.moves }.filter { it.type == MoveType.EXTRUDE }
+            assertTrue(moves.size > 1)
+            val result = pack(parsed)
+            assertEquals(moves.size, result.totalSegments)
+            moves.forEachIndexed { i, move ->
+                val start = result.segmentIndices[i] * 3
+                assertEquals("Segment $i start X", move.x0, result.positions[start], 0f)
+                assertEquals("Segment $i start Y", move.y0, result.positions[start + 1], 0f)
+                assertEquals("Segment $i end X", move.x1, result.positions[start + 3], 0f)
+                assertEquals("Segment $i end Y", move.y1, result.positions[start + 4], 0f)
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun `90 degree turn produces correct angle`() {
         val gcode = makeGcode(listOf(
             GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f),
