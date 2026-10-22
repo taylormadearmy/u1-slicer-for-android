@@ -2,8 +2,47 @@ package com.u1.slicer.data
 
 import org.json.JSONArray
 import org.json.JSONObject
+import com.u1.slicer.slice.GenericMachineProfile
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-enum class PrinterKind { MOONRAKER, BAMBU_LAN }
+enum class HostType {
+    MOONRAKER, OCTOPRINT, PRUSALINK, BAMBU_LAN, ELEGOO_CC1;
+    companion object {
+        fun fromPrusaSlicer(value: String?): HostType = when (value?.trim()?.lowercase()) {
+            "octoprint" -> OCTOPRINT
+            "prusalink", "prusa_link" -> PRUSALINK
+            "bambu", "bambu_lan", "bambulab" -> BAMBU_LAN
+            "elegoolink", "elegoo_cc1" -> ELEGOO_CC1
+            "moonraker", "", null -> MOONRAKER
+            else -> throw IllegalArgumentException("Unsupported print host protocol: $value")
+        }
+        fun toPrusaSlicer(value: HostType): String = when (value) {
+            MOONRAKER -> "moonraker"
+            OCTOPRINT -> "octoprint"
+            PRUSALINK -> "prusalink"
+            BAMBU_LAN -> "bambu_lan"
+            ELEGOO_CC1 -> "elegoolink"
+        }
+    }
+}
+fun defaultHostType(kind: PrinterKind): HostType = when (kind) {
+    PrinterKind.MOONRAKER -> HostType.MOONRAKER
+    PrinterKind.BAMBU_LAN -> HostType.BAMBU_LAN
+    PrinterKind.OCTOPRINT -> HostType.OCTOPRINT
+    PrinterKind.ELEGOO_CC1 -> HostType.ELEGOO_CC1
+}
+enum class PrinterKind { MOONRAKER, BAMBU_LAN, ELEGOO_CC1, OCTOPRINT }
+
+enum class MachineKind { SNAPMAKER_U1, BAMBU, ELEGOO_CENTAURI_CARBON, GENERIC_KLIPPER, GENERIC_MARLIN }
+
+data class PrintHostConfig(val url: String, val apiKey: String = "")
+
+fun defaultMachineKind(kind: PrinterKind): MachineKind = when (kind) {
+    PrinterKind.MOONRAKER -> MachineKind.SNAPMAKER_U1
+    PrinterKind.BAMBU_LAN -> MachineKind.BAMBU
+    PrinterKind.ELEGOO_CC1 -> MachineKind.ELEGOO_CENTAURI_CARBON
+    PrinterKind.OCTOPRINT -> MachineKind.GENERIC_KLIPPER
+}
 
 enum class BambuModel { X1C, X1E, P1S, P1P, P2S, A1, A1_MINI, H2D }
 
@@ -38,18 +77,65 @@ data class Printer(
     val id: String,
     val nickname: String,
     val kind: PrinterKind = PrinterKind.MOONRAKER,
+    val hostType: HostType = defaultHostType(kind),
     val moonrakerUrl: String = "",
     val bambu: BambuConfig? = null,
+    val apiKey: String? = null,
+    val username: String? = null,
+    val password: String? = null,
     val extruderPresets: List<ExtruderPreset> = defaultExtruderPresets(),
+    val u1Nozzles: U1NozzleConfiguration = U1NozzleConfiguration(),
+    /** Stable Moonraker webcam UID chosen for this printer, or null for automatic choice. */
+    val selectedWebcamUid: String? = null,
+    val machineProfile: GenericMachineProfile? = null,
+    val host: PrintHostConfig? = null,
+    val machineProfileId: String? = null,
+    val machine: MachineKind = when {
+        machineProfile?.gcodeFlavor in setOf("marlin", "marlin2") -> MachineKind.GENERIC_MARLIN
+        machineProfile == null && machineProfileId == "snapmaker-u1-0.4" -> MachineKind.SNAPMAKER_U1
+        machineProfile != null || machineProfileId != null -> MachineKind.GENERIC_KLIPPER
+        else -> defaultMachineKind(kind)
+    },
 ) {
     init {
         when (kind) {
             PrinterKind.MOONRAKER -> {
                 require(bambu == null) { "Moonraker printer must not have bambu config" }
+                require(host == null) { "Moonraker uses moonrakerUrl" }
+                require(hostType in setOf(HostType.MOONRAKER, HostType.OCTOPRINT, HostType.PRUSALINK))
+                require(machine in setOf(MachineKind.SNAPMAKER_U1, MachineKind.GENERIC_KLIPPER, MachineKind.GENERIC_MARLIN))
             }
             PrinterKind.BAMBU_LAN -> {
                 require(bambu != null) { "Bambu printer requires bambu config" }
                 require(moonrakerUrl.isBlank()) { "Bambu printer must not have moonrakerUrl" }
+                require(machine == MachineKind.BAMBU && host == null && hostType == HostType.BAMBU_LAN)
+            }
+            PrinterKind.ELEGOO_CC1 -> {
+                require(host != null && host.url.isNotBlank()) { "Centauri Carbon requires an address" }
+                require(host.apiKey.isBlank()) { "Centauri Carbon CC1 has no API key" }
+                require(machine == MachineKind.ELEGOO_CENTAURI_CARBON && hostType == HostType.ELEGOO_CC1)
+                require(bambu == null && moonrakerUrl.isBlank())
+                val address = host.url.trim().removePrefix("http://").removePrefix("https://").trimEnd('/')
+                require(address.isNotBlank() && address.none { it.isWhitespace() || it in "/\\?#@:" }) {
+                    "Enter the CC1 hostname or IPv4 address without a port or path"
+                }
+            }
+            PrinterKind.OCTOPRINT -> {
+                require(host != null && host.url.isNotBlank()) { "OctoPrint requires an address" }
+                require(machine in setOf(MachineKind.GENERIC_KLIPPER, MachineKind.GENERIC_MARLIN) && hostType == HostType.OCTOPRINT)
+                require(bambu == null && moonrakerUrl.isBlank())
+                val address = if (host.url.contains("://")) host.url else "http://${host.url}"
+                require(address.toHttpUrlOrNull()?.let { it.username.isBlank() && it.password.isBlank() && it.query == null && it.fragment == null } == true) {
+                    "Enter an HTTP or HTTPS OctoPrint URL without embedded credentials or query parameters"
+                }
+            }
+        }
+        require(machine in setOf(MachineKind.GENERIC_KLIPPER, MachineKind.GENERIC_MARLIN) || machineProfile == null) {
+            "Only generic machines may have an imported machine profile"
+        }
+        machineProfile?.let { profile ->
+            require((machine == MachineKind.GENERIC_KLIPPER) == (profile.gcodeFlavor == "klipper")) {
+                "Machine firmware must match the selected profile"
             }
         }
     }
@@ -59,27 +145,64 @@ data class Printer(
             put("id", p.id)
             put("nickname", p.nickname)
             put("kind", p.kind.name)
+            put("host_type", HostType.toPrusaSlicer(p.hostType))
             put("moonrakerUrl", p.moonrakerUrl)
+            put("print_host", p.host?.url ?: p.moonrakerUrl)
+            p.apiKey?.let { put("printhost_apikey", it) }
+            p.username?.let { put("printhost_user", it) }
+            p.password?.let { put("printhost_password", it) }
+            put("machine", p.machine.name)
+            p.machineProfile?.let { put("machineProfile", JSONObject(it.resolvedJson)) }
+            p.host?.let { put("host", JSONObject().put("url", it.url).put("apiKey", it.apiKey)) }
             if (p.bambu != null) put("bambu", BambuConfig.toJsonObject(p.bambu))
             put("extruderPresets", JSONArray(serializeExtruderPresets(p.extruderPresets)))
+            put("u1Nozzles", JSONArray(p.u1Nozzles.diametersMm.map(Float::toDouble)))
+            p.selectedWebcamUid?.takeIf { it.isNotBlank() }?.let { put("selectedWebcamUid", it) }
+            p.machineProfileId?.takeIf { it.isNotBlank() }?.let { put("machineProfileId", it) }
         }
 
         fun fromJsonObject(obj: JSONObject): Printer {
-            val kind = obj.optString("kind", PrinterKind.MOONRAKER.name)
+            val persistedHostType = if (obj.has("host_type")) {
+                HostType.fromPrusaSlicer(obj.optString("host_type"))
+            } else null
+            val kind = obj.optString("kind", if (persistedHostType == HostType.BAMBU_LAN) {
+                PrinterKind.BAMBU_LAN.name
+            } else PrinterKind.MOONRAKER.name)
                 .takeIf { it.isNotBlank() }
                 ?.let { PrinterKind.valueOf(it) }
                 ?: PrinterKind.MOONRAKER
+            val profile = obj.optJSONObject("machineProfile")?.let { GenericMachineProfile.fromPersistedJson(it.toString()) }
+            val profileId = obj.optString("machineProfileId", "").takeIf { it.isNotBlank() }
+            val machine = if (obj.has("machine")) MachineKind.valueOf(obj.getString("machine")) else when {
+                profile?.gcodeFlavor in setOf("marlin", "marlin2") -> MachineKind.GENERIC_MARLIN
+                profile == null && profileId == "snapmaker-u1-0.4" -> MachineKind.SNAPMAKER_U1
+                profile != null || profileId != null -> MachineKind.GENERIC_KLIPPER
+                else -> defaultMachineKind(kind)
+            }
             val extruderPresets = parsePersistedExtruderPresets(
-                kind = kind,
+                machine = machine,
                 arr = obj.optJSONArray("extruderPresets"),
             )
             return Printer(
                 id = obj.getString("id"),
                 nickname = obj.getString("nickname"),
                 kind = kind,
-                moonrakerUrl = obj.optString("moonrakerUrl", ""),
+                hostType = persistedHostType ?: defaultHostType(kind),
+                moonrakerUrl = if (kind == PrinterKind.MOONRAKER) obj.optString("print_host", obj.optString("moonrakerUrl", "")) else "",
                 bambu = obj.optJSONObject("bambu")?.let(BambuConfig::fromJsonObject),
+                apiKey = obj.optString("printhost_apikey", "").takeIf { it.isNotBlank() },
+                username = obj.optString("printhost_user", "").takeIf { it.isNotBlank() },
+                password = obj.optString("printhost_password", "").takeIf { it.isNotBlank() },
                 extruderPresets = extruderPresets,
+                u1Nozzles = if (obj.has("u1Nozzles")) {
+                    val nozzles = obj.getJSONArray("u1Nozzles")
+                    U1NozzleConfiguration((0 until nozzles.length()).map { nozzles.getDouble(it).toFloat() })
+                } else U1NozzleConfiguration(),
+                selectedWebcamUid = obj.optString("selectedWebcamUid", "").takeIf { it.isNotBlank() },
+                machine = machine,
+                machineProfile = profile,
+                machineProfileId = profileId,
+                host = obj.optJSONObject("host")?.let { PrintHostConfig(it.getString("url"), it.optString("apiKey", "")) },
             )
         }
 
@@ -89,13 +212,13 @@ data class Printer(
          * stores whatever the user configured.
          */
         private fun parsePersistedExtruderPresets(
-            kind: PrinterKind,
+            machine: MachineKind,
             arr: JSONArray?,
         ): List<ExtruderPreset> {
             if (arr == null) {
-                return if (kind == PrinterKind.MOONRAKER) defaultExtruderPresets() else emptyList()
+                return if (machine == MachineKind.SNAPMAKER_U1) defaultExtruderPresets() else emptyList()
             }
-            if (arr.length() == 0 && kind == PrinterKind.MOONRAKER) {
+            if (arr.length() == 0 && machine == MachineKind.SNAPMAKER_U1) {
                 return defaultExtruderPresets()
             }
             return parseExtruderPresetsExact(arr)

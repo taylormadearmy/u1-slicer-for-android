@@ -378,11 +378,107 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     }
 }
 
-static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config, bool has_embedded_profile = false) {
+static bool isGenericTarget(const SliceConfig& config) {
+    return config.machine_target == "GENERIC_KLIPPER" || config.machine_target == "GENERIC_MARLIN" ||
+        config.machine_target == "GENERIC" || config.machine_target == "ELEGOO_CC1";
+}
+
+static void validateGenericConfig(const Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config) {
+    auto* area = dpc.option<Slic3r::ConfigOptionPoints>("printable_area");
+    auto* height = dpc.option<Slic3r::ConfigOptionFloat>("printable_height");
+    auto* nozzles = dpc.option<Slic3r::ConfigOptionFloats>("nozzle_diameter");
+    auto* start = dpc.option<Slic3r::ConfigOptionString>("machine_start_gcode");
+    auto* end = dpc.option<Slic3r::ConfigOptionString>("machine_end_gcode");
+    auto* flavor = dpc.option<Slic3r::ConfigOptionEnum<Slic3r::GCodeFlavor>>("gcode_flavor");
+    auto* semm = dpc.option<Slic3r::ConfigOptionBool>("single_extruder_multi_material");
+    const bool marlin = flavor && (flavor->value == Slic3r::gcfMarlinLegacy || flavor->value == Slic3r::gcfMarlinFirmware);
+    const bool compatible_flavor = flavor &&
+        (config.machine_target == "GENERIC" ? (marlin || flavor->value == Slic3r::gcfKlipper) :
+         config.machine_target == "GENERIC_MARLIN" ? marlin : flavor->value == Slic3r::gcfKlipper);
+    if (config.extruder_count < 1 || config.extruder_count > 4 || !config.mixed_filament_definitions.empty() ||
+        !area || area->values.size() != 4 || !height || height->value <= 0 ||
+        !nozzles || nozzles->values.size() != size_t(config.extruder_count) || !start || start->value.empty() ||
+        !end || end->value.empty() || !compatible_flavor || (semm && semm->value) ||
+        start->value != config.machine_start_gcode || end->value != config.machine_end_gcode) {
+        throw std::runtime_error("Selected independent-extruder machine profile is missing or inconsistent");
+    }
+    const std::vector<Slic3r::Vec2d> expected_area = {
+        {0, 0}, {config.bed_size_x, 0}, {config.bed_size_x, config.bed_size_y}, {0, config.bed_size_y}
+    };
+    // JNI geometry is float, while Orca JSON parses double. Allow only rounding
+    // error at the supported 2 m bed limit, not a different physical envelope.
+    constexpr double epsilon = 0.0005;
+    if (!std::isfinite(config.bed_size_x) || !std::isfinite(config.bed_size_y) ||
+        !std::isfinite(config.max_print_height) || !std::isfinite(config.nozzle_diameter) ||
+        config.bed_size_x <= 0 || config.bed_size_y <= 0 || config.max_print_height <= 0 || config.nozzle_diameter <= 0 ||
+        !std::isfinite(height->value) || !std::isfinite(nozzles->values.front()) ||
+        std::abs(height->value - config.max_print_height) > epsilon ||
+        std::abs(nozzles->values.front() - config.nozzle_diameter) > epsilon) {
+        throw std::runtime_error("Selected machine geometry or nozzle does not match the slice target");
+    }
+    for (size_t index = 0; index < expected_area.size(); ++index) {
+        if (!area->values[index].allFinite() || (area->values[index] - expected_area[index]).norm() > epsilon) {
+            throw std::runtime_error("Selected machine geometry or nozzle does not match the slice target");
+        }
+    }
+    for (double nozzle : nozzles->values) {
+        if (!std::isfinite(nozzle) || std::abs(nozzle - config.nozzle_diameter) > epsilon) {
+            throw std::runtime_error("Selected machine nozzle does not match the slice target");
+        }
+    }
+    if (config.support_filament < 0 || config.support_filament > config.extruder_count ||
+        config.support_interface_filament < 0 || config.support_interface_filament > config.extruder_count) {
+        throw std::runtime_error("Support tool exceeds the selected machine's extruder count");
+    }
+}
+
+static void validateGenericBounds(const Slic3r::DynamicPrintConfig& dpc, const Slic3r::BoundingBoxf3& bounds) {
+    if (!bounds.defined) return;
+    const auto* area = dpc.option<Slic3r::ConfigOptionPoints>("printable_area");
+    const auto* height = dpc.option<Slic3r::ConfigOptionFloat>("printable_height");
+    double bed_x = 0, bed_y = 0;
+    for (const auto& point : area->values) {
+        bed_x = std::max(bed_x, point.x());
+        bed_y = std::max(bed_y, point.y());
+    }
+    constexpr double epsilon = 0.01;
+    if (bounds.min.x() < -epsilon || bounds.min.y() < -epsilon || bounds.min.z() < -epsilon ||
+        bounds.max.x() > bed_x + epsilon || bounds.max.y() > bed_y + epsilon || bounds.max.z() > height->value + epsilon) {
+        throw std::runtime_error("Model or generated helper extrusions exceed the selected machine's printable volume");
+    }
+    const auto* exclusion = dpc.option<Slic3r::ConfigOptionPoints>("bed_exclude_area");
+    if (exclusion && exclusion->values.size() >= 3) {
+        Slic3r::BoundingBoxf excluded(exclusion->values);
+        if (bounds.min.x() < excluded.max.x() - epsilon && bounds.max.x() > excluded.min.x() + epsilon &&
+            bounds.min.y() < excluded.max.y() - epsilon && bounds.max.y() > excluded.min.y() + epsilon) {
+            throw std::runtime_error("Model or helper extrusion bounding box overlaps the selected machine's bed exclusion area");
+        }
+    }
+}
+
+static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config,
+                               bool has_embedded_profile = false,
+                               bool profile_has_extruder_offset = false,
+                               bool profile_has_semm = false) {
+    if (isGenericTarget(config)) {
+        validateGenericConfig(dpc, config);
+        dpc.set_key_value("enable_prime_tower", new Slic3r::ConfigOptionBool(false));
+        dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+        dpc.set_key_value("exclude_object", new Slic3r::ConfigOptionBool(false));
+        return;
+    }
     const bool is_bambu_target = config.machine_target.rfind("BAMBU_", 0) == 0;
     if (is_bambu_target) {
         applyBambuConfigToPrusa(dpc, config, has_embedded_profile);
         return;
+    }
+    const bool is_snapmaker_target = config.machine_target == "SNAPMAKER_U1";
+    // Raw STL has no embedded profile, so global ironing must cross the JNI
+    // boundary. An empty value intentionally leaves a file profile/default intact.
+    if (!config.ironing_type.empty()) {
+        Slic3r::ConfigSubstitutionContext substitutions{
+            Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
+        dpc.set_deserialize("ironing_type", config.ironing_type, substitutions);
     }
     // Layer settings (OrcaSlicer keys)
     // layer_height: 0.0f sentinel means "let profile_keys[] value (or OrcaSlicer default) stand".
@@ -439,9 +535,13 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
 
     // Snapmaker U1 bed geometry — OrcaSlicer defaults to 200×200mm (Bambu A1).
     // Must always be set so the slicer knows the actual printable area.
+    const double bed_x = config.bed_size_x > 0 ? (double)config.bed_size_x : 270.0;
+    const double bed_y = config.bed_size_y > 0 ? (double)config.bed_size_y : 270.0;
+    const double bed_z = config.max_print_height > 0 ? (double)config.max_print_height : 270.0;
     dpc.set_key_value("printable_area", new Slic3r::ConfigOptionPoints({
-        {0, 0}, {270, 0}, {270, 270}, {0, 270}
+        {0, 0}, {bed_x, 0}, {bed_x, bed_y}, {0, bed_y}
     }));
+    dpc.set_key_value("printable_height", new Slic3r::ConfigOptionFloat(bed_z));
 
     // Bed plate type — OrcaSlicer defaults to btPC (Engineering Plate) whose temp keys
     // are cool_plate_temp (35°C for PLA).  The Snapmaker U1 uses a textured PEI plate,
@@ -555,11 +655,14 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // during the standby period between tool changes.  Use the same length as normal retraction.
     dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
 
-    // Multi-extruder machine type — the Snapmaker U1 has 4 independent extruders, NOT a
-    // single-extruder multi-material (SEMM) setup like Bambu/Prusa MMU.  Embedded Snapmaker
-    // profiles incorrectly set single_extruder_multi_material=1, which disables ooze_prevention
-    // and causes bowden-style unload/reload sequences.  Always override to false.
-    dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+    // The U1 has independent extruders, so retain its established SEMM=false safety override.
+    // Authored generic profiles own this machine-topology flag; preserve it when supplied and
+    // synthesize the safe false default only when the profile omits it.
+    if (is_snapmaker_target || !has_embedded_profile) {
+        dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+    } else if (!profile_has_semm) {
+        dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+    }
 
     // Wipe tower filament handling — OrcaSlicer defaults are for bowden SEMM printers
     // (cooling_tube_retraction=91.5, cooling_tube_length=5, parking_pos=92, ramming=on).
@@ -625,11 +728,18 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         }
     }
 
-    // Extruder offsets — all (0,0) for Snapmaker U1 (firmware handles offsets).
-    // MUST be sized to match extruder count; the default is a single entry, and
-    // WipeTowerIntegration copies the raw vector then indexes by tool ID — OOB
-    // access produces corrupt wipe tower coordinates (2^116 / -inf X values).
-    dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
+    // Keep authored machine offsets. When absent, synthesize (0,0) entries; either way the
+    // vector must match the configured extruder count because WipeTowerIntegration indexes it
+    // directly by tool ID.
+    if (!has_embedded_profile || !profile_has_extruder_offset) {
+        dpc.set_key_value("extruder_offset",
+            new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
+    } else if (auto* profile_offsets = dpc.option<Slic3r::ConfigOptionPoints>("extruder_offset")) {
+        profile_offsets->values.resize(n_ext, Slic3r::Vec2d(0, 0));
+    } else {
+        dpc.set_key_value("extruder_offset",
+            new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
+    }
 
     // F91 (2026-05-25): three-way precedence for per-filament tuning keys —
     //   1. SliceConfig.filament_* (user filament-library values)  ← always wins when set
@@ -897,10 +1007,18 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         }
     }
 
-    // Exclude object / cancel object support — enables EXCLUDE_OBJECT_DEFINE / EXCLUDE_OBJECT_START /
-    // EXCLUDE_OBJECT_END G-code markers so firmware can cancel individual objects mid-print.
-    // OrcaSlicer defaults to false; enable unconditionally for all U1 prints.
-    dpc.set_key_value("exclude_object", new Slic3r::ConfigOptionBool(true));
+    // Exclude object / cancel object support emits Klipper EXCLUDE_OBJECT_* commands.
+    // Keep every Snapmaker U1 path byte-compatible, including raw STL fallback slices whose
+    // compiled flavor is Marlin, and enable it for authored generic Klipper profiles. Marlin
+    // firmware does not accept the Klipper commands.
+    const auto* gcode_flavor =
+        dpc.option<Slic3r::ConfigOptionEnum<Slic3r::GCodeFlavor>>("gcode_flavor");
+    const bool supports_exclude_object =
+        config.machine_target == "SNAPMAKER_U1" ||
+        (gcode_flavor != nullptr && gcode_flavor->value == Slic3r::gcfKlipper);
+    dpc.set_key_value(
+        "exclude_object",
+        new Slic3r::ConfigOptionBool(supports_exclude_object));
 
     // Full-spectrum mixed-filament (stage 2): when the caller passed a
     // recipe via SliceConfig.mixed_filament_definitions, write it into
@@ -946,45 +1064,30 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // temperatures, layer height, speeds, etc.) override the embedded profile.
         Slic3r::DynamicPrintConfig dpc;
         dpc.apply(Slic3r::FullPrintConfig::defaults());
+        const bool is_generic_target = isGenericTarget(config);
+        if (is_generic_target) {
+            if (pImpl->printer_config.empty()) {
+                throw std::runtime_error("Load a resolved machine profile before slicing");
+            }
+            // loadProfile() receives a selected machine snapshot composed in Kotlin.
+            // Imported model_config is deliberately ignored for this target family.
+            dpc.apply(pImpl->printer_config);
+        }
 
-        // Detect whether the embedded config is a Snapmaker profile before applying
-        // any overrides — both applyConfigToPrusa and profile_keys need this flag.
-        //
-        // Phase 2 B.3 status (2026-04-28): the Kotlin `ProfileEmbedder`
-        // now writes an explicit `snapmaker_authored_profile = "1"` key
-        // to the embedded `Metadata/project_settings.config` JSON, so a
-        // future native check can replace this PRINT_START heuristic
-        // with a tautological true-positive. Implementing that check
-        // requires registering `snapmaker_authored_profile` as a
-        // ConfigOptionString in OrcaSlicer's `PrintConfig.cpp` schema
-        // (otherwise `model_config.option<>()` returns null for
-        // unregistered keys), which is invasive enough that it's
-        // tracked as a separate native commit. For now the heuristic
-        // stays — the Kotlin marker is in place and harmless until
-        // the native side reads it.
-        //
-        // Reviewer concerns (R1, R2): a Bambu/PrusaSlicer file
-        // prepared for any Klipper-based printer (Voron, RatRig, etc.)
-        // could false-positive here. Mitigation in the meantime:
-        // ProfileEmbedder rewrites `machine_start_gcode` to U1's
-        // PRINT_START template before the native side ever sees it,
-        // so Bambu/Klipper-foreign profiles never reach this check
-        // with their original start G-code intact. The only path that
-        // bypasses ProfileEmbedder is direct legacy load of pre-marked
-        // Snapmaker 3MFs (where the heuristic fires correctly).
+        // App-authored embeds carry an explicit marker. PRINT_START rescues
+        // desktop U1 exports only when the active target is Snapmaker.
         auto& model_config = getModelConfig();
-        bool is_snapmaker_profile = false;
-        if (!model_config.empty()) {
+        const bool authored = model_config.has("snapmaker_authored_profile");
+        bool klipper_heuristic = false;
+        if (!is_generic_target && !model_config.empty()) {
             auto* start_opt = model_config.option<Slic3r::ConfigOptionString>("machine_start_gcode");
             if (start_opt && start_opt->value.find("PRINT_START") != std::string::npos) {
-                is_snapmaker_profile = true;
+                klipper_heuristic = true;
             }
         }
-        // Imported 3MFs currently pass through the U1 profile embedder. The explicit
-        // target wins so Bambu slices never inherit U1 templates or machine limits.
-        if (config.machine_target.rfind("BAMBU_", 0) == 0) {
-            is_snapmaker_profile = false;
-        }
+        const bool is_snapmaker_family = config.machine_target == "SNAPMAKER_U1";
+        const bool apply_profile_keys = !is_generic_target && (authored || (klipper_heuristic && is_snapmaker_family));
+        const bool is_snapmaker_profile = is_snapmaker_family && (authored || klipper_heuristic);
         // A non-empty project config is the import payload for a Bambu target.
         // It is intentionally distinct from the U1 marker above: Bambu profile
         // values are admitted through a much narrower, non-machine whitelist.
@@ -998,7 +1101,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Applying all 391 keys causes SIGSEGV — many have array sizes, feature flags,
         // or template macros that conflict with our minimal Print pipeline.
         int applied = 0;
-        if (!model_config.empty()) {
+        if (!is_generic_target && !model_config.empty()) {
             if (is_bambu_embedded_profile) {
                 // Process and filament settings only.  In particular this list
                 // must never acquire machine geometry, machine_*, nozzle topology
@@ -1047,7 +1150,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     }
                 }
                 SAPIL_LOGI("Applied %d safe keys from imported Bambu config", applied);
-            } else if (is_snapmaker_profile) {
+            } else if (apply_profile_keys) {
                 // Keys safe to apply from the embedded Snapmaker profile.
                 // G-code templates: must come from our profile (not Bambu defaults).
                 // Machine limits + per-feature accelerations: these encode the U1's actual
@@ -1057,7 +1160,10 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 static const char* profile_keys[] = {
                     // Machine geometry + plate type
                     "printable_area",
+                    "printable_height",
                     "curr_bed_type",
+                    "nozzle_diameter",
+                    "filament_diameter",
                     // Bed temperature (per plate type)
                     "hot_plate_temp",
                     "hot_plate_temp_initial_layer",
@@ -1113,6 +1219,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // Retraction details (from printer profile)
                     "deretraction_speed",
                     "retraction_minimum_travel",
+                    "retraction_length",
+                    "retraction_speed",
+                    "retract_length_toolchange",
                     // Overhang speed limits (from process profile)
                     "enable_overhang_speed",
                     "overhang_1_4_speed",
@@ -1249,6 +1358,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // Native Snapmaker profiles calibrate these carefully (0–800mm³).
                     // Without them we use OrcaSlicer's compiled default (flat 140mm³).
                     "flush_volumes_matrix",
+                    "flush_volumes_vector",
                     "flush_multiplier",
                     "filament_minimal_purge_on_wipe_tower",
                     "purge_in_prime_tower",
@@ -1316,6 +1426,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "dithering_local_z_direct_multicolor",
                     "dithering_step_painted_zones_only",
                     "local_z_wipe_tower_purge_lines",
+                    "exclude_object",
                     nullptr
                 };
                 for (const char** k = profile_keys; *k; ++k) {
@@ -1337,7 +1448,13 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Runs AFTER profile_keys so that user-controllable settings (wipe tower,
         // temperatures, layer height, speeds) from the JNI config override the
         // embedded profile's values.
-        applyConfigToPrusa(dpc, config, is_snapmaker_profile || is_bambu_embedded_profile);
+        applyConfigToPrusa(
+            dpc,
+            config,
+            apply_profile_keys || is_bambu_embedded_profile,
+            model_config.has("extruder_offset"),
+            model_config.has("single_extruder_multi_material")
+        );
 
         if (is_bambu_embedded_profile) {
             // Exported alongside the normal diagnostics trace.  Keep this compact
@@ -1386,7 +1503,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // pad all per-extruder arrays and flush_volumes_matrix to match.  Without this,
         // ToolOrdering/WipeTower crashes on OOB access when segmentation produces
         // extruder IDs beyond the original n_ext.
-        {
+        if (!is_generic_target) {
             auto* fc = dpc.option<Slic3r::ConfigOptionStrings>("filament_colour");
             int n_ext = std::max(
                 config.machine_target == "BAMBU_H2D" ? 2 : 1,
@@ -1504,6 +1621,10 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         // Apply model + config to the print
         Slic3r::Model& model = getGlobalModel();
+        if (is_generic_target) {
+            // A source project's per-height macros are not part of the selected machine.
+            model.plates_custom_gcodes.clear();
+        }
 
         // Ensure every object sits on the bed (min z = 0).
         // Per-object ensure_on_bed() is correct: each restructured Bambu build
@@ -1526,8 +1647,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // 2 mm absorbs that without losing the safety property: a model
         // that is genuinely off-bed will be off by tens of millimetres.
         {
-            const double BED_X = 270.0, BED_Y = 270.0;
-            const double EDGE_TOL = 2.0;
+            const double BED_X = config.bed_size_x > 0 ? (double)config.bed_size_x : 270.0;
+            const double BED_Y = config.bed_size_y > 0 ? (double)config.bed_size_y : 270.0;
+            const double EDGE_TOL = is_generic_target ? 0.01 : 2.0;
             Slic3r::BoundingBoxf3 worldBB;
             for (auto* obj : model.objects) {
                 worldBB.merge(obj->bounding_box_exact());
@@ -1539,6 +1661,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                                    yMin < -EDGE_TOL || yMax > BED_Y + EDGE_TOL;
                 if (outOfBounds) {
                     double sizeX = xMax - xMin, sizeY = yMax - yMin;
+                    if (is_generic_target && (sizeX > BED_X + EDGE_TOL || sizeY > BED_Y + EDGE_TOL)) {
+                        throw std::runtime_error("Model is larger than the selected machine's bed");
+                    }
                     double deltaX = (BED_X - sizeX) / 2.0 - xMin;
                     double deltaY = (BED_Y - sizeY) / 2.0 - yMin;
                     for (auto* obj : model.objects) {
@@ -1553,6 +1678,17 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     }
                     SAPIL_LOGW("Auto-centered model on bed (was x=%.1f..%.1f y=%.1f..%.1f)",
                         xMin, xMax, yMin, yMax);
+                }
+            }
+        }
+
+        if (is_generic_target) {
+            for (auto* obj : model.objects) {
+                validateGenericBounds(dpc, obj->bounding_box_exact());
+                for (auto* volume : obj->volumes) {
+                    if (volume->extruder_id() < 0 || volume->extruder_id() > config.extruder_count) {
+                        throw std::runtime_error("Model tool exceeds the selected machine's extruder count");
+                    }
                 }
             }
         }
@@ -1620,6 +1756,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             << ",\"wipeTowerX\":" << config.wipe_tower_x
             << ",\"wipeTowerY\":" << config.wipe_tower_y
             << ",\"isSnapmakerProfile\":" << (is_snapmaker_profile ? "true" : "false")
+            << ",\"appliedProfileKeys\":" << (apply_profile_keys ? "true" : "false")
             << ",\"profileKeysApplied\":" << applied
             << "}";
         diagnostics_record_native_event("slice_pre_process", slice_context.str());
@@ -1629,6 +1766,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             auto validation = print.validate();
             if (!validation.string.empty()) {
                 SAPIL_LOGW("Print validation: %s", validation.string.c_str());
+                if (is_generic_target) throw std::runtime_error("Selected machine print validation failed: " + validation.string);
             } else {
                 SAPIL_LOGI("Print validation: OK");
             }
@@ -1681,6 +1819,15 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             throw Slic3r::CanceledException();
         }
         if (progress) progress(90, "Generating G-code");
+        if (is_generic_target && !print.first_layer_convex_hull().points.empty()) {
+            // Includes generated supports, brim and skirt, but excludes the selected
+            // machine's intentional purge/parking commands outside printable_area.
+            Slic3r::BoundingBoxf3 helper_bounds;
+            for (const auto& point : print.first_layer_convex_hull().points) {
+                helper_bounds.merge(Slic3r::Vec3d(Slic3r::unscale<double>(point.x()), Slic3r::unscale<double>(point.y()), 0.0));
+            }
+            validateGenericBounds(dpc, helper_bounds);
+        }
 
         // Checkpoint 3: validate wipe_tower_y right before G-code export
         if (config.wipe_tower_enabled) {
@@ -1811,6 +1958,19 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
 bool SlicerEngine::loadProfile(const std::string& ini_path) {
     try {
+        if (ini_path.size() >= 5 && ini_path.substr(ini_path.size() - 5) == ".json") {
+            pImpl->printer_config = Slic3r::DynamicPrintConfig();
+            Slic3r::DynamicPrintConfig selected;
+            std::map<std::string, std::string> key_values;
+            std::string reason;
+            Slic3r::ConfigSubstitutionContext substitutions(Slic3r::ForwardCompatibilitySubstitutionRule::Disable);
+            if (selected.load_from_json(ini_path, substitutions, true, key_values, reason) != 0) {
+                SAPIL_LOGW("Selected machine profile failed to load: %s", reason.c_str());
+                return false;
+            }
+            pImpl->printer_config = std::move(selected);
+            return true;
+        }
         pImpl->print_config.load_from_ini(ini_path, Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
         return true;
     } catch (const std::exception& e) {

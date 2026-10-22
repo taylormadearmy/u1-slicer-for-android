@@ -42,6 +42,8 @@ struct SliceConfig {
     int bottom_solid_layers = 4;
     float fill_density = 0.15f;  // 0.0 - 1.0
     std::string fill_pattern = "gyroid";
+    // Empty preserves the embedded profile/default; otherwise an Orca ironing_type value.
+    std::string ironing_type;
 
     // Speed settings (mm/s)
     float print_speed = 60.0f;
@@ -196,6 +198,12 @@ public:
     void releasePreparePreviewScene(PreparePreviewSceneHandle scene) const;
     void clearModel();
 
+    // F101: generate/clear/query per-object variable-layer profiles.  Orca stores
+    // these on ModelObject rather than in the (legacy) adaptive_layer_height key.
+    std::vector<float> setAdaptiveLayerHeight(float quality, unsigned int smoothing_radius, bool keep_min, float nozzle_diameter = 0.f);
+    bool clearVariableLayerHeights();
+    std::vector<float> getVariableLayerHeightRange() const;
+
     // Cancel an in-progress getPreparePreviewMesh() QEM decimation.
     // Safe to call from any thread. The QEM loop checks this flag every iteration.
     static void cancelPreviewMesh();
@@ -290,7 +298,7 @@ public:
 
     // Split one volume's mesh into multiple volumes within the same object.
     // Returns the new volume count for the object on success, -1 on failure.
-    int splitVolume(int objIdx, int volIdx);
+    int splitVolume(int objIdx, int volIdx, int configured_extruders);
 
     // B132c follow-up (v2.10.4): deep-copy an existing object via
     // Model::add_object(*src). The new object is appended at the end of the
@@ -298,6 +306,10 @@ public:
     // std::nullopt if objIdx is invalid. Used by per-object "Copy" UX so
     // the user can duplicate individual split pieces without re-loading.
     std::optional<int> duplicateObject(int objIdx);
+
+    // Remove one object while preserving all native positional caches. Refuses
+    // to delete the final object so the Kotlin session remains a valid bed.
+    bool deleteObject(int objIdx);
 
     // Run Slic3r::orientation::orient on one object and apply the result to
     // its instances[0] rotation. Returns the new euler [x, y, z] in radians,

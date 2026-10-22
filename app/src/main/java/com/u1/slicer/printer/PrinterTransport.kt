@@ -14,10 +14,13 @@ data class PrinterTransportCapabilities(
     val supportsFilamentSync: Boolean = false,
     val reportsFilamentSlotsWithStatus: Boolean = false,
     val supportsHeaterControl: Boolean = false,
-    val supportsCustomGcode: Boolean = false,
+    /** Moonraker console for user-entered G-code. */
+    val supportsConsole: Boolean = false,
     val supportsSkipObjects: Boolean = false,
     val supportsUpload: Boolean = false,
     val supportsStartJob: Boolean = false,
+    /** Upload can atomically start the job when the confirmed send path requests it. */
+    val supportsStartOnUpload: Boolean = false,
     val supportsStartProject: Boolean = false,
     val supportsPause: Boolean = false,
     val supportsResume: Boolean = false,
@@ -42,7 +45,7 @@ interface PrinterTransport {
     suspend fun start(scope: CoroutineScope) {}
     suspend fun stop() {}
     suspend fun testConnection(): String?
-    suspend fun queryWebcamSnapshotCandidates(): List<String> = emptyList()
+    suspend fun queryWebcamSources(): List<WebcamSource> = emptyList()
     suspend fun wakeCamera() {}
     suspend fun queryFilamentSlots(): List<FilamentSlot>? = null
     suspend fun getLedState(): Boolean? = null
@@ -56,7 +59,11 @@ interface PrinterTransport {
     fun remoteScreenUrl(): String? = null
     suspend fun hintJobStarting() {}
 
-    suspend fun uploadJob(file: File, remoteName: String): TransportCommandResult =
+    suspend fun uploadJob(
+        file: File,
+        remoteName: String,
+        startAfterUpload: Boolean = false,
+    ): TransportCommandResult =
         TransportCommandResult.Unsupported("Upload is not supported for this printer")
 
     suspend fun validateStartProject(): TransportCommandResult = TransportCommandResult.Success

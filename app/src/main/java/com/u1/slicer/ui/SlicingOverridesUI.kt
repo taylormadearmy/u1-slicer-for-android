@@ -55,6 +55,7 @@ fun SlicingOverridesAccordion(
     filamentCount: Int? = null,
     extruderPresets: List<ExtruderPreset> = emptyList(),
     colorMapping: List<Int>? = null,
+    effectiveLayerHeight: Float? = null,
 ) {
     var expandedSection by remember { mutableStateOf<String?>(defaultExpandedSection) }
 
@@ -86,6 +87,9 @@ fun SlicingOverridesAccordion(
         expanded = expandedSection == "layer",
         onToggle = { expandedSection = if (expandedSection == "layer") null else "layer" }
     ) {
+        effectiveLayerHeight?.let {
+            Text("For this job: ${"%.2f".format(it)} mm", style = MaterialTheme.typography.bodySmall)
+        }
         OverrideRow(
             label = "Layer Height",
             override = overrides.layerHeight,
@@ -95,7 +99,7 @@ fun SlicingOverridesAccordion(
             sourceConfig = sourceConfig,
             valueContent = {
                 OverrideFloatField(
-                    value = overrides.layerHeight.value ?: 0.2f,
+                    value = overrides.layerHeight.value ?: effectiveLayerHeight ?: 0.2f,
                     suffix = "mm",
                     onValueChange = { onOverridesChange(overrides.copy(layerHeight = OverrideValue(OverrideMode.OVERRIDE, it))) }
                 )
@@ -279,6 +283,29 @@ fun SlicingOverridesAccordion(
                     onValueChange = { onOverridesChange(overrides.copy(bottomSurfacePattern = OverrideValue(OverrideMode.OVERRIDE, it))) }
                 )
             }
+        )
+
+        val ironingTypes = listOf(
+            "no ironing" to "Off",
+            "top" to "Top surfaces",
+            "topmost" to "Topmost surface",
+            "solid" to "All solid layers",
+        )
+        OverrideRow(
+            label = "Ironing",
+            override = overrides.ironing,
+            defaultHint = "Off",
+            onModeChange = { mode -> onOverridesChange(overrides.copy(ironing = overrides.ironing.copy(mode = mode))) },
+            fileKey = "ironing_type",
+            sourceConfig = sourceConfig,
+            valueContent = {
+                OverrideDropdown(
+                    value = overrides.ironing.value ?: "no ironing",
+                    options = ironingTypes.map { it.first },
+                    labels = ironingTypes.map { it.second },
+                    onValueChange = { onOverridesChange(overrides.copy(ironing = OverrideValue(OverrideMode.OVERRIDE, it))) },
+                )
+            },
         )
 
         OverrideRow(

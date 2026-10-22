@@ -10,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -25,6 +26,7 @@ import java.io.File
  */
 @RunWith(AndroidJUnit4::class)
 class F66BehaviouralTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private lateinit var ctx: Application
     private lateinit var vm: SlicerViewModel
@@ -364,15 +366,15 @@ class F66BehaviouralTest {
     // new file's objects or Reset silently no-ops on file-B objects.
 
     private fun awaitAddFileComplete(initialObjectCount: Int, timeoutMs: Long = 30_000L) {
-        // addModelFromFile launches on viewModelScope.IO; wait for the bed
-        // object count (per _objectBoundingBoxes) to grow past the initial.
+        // Bounds publish during Loading, before the new objects' reset baselines.
+        // ModelLoaded publishes only after doAddFile has committed those baselines.
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             val currentCount = vm.objectBoundingBoxes.value.size / 3
-            if (currentCount > initialObjectCount) return
+            if (currentCount > initialObjectCount && vm.state.value is SlicerViewModel.SlicerState.ModelLoaded) return
             Thread.sleep(100)
         }
-        error("addModelFromFile didn't complete within ${timeoutMs / 1000}s; last objectCount=${vm.objectBoundingBoxes.value.size / 3}")
+        error("addModelFromFile didn't complete within ${timeoutMs / 1000}s; last objectCount=${vm.objectBoundingBoxes.value.size / 3}, state=${vm.state.value}")
     }
 
     @Test

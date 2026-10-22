@@ -13,6 +13,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
+import com.u1.slicer.OfflineU1PrinterRule
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -46,6 +48,7 @@ import java.io.File
  */
 @RunWith(AndroidJUnit4::class)
 class MixSlotObjectAssignBlendGateTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private lateinit var application: U1SlicerApplication
     private lateinit var viewModel: SlicerViewModel

@@ -11,10 +11,13 @@ param(
     [ValidateSet('A1_MINI', 'A1', 'P1P', 'P1S', 'P2S', 'X1C', 'X1E', 'H2D')]
     [string]$BambuTarget = 'H2D',
     [switch]$KeepExistingResults,
-    [switch]$NoInstall
+    [switch]$NoInstall,
+    [switch]$IncludePrinterWizardUpload,
+    [switch]$UseInstalledApksForWizard
 )
 
 $ErrorActionPreference = "Stop"
+if ($Device -ne "5A101JEBF24790") { throw "This reconciliation regression run requires the approved Pixel 9a." }
 
 function Write-Step($Message) {
     $stamp = Get-Date -Format "HH:mm:ss"
@@ -31,7 +34,11 @@ function Get-SafeName([string]$Name) {
 }
 
 function Capture-Screenshot([string]$Path) {
-    Invoke-Adb shell screencap -p /sdcard/ss.png | Out-Null
+    Invoke-Adb shell input keyevent KEYCODE_WAKEUP | Out-Null
+    Invoke-Adb shell wm dismiss-keyguard | Out-Null
+    Start-Sleep -Seconds 1
+    $captureArgs = @("shell", "screencap", "-p", "/sdcard/ss.png")
+    Invoke-Adb @captureArgs | Out-Null
     Invoke-Adb pull /sdcard/ss.png $Path | Out-Null
 }
 
@@ -42,12 +49,37 @@ function Get-TestCmdLog([int]$Last = 160) {
 function Broadcast([string]$Action, [string[]]$ExtraArgs = @()) {
     $args = @("shell", "am", "broadcast", "-a", "$($AppId).$Action") + $ExtraArgs + @("-p", $AppId)
     Invoke-Adb @args | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ADB broadcast $Action failed with exit code $LASTEXITCODE" }
 }
 
 function Dump-State {
     Broadcast "DUMP_STATE"
     Start-Sleep -Milliseconds 600
     return Get-TestCmdLog
+}
+
+function Get-ScenarioPid {
+    return ((Invoke-Adb shell pidof $AppId) -join '').Trim()
+}
+
+function Test-ScenarioProcess {
+    return $script:ScenarioAppPid -and (Get-ScenarioPid) -eq $script:ScenarioAppPid
+}
+
+function Start-ScenarioApp {
+    $script:ScenarioAppPid = $null
+    Invoke-Adb logcat -c | Out-Null
+    Invoke-Adb shell am force-stop $AppId | Out-Null
+    Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
+    Start-Sleep -Seconds 8
+    $script:ScenarioAppPid = Get-ScenarioPid
+    if (!$script:ScenarioAppPid) {
+        Write-Step 'Reopening after the APK upgrade reset'
+        Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
+        Start-Sleep -Seconds 4
+        $script:ScenarioAppPid = Get-ScenarioPid
+    }
+    return ![string]::IsNullOrWhiteSpace($script:ScenarioAppPid)
 }
 
 function Wait-State {
@@ -61,6 +93,10 @@ function Wait-State {
     while ((Get-Date) -lt $deadline) {
         $log = Dump-State
         $joined = $log -join "`n"
+        if (!(Test-ScenarioProcess)) {
+            Write-Step "$Label failed: app process changed during the scenario"
+            return 'PROCESS_CHANGED: scenario state was lost'
+        }
         $lastDumpMarker = $joined.LastIndexOf("=== DUMP_STATE ===")
         $latestState = if ($lastDumpMarker -ge 0) { $joined.Substring($lastDumpMarker) } else { $joined }
         if ($latestState -match $Pattern) {
@@ -72,7 +108,7 @@ function Wait-State {
         Write-Step "$Label still pending..."
         Start-Sleep -Seconds 5
     }
-    return ((Dump-State) -join "`n")
+    return "TIMEOUT: $Label"
 }
 
 function Wait-LogPattern {
@@ -86,13 +122,17 @@ function Wait-LogPattern {
     while ((Get-Date) -lt $deadline) {
         $log = Dump-State
         $joined = $log -join "`n"
+        if (!(Test-ScenarioProcess)) {
+            Write-Step "$Label failed: app process changed during the scenario"
+            return 'PROCESS_CHANGED: scenario state was lost'
+        }
         if ($joined -match $Pattern) {
             return $joined
         }
         Write-Step "$Label still pending..."
         Start-Sleep -Seconds 5
     }
-    return ((Dump-State) -join "`n")
+    return "TIMEOUT: $Label"
 }
 
 function Wait-LoadReady {
@@ -101,7 +141,7 @@ function Wait-LoadReady {
     )
 
     if ($Scenario.Plate -ne $null) {
-        return Wait-State "State: ModelLoaded|State: SliceComplete|isMultiPlate: true|Multi-plate: .*showing selector" $Scenario.LoadTimeoutSeconds "load $($Scenario.Name)"
+        return Wait-State "State: ModelLoaded|State: SliceComplete|ShowPlateSelector: true" $Scenario.LoadTimeoutSeconds "load $($Scenario.Name)"
     }
 
     return Wait-State "State: ModelLoaded|State: SliceComplete" $Scenario.LoadTimeoutSeconds "load $($Scenario.Name)"
@@ -157,10 +197,11 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
         return $false
     }
 
-    Invoke-Adb logcat -c | Out-Null
-    Invoke-Adb shell am force-stop $AppId | Out-Null
-    Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
-    Start-Sleep -Seconds 8
+    if (!(Start-ScenarioApp)) {
+        "SCENARIO: $($Scenario.Name)`nOVERALL: FAIL`napp process missing after launch" | Set-Content $resultFile
+        Write-Step "[$Index/$Total] FAIL app process missing after launch"
+        return $false
+    }
 
     if ($Scenario.Suite -eq 'Bambu') {
         Broadcast "SET_BAMBU_TARGET" @("--es", "model", $Scenario.Target)
@@ -185,10 +226,13 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     $loadLog = Wait-LoadReady $Scenario
     Capture-Screenshot $prepareShot
 
-    $plateSelectorReady = $loadLog -match "isMultiPlate: true|Multi-plate: .*showing selector"
+    $plateSelectorReady = $loadLog -match "ShowPlateSelector: true"
     $loadOk = $loadLog -match "State: ModelLoaded|State: SliceComplete" -or ($Scenario.Plate -ne $null -and $plateSelectorReady)
-    $plateOk = $Scenario.Plate -eq $null
-    if ($loadOk -and $Scenario.Plate -ne $null) {
+    # A 3MF can carry a single PrusaSlicer plate in its metadata without the app exposing
+    # a plate picker. Select only when the UI would actually offer selection; otherwise
+    # selecting during the normal direct load races a second native load (Buzz -> Korok).
+    $plateOk = $Scenario.Plate -eq $null -or ($loadOk -and -not $plateSelectorReady)
+    if ($plateSelectorReady -and $Scenario.Plate -ne $null) {
         Write-Step "[$Index/$Total] selecting plate $($Scenario.Plate)"
         Broadcast "SELECT_PLATE" @("--ei", "plate", "$($Scenario.Plate)")
         $loadLog = Wait-State "State: ModelLoaded|State: SliceComplete" $Scenario.LoadTimeoutSeconds "plate $($Scenario.Plate) $($Scenario.Name)"
@@ -202,6 +246,26 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     $sliceOk = $false
     $gcodePath = ""
     $exportPath = ""
+    $smartPaintOk = $true
+    if ($loadOk -and $Scenario.SmartPaint) {
+        Broadcast "SET_COLORS" @("--es", "colors", "'#FF0000,#00FF00,#0000FF,#FFFFFF'")
+        if ($Scenario.PriorRemap) {
+            Broadcast "SET_COLOUR_REMAP" @("--ei", "index", "0", "--ei", "slot", "3")
+            $seedLog = Wait-State "SmartPaintAccepted: .* remaps=1" 15 "seed previous file remap"
+            $smartPaintOk = $seedLog -match "remaps=1"
+        }
+        Broadcast "START_SMART_PAINT"
+        $paintLog = Wait-State "SmartPaintResult: true triangles=[1-9]" 60 "Smart Paint segmentation"
+        $smartPaintOk = $smartPaintOk -and $paintLog -match "SmartPaintResult: true triangles=[1-9]"
+        Capture-Screenshot (Join-Path $ArtifactDir "$safe-smart-paint.png")
+        if ($smartPaintOk) {
+            Broadcast "ACCEPT_SMART_PAINT"
+            $acceptLog = Wait-State "SmartPaintAccepted: true triangles=[1-9][0-9]* remaps=0" 30 "Smart Paint accept and reload"
+            $smartPaintOk = $acceptLog -match "SmartPaintAccepted: true triangles=[1-9][0-9]* remaps=0"
+            Capture-Screenshot $prepareShot
+        }
+        $loadOk = $loadOk -and $smartPaintOk
+    }
     if ($loadOk -and $Scenario.Kind -eq "slice") {
         Write-Step "[$Index/$Total] slicing $($Scenario.Name)"
         Broadcast "SLICE"
@@ -240,6 +304,13 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     }
     $sliceChecksOk = $sliceOk -and $gcodeChecks -ne $null -and
         $toolRangeOk -and $targetOk -and $machineMacrosOk
+    if ($Scenario.SmartPaint -and $gcodeChecks -ne $null) {
+        $usedPaintTools = @(0..3 | Where-Object { [int]$gcodeChecks["T$_"] -gt 0 }).Count
+        $sliceChecksOk = $sliceChecksOk -and $usedPaintTools -ge 2
+        Broadcast "NAVIGATE" @("--es", "screen", "preview")
+        Start-Sleep -Seconds 3
+        Capture-Screenshot (Join-Path $ArtifactDir "$safe-preview.png")
+    }
     $status = if ($loadOk -and ($Scenario.Kind -ne "slice" -or $sliceChecksOk)) { "PASS" } else { "FAIL" }
     $lines = @(
         "SCENARIO: $($Scenario.Name)",
@@ -254,6 +325,7 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
         "LOG: $logFile",
         "---",
         "load: $(if ($loadOk) { 'PASS' } else { 'FAIL' })",
+        "smartPaintAccept: $(if (!$Scenario.SmartPaint) { 'N/A' } elseif ($smartPaintOk) { 'PASS' } else { 'FAIL' })",
         "plateSelect: $(if ($Scenario.Plate -eq $null) { 'N/A' } elseif ($plateOk) { 'PASS' } else { 'FAIL' })",
         "slice: $(if ($Scenario.Kind -ne 'slice') { 'N/A' } elseif ($sliceOk) { 'PASS' } else { 'FAIL' })",
         "targetIdentity: $(if ($Scenario.Suite -ne 'Bambu' -or $targetOk) { 'PASS' } else { 'FAIL' })",
@@ -283,6 +355,7 @@ if (!(Test-Path $ResultsDir)) {
 }
 if (!$KeepExistingResults) {
     Get-ChildItem $ResultsDir -Filter "??-*.txt" -ErrorAction SilentlyContinue | Remove-Item -Force
+    Remove-Item (Join-Path $ResultsDir "printer-wizard-add-slice-upload.txt") -Force -ErrorAction SilentlyContinue
 }
 
 if ([string]::IsNullOrWhiteSpace($ArtifactDir)) {
@@ -356,6 +429,59 @@ for ($i = $StartAt; $i -le $last; $i++) {
     if ($ok) { $passed++ } else { $failed++ }
 }
 
+# Always include the Smart Paint round-trip checks in U1 smoke and full batches.
+if ($Suite -in @('U1', 'Both')) {
+    $paintScenarios = @(
+        @{ Name="Smart Paint Benchy round trip"; PriorRemap=$false },
+        @{ Name="Smart Paint Benchy after file colour remap"; PriorRemap=$true }
+    )
+    foreach ($paintScenario in $paintScenarios) {
+        $paintScenario.File = '3DBenchy.stl'
+        $paintScenario.Plate = $null
+        $paintScenario.Kind = 'slice'
+        $paintScenario.Suite = 'U1'
+        $paintScenario.Target = ''
+        $paintScenario.SmartPaint = $true
+        $paintScenario.LoadTimeoutSeconds = 120
+        $paintScenario.SliceTimeoutSeconds = 900
+        $paintIndex = $runScenarios.Count + 1 + [array]::IndexOf($paintScenarios, $paintScenario)
+        $ok = Run-Scenario $paintScenario $paintIndex ($runScenarios.Count + 2)
+        if ($ok) { $passed++ } else { $failed++ }
+    }
+}
+
+if ($IncludePrinterWizardUpload -and $Suite -in @('U1', 'Both')) {
+    $wizardResult = Join-Path $ResultsDir "printer-wizard-add-slice-upload.txt"
+    Write-Step "[batch add-on] START printer wizard add, slice, and upload only"
+    $wizardExit = 0
+    if ($UseInstalledApksForWizard) {
+        try {
+            $wizardResults = Join-Path $ResultsDir 'wizard-instrumented'
+            & (Join-Path $PSScriptRoot 'run-instrumented-shard.ps1') -Device $Device `
+                -ClassFilter 'com.u1.slicer.slicing.PrinterWizardToSliceTest' -ResultsDir $wizardResults
+            $wizardSummary = Get-Content (Join-Path $wizardResults "shard-0-$Device.json") -Raw | ConvertFrom-Json
+            if ($wizardSummary.passed -ne 1) { throw 'Exactly one wizard method must pass.' }
+        } catch {
+            $wizardExit = 1
+            Write-Warning $_.Exception.Message
+        }
+    } else {
+        & (Join-Path $PSScriptRoot "run-connected-with-progress.ps1") `
+            -Device $Device `
+            -ClassFilter "com.u1.slicer.slicing.PrinterWizardToSliceTest"
+        $wizardExit = $LASTEXITCODE
+    }
+    if ($wizardExit -eq 0) {
+        "SCENARIO: printer wizard add, slice, and upload only`nOVERALL: PASS" | Set-Content $wizardResult
+        $passed++
+        Write-Step "[batch add-on] PASS printer wizard add, slice, and upload only"
+    } else {
+        "SCENARIO: printer wizard add, slice, and upload only`nOVERALL: FAIL`nrunner exit: $wizardExit" | Set-Content $wizardResult
+        $failed++
+        Write-Step "[batch add-on] FAIL printer wizard add, slice, and upload only"
+    }
+}
+
 $summary = Join-Path $ResultsDir ("batch-manual-e2e-" + (Get-Date -Format "yyyy-MM-dd-HHmmss") + ".txt")
 Get-ChildItem $ResultsDir -Filter "*.txt" |
     Where-Object { $_.Name -notmatch "current-artifact-dir|batch-manual-e2e" } |
@@ -364,4 +490,6 @@ Get-ChildItem $ResultsDir -Filter "*.txt" |
     Set-Content $summary
 
 Write-Step "Batch complete: passed=$passed failed=$failed summary=$summary"
+if ($failed -gt 0) { exit 1 }
+exit 0
 

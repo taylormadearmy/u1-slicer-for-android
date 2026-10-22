@@ -1,0 +1,8 @@
+{
+  "type": "machine",
+  "name": "fdm_u1_base",
+  "inherits": "fdm_common",
+  "machine_start_gcode": "BASE_START",
+  "retraction_length": 0.8,
+  "base_only": "survives"
+}

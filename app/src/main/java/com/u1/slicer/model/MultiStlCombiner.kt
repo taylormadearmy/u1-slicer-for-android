@@ -18,13 +18,12 @@ import java.nio.ByteOrder
  *
  * Per-part error handling per the issue body:
  *  - A part that fails to parse → skipped, recorded in [Result.failed]
- *  - A part with footprint > 270 mm → skipped, recorded in [Result.oversize]
+ *  - A part larger than the supplied bed → skipped, recorded in [Result.oversize]
  *  - Triangle-budget overflow → still combined; the slicer / preview decimator
  *    handles ceiling logic downstream
  */
 object MultiStlCombiner {
 
-    private const val BED_MM: Float = 270f
     private const val GRID_MARGIN_MM: Float = 5f
 
     data class PartGeometry(
@@ -51,7 +50,12 @@ object MultiStlCombiner {
      * largest part footprint so every cell holds any part. Returns null when
      * no part could be placed (all parsed but all oversize, or all failed).
      */
-    fun combine(inputs: List<File>, output: File): Result? {
+    fun combine(
+        inputs: List<File>,
+        output: File,
+        bedSizeX: Float,
+        bedSizeY: Float,
+    ): Result? {
         require(inputs.isNotEmpty()) { "No input STL files provided" }
 
         val geometry = mutableListOf<PartGeometry>()
@@ -64,7 +68,7 @@ object MultiStlCombiner {
                 failed += file
                 continue
             }
-            if (geo.sizeX > BED_MM || geo.sizeY > BED_MM) {
+            if (geo.sizeX > bedSizeX || geo.sizeY > bedSizeY) {
                 oversize += file
                 continue
             }
@@ -80,8 +84,8 @@ object MultiStlCombiner {
             objectSizeX = cellW,
             objectSizeY = cellH,
             copyCount = geometry.size,
-            bedSizeX = BED_MM,
-            bedSizeY = BED_MM,
+            bedSizeX = bedSizeX,
+            bedSizeY = bedSizeY,
             margin = GRID_MARGIN_MM,
         )
         // Cap to as many parts as the bed can hold without overlap. Beyond that

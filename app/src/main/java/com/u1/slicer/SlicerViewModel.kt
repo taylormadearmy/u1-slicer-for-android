@@ -29,12 +29,19 @@ import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.data.MixedFilamentSliceSummary
 import com.u1.slicer.data.parseMixedFilamentRecipe
 import com.u1.slicer.data.ModelInfo
+import com.u1.slicer.data.ModelOperation
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.PerObjectPose
 import com.u1.slicer.data.PlateType
 import com.u1.slicer.data.SessionState
+import com.u1.slicer.data.AdaptiveLayerHeightState
+import com.u1.slicer.data.CanonicalColourRemap
+import com.u1.slicer.data.CanonicalColourDestination
+import com.u1.slicer.data.resolveCanonicalColourRemap
+import com.u1.slicer.bambu.ThreeMfColourRemapper
 import com.u1.slicer.data.remapPerObjectMapOnSplit
+import com.u1.slicer.data.remapPerObjectMapOnDelete
 import com.u1.slicer.ui.ObjectSelection
 import com.u1.slicer.data.SessionStateRepository
 import com.u1.slicer.data.SettingsBackup
@@ -46,6 +53,7 @@ import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.data.resolveExportMapping
 import com.u1.slicer.data.storedGcodeIsPhysical
 import com.u1.slicer.gcode.ExcludeObjectInfo
+import com.u1.slicer.gcode.GcodeDialect
 import com.u1.slicer.gcode.GcodeToolSpace
 import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
@@ -53,6 +61,7 @@ import com.u1.slicer.gcode.GcodeValidator
 import com.u1.slicer.gcode.LayerToolPauseInjector
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.gcode.buildSuspiciousModelLineContexts
+import com.u1.slicer.gcode.gcodeDialect
 import com.u1.slicer.gcode.gcodeToolSpaceFromDb
 import com.u1.slicer.gcode.gcodeToolSpaceToDb
 import com.u1.slicer.gcode.parseExcludeObjects
@@ -63,9 +72,18 @@ import com.u1.slicer.printer.BambuProjectFileInspector
 import com.u1.slicer.slice.SliceTargetFamily
 import com.u1.slicer.slice.SliceArtifact
 import com.u1.slicer.slice.SlicerTarget
+import com.u1.slicer.slice.GenericMachineProfile
+import com.u1.slicer.slice.sliceArtifactForJob
 import com.u1.slicer.slice.buildSliceArtifact
 import com.u1.slicer.slice.buildSliceArtifactWithTimings
 import com.u1.slicer.slice.resolveDefaultSliceTarget
+import com.u1.slicer.machine.MachineProfile
+import com.u1.slicer.machine.U1NozzlePolicy
+import com.u1.slicer.machine.U1SliceNozzles
+import com.u1.slicer.machine.resolveU1SliceDiameter
+import com.u1.slicer.data.U1NozzleConfiguration
+import com.u1.slicer.machine.machineGcodeForSlice
+import com.u1.slicer.machine.resolveActiveMachineSliceConfig
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -123,6 +141,15 @@ internal fun resolveWipeTowerWidth(config: com.u1.slicer.data.SliceConfig, overr
     return if (ov.mode == com.u1.slicer.data.OverrideMode.OVERRIDE && ov.value != null) ov.value else config.wipeTowerWidth
 }
 
+/** Empty is the native sentinel for preserving an embedded 3MF setting or Orca's default. */
+internal fun resolveNativeIroningType(override: OverrideValue<String>): String = when (override.mode) {
+    OverrideMode.USE_FILE -> ""
+    OverrideMode.ORCA_DEFAULT -> "no ironing"
+    OverrideMode.OVERRIDE -> override.value
+        ?.takeIf { it in setOf("no ironing", "top", "topmost", "solid") }
+        ?: "no ironing"
+}
+
 /** Select only settings the user explicitly changed for Bambu precedence layer 4. */
 internal fun buildExplicitBambuProfileOverrides(
     profileOverrides: Map<String, Any>,
@@ -141,6 +168,7 @@ internal fun buildExplicitBambuProfileOverrides(
     include(overrides.bottomShellLayers.mode, "bottom_shell_layers")
     include(overrides.topSurfacePattern.mode, "top_surface_pattern")
     include(overrides.bottomSurfacePattern.mode, "bottom_surface_pattern")
+    include(overrides.ironing.mode, "ironing_type")
     include(overrides.sparseInfillSpeed.mode, "sparse_infill_speed")
     include(overrides.reduceInfillRetraction.mode, "reduce_infill_retraction")
     include(overrides.wallGenerator.mode, "wall_generator")
@@ -331,6 +359,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val filamentDao = container.filamentDao
     private val sliceJobDao = container.sliceJobDao
     private val libraryRepo = container.filamentLibraryRepository
+    private val machineProfilesRepo = container.machineProfileRepository
     private val profileEmbedder by lazy { ProfileEmbedder(getApplication()) }
 
     /** Debug-only: set by MainActivity to wire TestCommandReceiver navigation. */
@@ -386,6 +415,48 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         SharingStarted.Eagerly,
         null,
     )
+
+    private val activeMachineResolution = printersRepo.activePrinter
+        .map { printer ->
+            runCatching { printer?.let(machineProfilesRepo::activeFor) ?: machineProfilesRepo.builtInU1() }.also { result ->
+                diagnostics.recordEvent("machine_profile_resolution", mapOf(
+                    "printerId" to printer?.id,
+                    "machineKind" to printer?.machine?.name,
+                    "machineProfileId" to printer?.machineProfileId,
+                    "hasEmbeddedProfile" to (printer?.machineProfile != null),
+                    "resolvedProfileId" to result.getOrNull()?.id,
+                    "error" to result.exceptionOrNull()?.message,
+                ))
+            }
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            Result.success(machineProfilesRepo.builtInU1()),
+        )
+
+    val activeMachineProfileError = activeMachineResolution.map { it.exceptionOrNull()?.message }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    // Display-only geometry for an unavailable binding. Slicing resolves the actual
+    // printer again and refuses it; this placeholder is never a printable U1 fallback.
+    private val unavailableMachineDisplay = machineProfilesRepo.builtInU1().copy(
+        id = "unavailable", displayName = "Machine profile unavailable",
+        family = com.u1.slicer.machine.MachineFamily.GENERIC,
+        bedSizeX = 1f, bedSizeY = 1f, maxPrintHeight = 1f, extruderCount = 1,
+        machineJson = "", machineStartGcode = "", machineEndGcode = "",
+    )
+
+    val activeMachineProfile: StateFlow<MachineProfile> = activeMachineResolution
+        .map { it.getOrElse { unavailableMachineDisplay } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, machineProfilesRepo.builtInU1())
+
+    private fun activePhysicalSlotCount(): Int =
+        activeMachineProfile.value.extruderCount.coerceIn(1, 4)
+
+    private fun configuredArrangeExtruderCount(): Int =
+        _config.value.extruderCount.coerceIn(1, activePhysicalSlotCount())
+
     /**
      * The active printer is the sole source of the slice target.  Changing
      * printers happens on the Printer screen, never from a preview-only
@@ -398,6 +469,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         SharingStarted.Eagerly,
         resolveDefaultSliceTarget(null),
     )
+
+    private fun selectedGenericProfile(): GenericMachineProfile? = when (effectiveSliceTarget.value) {
+        SlicerTarget.ElegooCentauriCarbon -> GenericMachineProfile.centauriCarbon()
+        SlicerTarget.GenericKlipper, SlicerTarget.GenericMarlin -> {
+            val printer = activePrinterForSlicing.value
+            printer?.machineProfile ?: printer?.let(machineProfilesRepo::activeFor)?.let {
+                GenericMachineProfile.fromJson(it.machineJson)
+            }
+        }
+        else -> null
+    }
 
     private val _latestSliceArtifact = MutableStateFlow<SliceArtifact?>(null)
     val latestSliceArtifact: StateFlow<SliceArtifact?> = _latestSliceArtifact.asStateFlow()
@@ -505,6 +587,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     private fun beginNewModelLoad(): Long {
         val generation = modelLoadGeneration.incrementAndGet()
+        // Resume installs the saved file's remaps before loading it. Other imports,
+        // including Smart Paint output, have a new canonical colour index space.
+        if (!restoreInProgress) _canonicalColourRemaps.value = emptyList()
         _canonicalFilamentList.value = null
         _sliceMixToolSpace.value = false
         _h2dFilamentNozzleAssignments.value = emptyList()
@@ -513,6 +598,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _copyCount.value = 1
         _copyBedWarning.value = null
         _objectBoundingBoxes.value = floatArrayOf()
+        // A new import must not expose the prior file's plate selector state while its
+        // metadata pipeline is still running. Otherwise a fast plate-selection action can
+        // be routed to the previous multi-plate source (e.g. Buzz followed by Korok),
+        // producing a native load failure before the new file has published its plates.
+        _threeMfInfo.value = null
+        _fileThreeMfInfo = null
+        _multiPlatePlates.value = emptyList()
+        _multiPlateSourceFile = null
+        _showPlateSelector.value = false
+        sourceModelFile = null
+        sourceModelInfo = null
         hasMultipleDistinctObjectsVar = false
         customObjectPositions = null
         _multiObjectPositions.value = null
@@ -532,6 +628,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
         _duplicateOps.value = emptyList()
+        _modelOperations.value = emptyList()
         // v2.10.13: reset the once-per-process B132c trace gate so a fresh
         // model load can capture the stack again if applyPlacementPositions
         // ever sees a mismatched count.
@@ -614,6 +711,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _colorMapping = MutableStateFlow<List<Int>?>(null)
     val colorMapping: StateFlow<List<Int>?> = _colorMapping.asStateFlow()
 
+    // F99 source identity is canonical file index; physical printer mapping stays separate.
+    private val _canonicalColourRemaps = MutableStateFlow<List<CanonicalColourRemap>>(emptyList())
+    val canonicalColourRemaps: StateFlow<List<CanonicalColourRemap>> = _canonicalColourRemaps.asStateFlow()
+
+    fun setCanonicalColourRemaps(remaps: List<CanonicalColourRemap>) {
+        _canonicalColourRemaps.value = remaps.distinctBy { it.fileIndex }
+        _sliceStale.value = true
+        if (lastModelInfo != null) profileNeedsReEmbed = true
+        markSessionDirty()
+    }
+
     // Active extruder colors for G-code viewers (hex strings, one per extruder slot)
     private val _activeExtruderColors = MutableStateFlow<List<String>>(emptyList())
     val activeExtruderColors: StateFlow<List<String>> = _activeExtruderColors.asStateFlow()
@@ -675,6 +783,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _splitVolumeOps = MutableStateFlow<List<String>>(emptyList())
     val splitVolumeOps: StateFlow<List<String>> = _splitVolumeOps.asStateFlow()
+
+    /** F100: the sole replay source for new structural mutations. */
+    private val _modelOperations = MutableStateFlow<List<ModelOperation>>(emptyList())
 
     // Phase 2.6b — per-filament user overrides from the Prepare screen.
     // Map key = file filament index (0-based, matches CanonicalFilamentList
@@ -1092,6 +1203,32 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _selection.value = _selection.value.withVolume(idx)
     }
 
+    private fun remapPerVolumeExtrudersOnDelete(
+        overrides: Map<String, Int>,
+        removedObjectIndex: Int,
+    ): Map<String, Int> = buildMap(overrides.size) {
+        overrides.forEach { (key, slot) ->
+            val separator = key.indexOf(':')
+            if (separator <= 0) return@forEach
+            val objectIndex = key.substring(0, separator).toIntOrNull()
+            val volumeIndex = key.substring(separator + 1).toIntOrNull()
+            if (objectIndex == null || volumeIndex == null || objectIndex == removedObjectIndex) {
+                return@forEach
+            }
+            put("${if (objectIndex > removedObjectIndex) objectIndex - 1 else objectIndex}:$volumeIndex", slot)
+        }
+    }
+
+    private fun FloatArray.removeObjectPosition(objectIndex: Int): FloatArray? {
+        val offset = objectIndex * 2
+        if (offset < 0 || offset + 1 >= size) return this
+        if (size == 2) return null
+        return FloatArray(size - 2).also { result ->
+            copyInto(result, endIndex = offset)
+            copyInto(result, destinationOffset = offset, startIndex = offset + 2)
+        }
+    }
+
     /** Clear selection, returning to bed-wide control mode. */
     fun deselect() {
         _selection.value = ObjectSelection()
@@ -1270,8 +1407,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // applies to EVERY object on the bed. The user perceives "the model"
         // as one entity even though it's multiple ModelObjects internally.
         // Post-split OR multi-file: per-object scope as before.
-        val isSingleSourceUnsplit = _splitObjectOps.value.isEmpty() &&
-            _splitVolumeOps.value.isEmpty() &&
+        val isSingleSourceUnsplit = _modelOperations.value.isEmpty() &&
             additionalModelFiles.isEmpty()
         val objCount = runCatching { native.nativeGetObjectCount() }.getOrDefault(1)
         val targets = if (isSingleSourceUnsplit && objCount > 1) (0 until objCount).toList()
@@ -1360,11 +1496,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // of "object 0" may actually clone one of the new split pieces.
         // Documenting for future ops-ordering work; not a blocker for the
         // user's typical flow (split first, then duplicate).
-        if (_duplicateOps.value.isNotEmpty()) {
-            Log.w("SlicerVM", "splitObject after duplicateObject: dup ops " +
-                "(${_duplicateOps.value}) may resolve against post-split " +
-                "index space at slice replay.")
-        }
         // v2.10.11: anchor to the DRAWN position of the source. The combined
         // mesh pre-split is drawn at getPlacementPositions() which is the
         // bed-centred result of CopyArrangeCalculator.calculate(modelInfo,
@@ -1429,6 +1560,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             .getOrDefault(floatArrayOf())
         _selection.value = _selection.value.onSplit(removedIdx, addedCount).withObject(removedIdx)
         _splitObjectOps.value = _splitObjectOps.value + removedIdx
+        _modelOperations.value = _modelOperations.value + ModelOperation.SplitObject(removedIdx)
 
         // F66: split promotes the model to multi-object mode so the renderer
         // gives each new piece its own draw call + per-object drag + per-object
@@ -1446,6 +1578,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 Log.d("SplitDebug", "POST-SPLIT natural worldMins=${natural.toList()}, " +
                     "boxes=${boxes.toList()}, newCount=$newCount")
 
+                val (bedSizeX, bedSizeY) = activeBedDimensions()
                 val positions = if (natural.size == newCount * 2) {
                     val adjusted = natural.copyOf()
                     if (sourceIsSingleCombined) {
@@ -1486,7 +1619,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.d("SplitDebug", "natural.size mismatch — falling back to grid layout " +
                         "(natural.size=${natural.size}, expected=${newCount * 2})")
                     com.u1.slicer.model.CopyArrangeCalculator
-                        .buildMultiObjectPositions(boxes)
+                        .buildMultiObjectPositions(boxes, bedSizeX, bedSizeY)
                 }
                 val setOk = native.setObjectPositions(positions)
                 Log.d("SplitDebug", "setObjectPositions(${positions.toList()}) → ok=$setOk")
@@ -1537,6 +1670,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // re-create it after splits are replayed (the index space at
                 // replay time matches: splits replayed first, then dupes).
                 _duplicateOps.value = _duplicateOps.value + objIdx
+                _modelOperations.value = _modelOperations.value + ModelOperation.DuplicateObject(objIdx)
+                val rotation = native.nativeGetObjectRotation(newIdx)
+                val scale = native.nativeGetObjectScale(newIdx)
+                val copiedPose = PerObjectPose(rotation[0], rotation[1], rotation[2], scale[0], scale[1], scale[2])
+                _perObjectPoses.value = _perObjectPoses.value + (newIdx to copiedPose)
+                _loadTimePoses.value = _loadTimePoses.value + (newIdx to copiedPose)
 
                 // Promote to multi-object mode and lay out the new piece via
                 // the same grid-with-existing-anchor logic doAddFile uses for
@@ -1548,11 +1687,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val (bedSizeX, bedSizeY) = activeBedDimensions()
                     val existing = customObjectPositions
                         ?: com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(
-                            boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                            boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                         )
                     val positions = com.u1.slicer.model.CopyArrangeCalculator
                         .placeAdditionalObject(
-                            existing, boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                            existing, boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                         )
                     native.setObjectPositions(positions)
                     customObjectPositions = positions
@@ -1575,13 +1714,135 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Returns the new volume count, or `-1` on failure.
      */
     fun splitVolume(objIdx: Int, volIdx: Int): Int {
-        val newCount = native.nativeSplitVolume(objIdx, volIdx)
+        val newCount = native.nativeSplitVolume(objIdx, volIdx, configuredArrangeExtruderCount())
         if (newCount > 0) {
             _splitVolumeOps.value = _splitVolumeOps.value + "$objIdx:$volIdx"
+            _modelOperations.value = _modelOperations.value + ModelOperation.SplitVolume(objIdx, volIdx)
             _sliceStale.value = true
             invalidatePrepareMeshCache()
         }
         return newCount
+    }
+
+    /**
+     * F100: a 3MF can already contain independent ModelObjects. Preserve their
+     * authored world positions and expose them to the renderer/picker instead
+     * of requiring a meaningless additional split.
+     */
+    private fun exposeImportedObjectsForSelection() {
+        if (hasMultipleDistinctObjectsVar || additionalModelFiles.isNotEmpty() ||
+            !rawInputFile?.extension.equals("3mf", ignoreCase = true)) return
+        val objectCount = native.nativeGetObjectCount()
+        if (objectCount <= 1) return
+        val boxes = native.getObjectBoundingBoxes()
+        val worldMins = native.nativeGetObjectWorldAABBMins()
+        if (boxes.size != objectCount * 3 || worldMins.size != objectCount * 2) {
+            Log.w("SlicerVM", "F100: refusing to expose malformed object layout " +
+                "(objects=$objectCount boxes=${boxes.size} mins=${worldMins.size})")
+            return
+        }
+        hasMultipleDistinctObjectsVar = true
+        _objectBoundingBoxes.value = boxes
+        _loadTimeObjectBoundingBoxes.value = boxes.copyOf()
+        customObjectPositions = worldMins.copyOf()
+        _multiObjectPositions.value = worldMins.copyOf()
+        _modelAddVersion.value++
+        Log.i("SlicerVM", "F100: exposed $objectCount pre-separated 3MF objects")
+    }
+
+    /** F100: remove one selected object without leaving index-keyed state behind. */
+    fun deleteObject(objIdx: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            NativeLibrary.previewMutex.withLock {
+                val previousCount = native.nativeGetObjectCount()
+                if (!native.nativeDeleteObject(objIdx)) {
+                    _toastEvents.tryEmit(
+                        if (previousCount <= 1) "At least one object must remain on the bed"
+                        else "Couldn't delete that object"
+                    )
+                    return@withLock
+                }
+                _perObjectPoses.value = remapPerObjectMapOnDelete(_perObjectPoses.value, objIdx)
+                _loadTimePoses.value = remapPerObjectMapOnDelete(_loadTimePoses.value, objIdx)
+                _perVolumeExtruders.value = remapPerVolumeExtrudersOnDelete(_perVolumeExtruders.value, objIdx)
+                _selection.value = _selection.value.onDelete(objIdx)
+                _loadTimeObjectBoundingBoxes.value = native.getObjectBoundingBoxes()
+                _objectBoundingBoxes.value = _loadTimeObjectBoundingBoxes.value
+                customObjectPositions = customObjectPositions?.removeObjectPosition(objIdx)
+                _multiObjectPositions.value = customObjectPositions
+                _modelOperations.value = _modelOperations.value + ModelOperation.DeleteObject(objIdx)
+                _sliceStale.value = true
+                if (native.nativeGetObjectCount() == 1) {
+                    hasMultipleDistinctObjectsVar = false
+                    customObjectPositions = null
+                    _multiObjectPositions.value = null
+                }
+            }
+            invalidatePrepareMeshCache()
+        }
+    }
+
+    private fun legacyStructuralOperations(): List<ModelOperation> = buildList {
+        _splitObjectOps.value.forEach { add(ModelOperation.SplitObject(it)) }
+        _splitVolumeOps.value.forEach { entry ->
+            val parts = entry.split(':')
+            val objectIndex = parts.getOrNull(0)?.toIntOrNull()
+            val volumeIndex = parts.getOrNull(1)?.toIntOrNull()
+            if (objectIndex != null && volumeIndex != null) add(ModelOperation.SplitVolume(objectIndex, volumeIndex))
+        }
+        _duplicateOps.value.forEach { add(ModelOperation.DuplicateObject(it)) }
+    }
+
+    private fun structuralOperationsForReplay(saved: SessionState): List<ModelOperation> =
+        saved.modelOperations.ifEmpty {
+            buildList {
+                saved.splitObjectOperations.forEach { add(ModelOperation.SplitObject(it)) }
+                saved.splitVolumeOperations.forEach { entry ->
+                    val parts = entry.split(':')
+                    val objectIndex = parts.getOrNull(0)?.toIntOrNull()
+                    val volumeIndex = parts.getOrNull(1)?.toIntOrNull()
+                    if (objectIndex != null && volumeIndex != null) {
+                        add(ModelOperation.SplitVolume(objectIndex, volumeIndex))
+                    }
+                }
+            }
+        }
+
+    private fun structuralOperationsForReplay(): List<ModelOperation> =
+        _modelOperations.value.ifEmpty(::legacyStructuralOperations)
+
+    /** Caller must hold [NativeLibrary.previewMutex]. */
+    private fun replayStructuralOperations(operations: List<ModelOperation>): Int {
+        var replayed = 0
+        for (operation in operations) {
+            val applied = when (operation) {
+                is ModelOperation.SplitObject -> native.nativeSplitObject(operation.objectIndex) != null
+                is ModelOperation.SplitVolume -> native.nativeSplitVolume(
+                    operation.objectIndex, operation.volumeIndex, configuredArrangeExtruderCount(),
+                ) > 0
+                is ModelOperation.DuplicateObject -> native.nativeDuplicateObject(operation.objectIndex) >= 0
+                is ModelOperation.DeleteObject -> native.nativeDeleteObject(operation.objectIndex)
+            }
+            if (!applied) {
+                Log.w("SlicerVM", "F100: couldn't replay $operation")
+                break
+            }
+            replayed++
+        }
+        return replayed
+    }
+
+    private suspend fun restoreStructuralOperations(operations: List<ModelOperation>) {
+        if (operations.isEmpty()) return
+        val replayed = NativeLibrary.previewMutex.withLock { replayStructuralOperations(operations) }
+        if (replayed != operations.size) {
+            _toastEvents.tryEmit("Some model edits couldn't be restored")
+        }
+        _modelOperations.value = operations.take(replayed)
+        _objectBoundingBoxes.value = runCatching { native.getObjectBoundingBoxes() }
+            .getOrDefault(floatArrayOf())
+        _loadTimeObjectBoundingBoxes.value = _objectBoundingBoxes.value.copyOf()
+        hasMultipleDistinctObjectsVar = native.nativeGetObjectCount() > 1
     }
 
     /**
@@ -1687,7 +1948,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // mirror the slice-time decision (resolvePrimeTower) rather than relying on
             // customWipeTowerPos being set, which it isn't after a manual prime-tower
             // toggle. Otherwise the packer could place an object over the printed tower.
-            val slotCount = (_colorMapping.value?.distinct()?.size ?: 1).coerceIn(1, 4)
+            val slotCount = (_colorMapping.value?.distinct()?.size ?: 1)
+                .coerceIn(1, activePhysicalSlotCount())
             val towerActive = ov.resolvePrimeTower(slotCount, cfg.wipeTowerEnabled)
             // Tower stays pinned: pass its current position back unchanged.
             val towerPos = customWipeTowerPos ?: (cfg.wipeTowerX to cfg.wipeTowerY)
@@ -1701,7 +1963,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val incoming = customObjectPositions ?: getPlacementPositions()
             val (bedSizeX, bedSizeY) = activeBedDimensions()
             val result = com.u1.slicer.model.CopyArrangeCalculator.autoArrange(
-                boxes, reserved, incoming, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                boxes, reserved, incoming, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
             )
 
             applyPlacementPositions(result.positions, towerPos)
@@ -1882,8 +2144,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     // Extruder slot config (from printer page, used for color mapping dialog)
     // F78: read from active printer record so multi-printer slot edits always reflect the correct printer.
-    val extruderPresets: StateFlow<List<ExtruderPreset>> = printersRepo.activePrinter
-        .map { it?.extruderPresets ?: com.u1.slicer.data.defaultExtruderPresets() }
+    val extruderPresets: StateFlow<List<ExtruderPreset>> = combine(
+        printersRepo.activePrinter,
+        activeMachineProfile,
+    ) { printer, profile ->
+        val slotCount = profile.extruderCount.coerceIn(1, 4)
+        when {
+            printer == null -> com.u1.slicer.data.defaultExtruderPresets(slotCount)
+            printer.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN -> printer.extruderPresets
+            printer.extruderPresets.map { it.index }.toSet() == (0 until slotCount).toSet() ->
+                printer.extruderPresets
+            else -> com.u1.slicer.data.parseExtruderPresets(
+                com.u1.slicer.data.serializeExtruderPresets(printer.extruderPresets),
+                slotCount,
+            )
+        }
+    }
         .stateIn(viewModelScope, SharingStarted.Eagerly, com.u1.slicer.data.defaultExtruderPresets())
 
     // F87: imported process profiles + currently active selection. The repository owns the
@@ -2079,12 +2355,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         mixedFilamentManager.libraryMixes,
         extruderPresets,
         _perVolumeExtruders,
-    ) { mfInfo, _, _, presets, perVolume ->
+        _canonicalColourRemaps,
+    ) { args ->
+        val mfInfo = args[0] as com.u1.slicer.bambu.ThreeMfInfo?
+        val presets = args[3] as List<ExtruderPreset>
+        val perVolume = args[4] as Map<String, Int>
+        val f99Remaps = args[5] as List<CanonicalColourRemap>
         val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
         // Case 2: object assigned to a mix (1-based mix id > numPhysical). Mirrors the
         // slice-path `anyMixAssigned` gate so preview and G-code agree on when a mix is live.
         val objectAssignedMix = perVolume.values.any { it > numPhysical }
         val physicalCount = mfInfo?.fullSpectrumPhysicalCount
+            ?: numPhysical.takeIf { f99Remaps.isNotEmpty() }
             ?: (numPhysical.takeIf { objectAssignedMix } ?: return@combine emptyList())
         // B142 (2026-06-10): physical palette source must be the PRINTER SLOT PRESETS —
         // mixes blend physical extruders, so the blend must reflect the loaded filaments.
@@ -2216,6 +2498,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _meshSourceExtruders0Based,
         _activeExtruderColors,
         _perVolumeExtruders,
+        _canonicalColourRemaps,
     ) { args ->
         val canonical = args[0] as com.u1.slicer.data.CanonicalFilamentList?
         val overrides = args[1] as Map<Int, FilamentOverride>
@@ -2225,6 +2508,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val meshSourceExtruders = args[5] as List<Int>
         val slotColors = args[6] as List<String>
         val perVolume = args[7] as Map<String, Int>
+        val f99Remaps = args[8] as List<CanonicalColourRemap>
 
         // ── Bug A (2026-06-07) — object/part assigned to a mix on a NON-canonical model ──
         // A plain STL (or any model with no canonical filament list) has no per-file palette,
@@ -2255,6 +2539,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val fullPalette = if (overrides.isEmpty()) list.filaments.map { it.color }
         else list.filaments.map { entry ->
             overrides[entry.fileIndex]?.color ?: entry.color
+        }
+
+        if (f99Remaps.isNotEmpty()) {
+            // The Prepare mesh is still the unmodified source model. Its paint states
+            // address canonical file indices, so expose a canonical-shaped palette whose
+            // entries already carry their chosen physical-slot or mix-blend colour. The
+            // staged slice artefact itself uses physical/mix state ids and the G-code view
+            // switches to its physical palette through _sliceMixToolSpace.
+            val remapPhysicalCount = if (
+                f99Remaps.any { it.destination is CanonicalColourDestination.Mix }
+            ) {
+                com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+            } else {
+                activePhysicalSlotCount()
+            }
+            val resolved = resolveCanonicalColourRemap(
+                canonicalSize = list.size,
+                remaps = f99Remaps,
+                projectMixes = mixedFilamentManager.projectMixes.value,
+                libraryMixes = mixedFilamentManager.libraryMixes.value,
+                physicalCount = remapPhysicalCount,
+            ) ?: return@combine fullPalette
+            return@combine list.filaments.map { entry ->
+                val state = resolved[entry.fileIndex] ?: return@map entry.color
+                when {
+                    state in 1..numPhysical -> slotColors.getOrNull(state - 1)
+                    else -> mixColors.getOrNull(state - numPhysical - 1)
+                }?.takeIf { it.isNotBlank() } ?: entry.color
+            }
         }
 
         // Phase 2 (2026-04-28, post-adversarial-review) — sparse non-MMU
@@ -2323,6 +2636,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides
         .stateIn(viewModelScope, SharingStarted.Eagerly, SlicingOverrides())
 
+    // F101: variable layers are a ModelObject profile, so this is project/session
+    // state rather than a global profile override.
+    private val _adaptiveLayerHeight = MutableStateFlow(AdaptiveLayerHeightState())
+    val adaptiveLayerHeight: StateFlow<AdaptiveLayerHeightState> = _adaptiveLayerHeight.asStateFlow()
+    private val _adaptiveLayerHeightRange = MutableStateFlow<FloatArray?>(null)
+    val adaptiveLayerHeightRange: StateFlow<FloatArray?> = _adaptiveLayerHeightRange.asStateFlow()
+
     // Build plate type — determines bed temp preset per filament material
     val plateType: StateFlow<PlateType> = settingsRepo.plateType
         .stateIn(viewModelScope, SharingStarted.Eagerly, PlateType.DEFAULT)
@@ -2362,11 +2682,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val aiNamingEnabled: StateFlow<Boolean> = settingsRepo.aiNamingEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    val bambuBetaEnabled: StateFlow<Boolean> = settingsRepo.bambuBetaEnabled
+    val experimentalPrinterSupportEnabled: StateFlow<Boolean> =
+        settingsRepo.experimentalPrinterSupportEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    fun setBambuBetaEnabled(enabled: Boolean) {
-        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveBambuBetaEnabled(enabled) }
+    fun saveExperimentalPrinterSupportEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.saveExperimentalPrinterSupportEnabled(enabled)
+        }
     }
 
     fun saveAiNamingEnabled(enabled: Boolean) {
@@ -2378,7 +2701,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      *  propagates back to the printer-side filament list (and shows up everywhere — Prepare
      *  filaments row, Map dialog, recolour preview). */
     fun setSlotColor(slotIndex: Int, hex: String) {
-        if (slotIndex !in 0..3) return
+        if (slotIndex !in 0 until activePhysicalSlotCount()) return
         val cleaned = if (hex.startsWith("#")) hex else "#$hex"
         viewModelScope.launch(Dispatchers.IO) {
             // F78: write through PrintersRepository so the active printer's preset record is updated.
@@ -2416,7 +2739,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Apply a library entry's colour + material to a physical slot (no profile link). */
     fun applyLibraryPick(slotIndex: Int, entry: FilamentLibraryEntry) {
-        if (slotIndex !in 0..3) return
+        if (slotIndex !in 0 until activePhysicalSlotCount()) return
         viewModelScope.launch(Dispatchers.IO) {
             updateSlotPreset(slotIndex) { existing ->
                 existing.copy(
@@ -2432,7 +2755,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Apply a library entry AND upsert a linked FilamentProfile for the slot. */
     fun importLibraryProfileForSlot(slotIndex: Int, entry: FilamentLibraryEntry) {
-        if (slotIndex !in 0..3) return
+        if (slotIndex !in 0 until activePhysicalSlotCount()) return
         viewModelScope.launch(Dispatchers.IO) {
             val id = upsertLibraryProfile(filamentDao, entry)
             updateSlotPreset(slotIndex) { slot ->
@@ -2777,7 +3100,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val ov = if (firstFileIdx >= 0) overrides[firstFileIdx] else null
             if (ov?.color == null) preset else preset.copy(color = ov.color)
         }
-        val refreshed = buildPreviewSlotColors(effectivePresets, usedSlots)
+        val refreshed = buildPreviewSlotColors(
+            effectivePresets,
+            usedSlots,
+            activePhysicalSlotCount(),
+        )
         if (refreshed != _activeExtruderColors.value) {
             _activeExtruderColors.value = refreshed
             Log.i("SlicerVM", "Refreshed mapped preview slot colors from presets: used=$usedSlots colors=$refreshed")
@@ -3297,10 +3624,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val combinedName = "combined_${System.currentTimeMillis()}.stl"
                 val combinedFile = File(workspaceDir, combinedName)
-                val result = com.u1.slicer.model.MultiStlCombiner.combine(copiedFiles, combinedFile)
+                val (bedSizeX, bedSizeY) = activeBedDimensions()
+                val result = com.u1.slicer.model.MultiStlCombiner.combine(
+                    copiedFiles,
+                    combinedFile,
+                    bedSizeX,
+                    bedSizeY,
+                )
                 if (result == null) {
                     _state.value = SlicerState.Error(
-                        "None of the selected STL files could be placed on the 270 mm bed."
+                        "None of the selected STL files could be placed on the " +
+                            "${bedSizeX.toInt()}\u00d7${bedSizeY.toInt()} mm bed."
                     )
                     return@launch
                 }
@@ -3488,11 +3822,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val (bedSizeX, bedSizeY) = activeBedDimensions()
             val positions = if (existingPos != null) {
                 com.u1.slicer.model.CopyArrangeCalculator.placeAdditionalObject(
-                    existingPos, boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                    existingPos, boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                 )
             } else {
                 com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(
-                    boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                    boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                 )
             }
             native.setObjectPositions(positions)
@@ -3741,6 +4075,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
         _duplicateOps.value = emptyList()
+        _modelOperations.value = emptyList()
         // Always extract from the full processed multi-plate file so that switching plates
         // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
         // _multiPlateSourceFile is set once on load and never overwritten (B83 fix).
@@ -4075,9 +4410,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     //   - no closest-colour remap scrambles the painted state→filament identity
                     //     (which would happen if two physical slots shared a colour and
                     //     ensureMultiSlotMapping redistributed them).
-                    val presets = printersRepo.activePrinter.first()?.extruderPresets
-                        ?: com.u1.slicer.data.defaultExtruderPresets()
-                    val slotCount = fullSpectrumPhysical.coerceIn(1, 4)
+                    val profileSlotCount = activePhysicalSlotCount()
+                    val presets = extruderPresets.value.ifEmpty {
+                        com.u1.slicer.data.defaultExtruderPresets(profileSlotCount)
+                    }
+                    val slotCount = fullSpectrumPhysical.coerceIn(1, profileSlotCount)
                     val identityMapping = (0 until slotCount).toList()
                     _colorMapping.value = identityMapping
                     _layerToolOnly.value = false
@@ -4114,8 +4451,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // correct per-printer presets are used. printersRepo.activePrinter.first() gives
                     // the actual stored presets; extruderPresets.value may still be
                     // defaultExtruderPresets() if DataStore hasn't emitted yet. (B86)
-                    val presets = printersRepo.activePrinter.first()?.extruderPresets
-                        ?: com.u1.slicer.data.defaultExtruderPresets()
+                    val profileSlotCount = activePhysicalSlotCount()
+                    val presets = extruderPresets.value.ifEmpty {
+                        com.u1.slicer.data.defaultExtruderPresets(profileSlotCount)
+                    }
                     val rawMapping = mfInfo.detectedColors.map { modelColor ->
                         com.u1.slicer.ui.findClosestExtruder(modelColor, presets)?.index ?: 0
                     }
@@ -4123,7 +4462,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // slots, distribute across the available slots so the initial slice preview
                     // stays visually distinct until the user overrides it.
                     val initialMapping = com.u1.slicer.ui.ensureMultiSlotMapping(
-                        rawMapping, mfInfo.detectedColors.size
+                        rawMapping,
+                        mfInfo.detectedColors.size,
+                        profileSlotCount,
                     )
 
                     if (layerToolOnly) {
@@ -4133,7 +4474,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // multi-colour, but we do not force a multi-extruder slice configuration.
                         _colorMapping.value = initialMapping
                         val previewSlots = initialMapping.distinct().sorted()
-                        _activeExtruderColors.value = buildPreviewSlotColors(presets, previewSlots)
+                        _activeExtruderColors.value = buildPreviewSlotColors(
+                            presets,
+                            previewSlots,
+                            profileSlotCount,
+                        )
                         _selectedExtruder.value = 0
                         resetToolRemapState()
                         customWipeTowerPos = null
@@ -4150,7 +4495,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // Compact extruder count: use the smaller of detected colors and
                         // physical extruders (Snapmaker U1 has 4).  Compact mode slices as
                         // N-extruder and G-code post-processing remaps T-commands to physical slots.
-                        val slotCount = mfInfo.detectedExtruderCount.coerceIn(1, 4)
+                        val slotCount = mfInfo.detectedExtruderCount.coerceIn(1, profileSlotCount)
                         // Compute tower position that avoids the model
                         val (bedSizeX, bedSizeY) = activeBedDimensions()
                         val positions = CopyArrangeCalculator.calculate(
@@ -4195,8 +4540,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                     // Single-color model: set E1's color from current printer slot config so
                     // the 3D model preview shows the correct filament color instead of default orange.
-                    val colors = MutableList(4) { "" }
-                    presets.forEach { preset -> if (preset.index in 0..3) colors[preset.index] = preset.color }
+                    val profileSlotCount = activePhysicalSlotCount()
+                    val colors = MutableList(profileSlotCount) { "" }
+                    presets.forEach { preset ->
+                        if (preset.index in 0 until profileSlotCount) colors[preset.index] = preset.color
+                    }
                     _activeExtruderColors.value = colors
                     // Persist the reset so wipeTowerEnabled=false survives across sessions (B24 fix).
                     saveConfig()
@@ -4238,11 +4586,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         filaments: List<FilamentProfile>
     ) {
         _showMultiColorDialog.value = false
-        _colorMapping.value = modelColorToExtruder
-        val usedSlots = modelColorToExtruder.distinct().sorted()
-        // Compact extruder count: number of unique slots used, capped at 4 (U1 max).
+        val profileSlotCount = activePhysicalSlotCount()
+        val boundedMapping = modelColorToExtruder.map { it.coerceIn(0, profileSlotCount - 1) }
+        _colorMapping.value = boundedMapping
+        val usedSlots = boundedMapping.distinct().sorted()
+        // Compact extruder count: number of unique slots used, capped by the active profile.
         // G-code post-processing remaps T-commands to physical slots when non-identity.
-        val slotCount = usedSlots.size.coerceIn(1, 4)
+        val slotCount = usedSlots.size.coerceIn(1, profileSlotCount)
         // SEMM (paint-based) models: extruderRemap in model_settings.config only affects
         // B48 fix: SEMM models must NOT remap G-code tool indices.  The slicer maps
         // model colours → physical extruders internally via multi_material_segmentation.
@@ -4254,8 +4604,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // T0-T3 are already physical slot indices, no remap needed.
         // Normal painted models (<= 4 model colours) may have sparse slot indices
         // (e.g. [0,2,3]) that need compacting to sequential T0,T1,T2.
-        val distinctPhysicalSlots = modelColorToExtruder.distinct().size
-        val isH2cStyle = hasPaintData && distinctPhysicalSlots >= 4 && modelColorToExtruder.size > distinctPhysicalSlots
+        val distinctPhysicalSlots = boundedMapping.distinct().size
+        val isH2cStyle = hasPaintData &&
+            distinctPhysicalSlots >= com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS &&
+            boundedMapping.size > distinctPhysicalSlots
         toolRemapSlots = if (isH2cStyle) {
             null  // H2C: slicer already produces physical tool indices
         } else if (hasPaintData) {
@@ -4291,7 +4643,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 objPos, mi.sizeX, mi.sizeY, _config.value.wipeTowerWidth,
                 bedSizeX = bedSizeX, bedSizeY = bedSizeY,
             )
-            val filamentLabel = resolveFilamentTypeLabelFromMapping(modelColorToExtruder, extruderPresets)
+            val filamentLabel = resolveFilamentTypeLabelFromMapping(boundedMapping, extruderPresets)
             _config.value = _config.value.copy(
                 extruderCount = slotCount,
                 extruderTemps = temps,
@@ -4305,7 +4657,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             customWipeTowerPos = towerPos
             Log.i("SlicerVM", "Auto-placed wipe tower at (${towerPos.first}, ${towerPos.second})")
         } else {
-            val filamentLabel = resolveFilamentTypeLabelFromMapping(modelColorToExtruder, extruderPresets)
+            val filamentLabel = resolveFilamentTypeLabelFromMapping(boundedMapping, extruderPresets)
             _config.value = _config.value.copy(
                 extruderCount = slotCount,
                 extruderTemps = temps,
@@ -4321,13 +4673,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Prepare preview should match sliced Preview, so both must color from the
         // final extruder slot palette rather than drifting back toward detected
         // model colors.
-        val fullColors = buildPreviewSlotColors(extruderPresets, usedSlots)
+        val fullColors = buildPreviewSlotColors(extruderPresets, usedSlots, profileSlotCount)
         _activeExtruderColors.value = fullColors
         Log.i("SlicerVM", "Applied color mapping: $slotCount extruders used=${usedSlots}, remap=${toolRemapSlots}, temps=${temps.toList()}, colors=$fullColors")
         diagnostics.recordEvent(
             "color_mapping_applied",
             mapOf(
-                "colorMapping" to modelColorToExtruder,
+                "colorMapping" to boundedMapping,
                 "usedSlots" to usedSlots,
                 "extCount" to slotCount,
                 "toolRemapSlots" to toolRemapSlots,
@@ -4348,6 +4700,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * emits the correct T-command for the chosen physical extruder slot.
      */
     fun setSelectedExtruder(index: Int) {
+        if (index !in 0 until activePhysicalSlotCount()) return
         _selectedExtruder.value = index
         updateSingleColorExtruder(index)
     }
@@ -4373,7 +4726,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val presets = extruderPresets.value
         val color = presets.firstOrNull { it.index == index }?.color ?: ""
         val resolvedColor = color.ifBlank { ExtruderPreset.DEFAULT_COLORS[index] }
-        val colors = MutableList(4) { "" }
+        val colors = MutableList(activePhysicalSlotCount()) { "" }
         colors[0] = resolvedColor  // Put at index 0 since all mesh triangles have extruder index 0
         _activeExtruderColors.value = colors
 
@@ -4418,7 +4771,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val rawMapping = colors.map { modelColor ->
             com.u1.slicer.ui.findClosestExtruder(modelColor, extruderPresets)?.index ?: 0
         }
-        val mapping = com.u1.slicer.ui.ensureMultiSlotMapping(rawMapping, colors.size)
+        val mapping = com.u1.slicer.ui.ensureMultiSlotMapping(
+            rawMapping,
+            colors.size,
+            activePhysicalSlotCount(),
+        )
         applyMultiColorAssignments(mapping, extruderPresets, filaments)
         Log.i("SlicerVM", "Re-auto-mapped colors: mapping=$mapping")
     }
@@ -4569,7 +4926,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun activeBedDimensions(): Pair<Float, Float> {
-        val targetConfig = resolveTargetedSliceConfig(effectiveSliceTarget.value, _config.value)
+        val targetConfig = resolveActiveMachineSliceConfig(
+            effectiveSliceTarget.value, activeMachineProfile.value, _config.value, selectedGenericProfile(),
+        )
         return targetConfig.bedSizeX to targetConfig.bedSizeY
     }
 
@@ -4586,7 +4945,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (hasMultipleDistinctObjectsVar && _objectBoundingBoxes.value.size >= 3) {
             val boxes = _objectBoundingBoxes.value
             val positions = CopyArrangeCalculator.buildMultiObjectPositions(
-                boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
             )
             val tower = if (cfg.wipeTowerEnabled) {
                 CopyArrangeCalculator.computeWipeTowerPositionForObjects(
@@ -4666,6 +5025,79 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setAdaptiveLayerHeight(state: AdaptiveLayerHeightState) {
+        viewModelScope.launch(Dispatchers.IO) {
+            applyAdaptiveLayerHeight(state)
+        }
+    }
+
+    private fun adaptiveLayerBlockReason(): String? {
+        val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+        val hasMix = decideSliceMixToolSpace(
+            numPhysical = numPhysical,
+            canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical,
+            hasActiveMixRows = mixedFilamentManager.activeOrder(numPhysical).isNotEmpty(),
+            objectMixAssigned = _perVolumeExtruders.value.values.any { it > maxOf(numPhysical, _canonicalFilamentList.value?.size ?: 0) },
+            paintedMixAssigned = ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0 ||
+                _canonicalColourRemaps.value.any { it.destination is CanonicalColourDestination.Mix },
+            canonicalColourRemapActive = _canonicalColourRemaps.value.isNotEmpty(),
+        ).anyMixAssigned
+        val usedToolCount = if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) {
+            runCatching { u1ToolUsage().nativeTools.size }.getOrElse { return it.message ?: "Choose valid tool assignments." }
+        } else _config.value.extruderCount
+        val overrides = slicingOverrides.value
+        val effective = overrides.resolveInto(_config.value)
+        val source = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+        val supports = if (overrides.supports.mode == OverrideMode.USE_FILE) {
+            source["enable_support"]?.toString()?.let { it == "1" || it == "true" } ?: effective.supportEnabled
+        } else effective.supportEnabled
+        val type = if (overrides.supportType.mode == OverrideMode.USE_FILE) {
+            source["support_type"]?.toString() ?: effective.supportType
+        } else effective.supportType
+        val style = source["support_style"]?.toString() ?: "default"
+        return adaptiveLayerCompatibilityError(usedToolCount, hasMix,
+            supports && type.startsWith("tree") && style in setOf("default", "organic"))
+    }
+
+    /** Applies project-scoped variable-layer state synchronously for UI and session replay. */
+    private suspend fun applyAdaptiveLayerHeight(state: AdaptiveLayerHeightState): Boolean {
+        if (state.mode == AdaptiveLayerHeightState.Mode.ADAPTIVE) {
+            adaptiveLayerBlockReason()?.let { _toastEvents.tryEmit(it); return false }
+        }
+        val range = NativeLibrary.previewMutex.withLock {
+            when (state.mode) {
+                AdaptiveLayerHeightState.Mode.USE_FILE -> native.nativeGetVariableLayerHeightRange()
+                AdaptiveLayerHeightState.Mode.OFF -> {
+                    native.nativeClearVariableLayerHeights()
+                    null
+                }
+                AdaptiveLayerHeightState.Mode.ADAPTIVE -> state.preset.let { preset ->
+                    native.nativeSetAdaptiveLayerHeight(preset.quality, preset.smoothingRadius, preset.keepMinimum,
+                        if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) u1DiameterForSlice() else 0f)
+                }
+            }
+        }
+        _adaptiveLayerHeight.value = state
+        _adaptiveLayerHeightRange.value = range
+        _sliceStale.value = true
+        markSessionDirty()
+        return state.mode != AdaptiveLayerHeightState.Mode.ADAPTIVE || range != null
+    }
+
+    private fun reapplyAdaptiveLayerHeightForSlice(): Boolean {
+        val state = _adaptiveLayerHeight.value
+        if (state.mode != AdaptiveLayerHeightState.Mode.ADAPTIVE) return true
+        adaptiveLayerBlockReason()?.let {
+            _state.value = SlicerState.Error(it)
+            return false
+        }
+        val preset = state.preset
+        val range = native.nativeSetAdaptiveLayerHeight(preset.quality, preset.smoothingRadius, preset.keepMinimum,
+                        if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) u1DiameterForSlice() else 0f)
+        _adaptiveLayerHeightRange.value = range
+        return range != null
+    }
+
     /**
      * Toggle the prime tower on/off from the Prepare screen switch.
      *
@@ -4710,7 +5142,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (!isCurrentModelLoad(loadGeneration)) return null
         recoveryOrigInfo = origInfo
 
-        val sourceConfig = if (origInfo.isBambu) {
+        val sourceConfig = if (origInfo.isBambu || effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
             ZipFile(sourceFile).use { profileEmbedder.parseSourceConfig(it) }
         } else {
             null
@@ -4812,9 +5244,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         outputDir: java.io.File,
         plateId: Int? = null,
         canonicalForEmbed: com.u1.slicer.data.CanonicalFilamentList? = null,
+        nozzleDiameter: Float? = null,
     ): java.io.File {
         val embedSetupT0 = System.currentTimeMillis()
-        val cfg = _config.value
+        val cfg = nozzleDiameter?.let { U1NozzlePolicy.baseConfig(_config.value, it) } ?: _config.value
+        if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
+            val machine = requireNotNull(selectedGenericProfile()) { "Import a Klipper machine profile before slicing" }
+            require(!info.hasLayerToolChanges && info.usedExtruderIndices.all { it <= machine.extruderCount }) {
+                "The model references tools not available on the selected machine."
+            }
+            require(machine.extruderCount > 1 || (!info.hasPaintData && !info.hasMultiExtruderAssignments)) {
+                "Single-nozzle machines require an unpainted single-filament model."
+            }
+            val genericOverrides = buildExplicitBambuProfileOverrides(
+                buildProfileOverrides(cfg, machine.extruderCount, hasSourceConfig = _sourceConfig.value != null),
+                slicingOverrides.value,
+                hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+            )
+            val sourceTuning = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+            val filamentTuning = genericFilamentTuning(machine.applyTo(cfg, effectiveSliceTarget.value))
+            return profileEmbedder.embed(file, machine.compose(sourceTuning, filamentTuning + genericOverrides), outputDir, info, plateId = plateId)
+        }
         val slotCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
         val colorMapping = _colorMapping.value
@@ -4855,7 +5305,42 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             if (ov125.supportFilament.mode == OverrideMode.OVERRIDE) ov125.supportFilament.value ?: 0 else 0,
             if (ov125.supportInterfaceFilament.mode == OverrideMode.OVERRIDE) ov125.supportInterfaceFilament.value ?: 0 else 0
         )
-        val targetCount = maxOf(computedTarget, canonicalSize, maxSupportSlot)
+        val assignedToolCount = requiredAssignedToolCount(
+            _perVolumeExtruders.value.values, canonicalSize, activePhysicalSlotCount())
+        var targetCount = maxOf(computedTarget, canonicalSize, maxSupportSlot, assignedToolCount)
+        val f99Remaps = _canonicalColourRemaps.value
+        val f99UsesMix = f99Remaps.any { it.destination is CanonicalColourDestination.Mix }
+        val remapPhysicalCount = if (f99UsesMix) {
+            com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+        } else {
+            activePhysicalSlotCount()
+        }
+        val resolvedF99 = if (f99Remaps.isNotEmpty()) {
+            val canonical = canonicalList ?: throw IllegalStateException(
+                "File-colour remapping requires the imported 3MF's canonical colour list."
+            )
+            resolveCanonicalColourRemap(
+                canonicalSize = canonical.size,
+                remaps = f99Remaps,
+                projectMixes = mixedFilamentManager.projectMixes.value,
+                libraryMixes = mixedFilamentManager.libraryMixes.value,
+                physicalCount = remapPhysicalCount,
+            ) ?: throw IllegalStateException(
+                "A saved file-colour remap refers to an unavailable slot or ColorMix recipe. Choose valid destinations before slicing."
+            )
+        } else null
+        // Any virtual mix means all source state ids must be lowered into the shared
+        // 4-physical-tool space before Orca sees the model.
+        val embedInput = if (resolvedF99 != null) {
+            targetCount = remapPhysicalCount
+            val staged = java.io.File(outputDir, "f99_${file.name}")
+            ThreeMfColourRemapper.remap(
+                input = file,
+                output = staged,
+                sourceStateToToolState = resolvedF99.mapKeys { it.key + 1 },
+                sourceFileIndexToToolState = resolvedF99,
+            )
+        } else file
         // Phase 2 (S-Buttons mesh-diversity fix): the embed-time extruder remap is
         // disabled because the post-slice tool remap is also disabled
         // (`skipSliceTimeRemap = true` below) and the print-time slot mapping is
@@ -4923,7 +5408,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val buildProfileOverridesMs = System.currentTimeMillis() - buildProfileOverridesT0
         val buildConfigT0 = System.currentTimeMillis()
         val sliceTarget = effectiveSliceTarget.value
-        val bambuComposeResult = if (sliceTarget != SlicerTarget.SnapmakerU1) {
+        val bambuComposeResult = if (sliceTarget.family == SliceTargetFamily.BAMBU) {
             val targeted = resolveTargetedSliceConfig(sliceTarget, cfg)
             // Do not leak the active U1/process profile or automatically selected
             // slot-library values into Bambu precedence layer 4. Only controls
@@ -4955,7 +5440,29 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 overrides = profileOverrides,
                 targetExtruderCount = targetCount,
                 processProfileKeys = activeProcessKeys,
+                machineProfile = activeMachineProfile.value.takeIf { sliceTarget == SlicerTarget.SnapmakerU1 },
+                nozzleDiameter = nozzleDiameter,
             )
+        if (resolvedF99 != null) {
+            val physicalPresets = extruderPresets.value.sortedBy { it.index }
+            val physicalColours = (0 until remapPhysicalCount).map { slot ->
+                physicalPresets.getOrNull(slot)?.color?.takeIf { it.isNotBlank() } ?: "#FFFFFF"
+            }
+            embeddedConfig["extruder_count"] = remapPhysicalCount.toString()
+            // After staging, state ids 1..4 are U1 E1..E4, never the source
+            // file palette. Keep every physical per-filament palette key in
+            // that same order so Orca, the preview, and export agree.
+            embeddedConfig["filament_colour"] = physicalColours
+            embeddedConfig["extruder_colour"] = physicalColours
+            embeddedConfig["filament_type"] = physicalPresets.take(remapPhysicalCount).map {
+                if (it.materialType.isNotBlank()) it.materialType else "PLA"
+            }
+            if (f99UsesMix) {
+                embeddedConfig["full_spectrum_physical_count"] = "4"
+                embeddedConfig["mixed_filament_definitions"] = mixedFilamentManager.serialize(4)
+                embeddedConfig["enable_prime_tower"] = "1"
+            }
+        }
         if (bambuComposeResult != null) {
             diagnostics.recordEvent(
                 "bambu_config_provenance",
@@ -4969,7 +5476,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "filamentLibrarySettingsMs=${filamentLibrarySettingsMs} buildProfileOverridesMs=${buildProfileOverridesMs} " +
                 "buildConfigMs=${buildConfigMs} targetCount=$targetCount sourceConfig=${sourceConfig != null}"
         )
-        return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
+        return profileEmbedder.embed(embedInput, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
+    }
+
+    private fun genericFilamentTuning(cfg: SliceConfig): Map<String, Any> {
+        if (cfg.extruderCount > 1) {
+            return buildProfileOverrides(cfg, cfg.extruderCount) +
+                buildFilamentLibrarySettings(cfg.extruderCount, null, extruderPresets.value, filaments.value)
+        }
+        val preset = extruderPresets.value.firstOrNull { it.index == 0 }
+        val profile = preset?.filamentProfileId?.let { id -> filaments.value.firstOrNull { it.id == id } }
+        return com.u1.slicer.slice.buildGenericFilamentSettings(
+            resolvedProfile = buildProfileOverrides(cfg, 1, usedSlots = listOf(0)),
+            librarySettings = buildFilamentLibrarySettings(1, listOf(0), extruderPresets.value, filaments.value),
+            libraryBedTemp = profile?.bedTemp,
+            useLibraryBedTemp = slicingOverrides.value.bedTemp.mode == OverrideMode.USE_FILE,
+            sourceSettings = _sourceConfig.value.orEmpty(),
+            useSourceFilament = profile == null && _filamentOverrides.value[0]?.materialType == null,
+        )
     }
 
     private fun buildProfileOverrides(
@@ -5411,13 +5935,86 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Prepare observes the same tool assignments and nozzle baseline used at slice time. */
+    val prepareConfig: StateFlow<Result<SliceConfig>> = combine(listOf<Flow<Any?>>(
+        config, slicingOverrides, activePrinterForSlicing, effectiveSliceTarget, activeProcessProfile,
+        _threeMfInfo, _perVolumeExtruders, _meshSourceExtruders0Based, _selectedExtruder,
+        _colorMapping, _canonicalFilamentList, _canonicalColourRemaps, _mixRecipeSource,
+        _importedMixRecipeState, mixedFilamentManager.projectMixes, mixedFilamentManager.libraryMixes,
+    )) {
+        runCatching {
+            if (effectiveSliceTarget.value != SlicerTarget.SnapmakerU1) return@runCatching _config.value
+            val diameter = u1DiameterForSlice()
+            val base = U1NozzlePolicy.baseConfig(_config.value, diameter)
+            val overrides = slicingOverrides.value
+            val processHeight = if (sourceModelFile != null && overrides.layerHeight.mode == OverrideMode.USE_FILE) {
+                activeProcessProfile.value?.keys?.get("layer_height")?.toString()?.toFloatOrNull()
+            } else null
+            overrides.resolveInto(base.copy(layerHeight = processHeight ?: base.layerHeight))
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, Result.success(SliceConfig()))
+
+    private data class U1ToolUsage(val nativeTools: Set<Int>, val physicalSlots: Set<Int>)
+
+    private fun u1DiameterForSlice(): Float {
+        val hardware = activePrinterForSlicing.value?.u1Nozzles ?: U1NozzleConfiguration()
+        hardware.diametersMm.distinct().singleOrNull()?.let { return it }
+        return resolveU1SliceDiameter(hardware, u1ToolUsage().physicalSlots)
+    }
+
+    private fun u1ToolUsage(): U1ToolUsage {
+        val info = _threeMfInfo.value ?: sourceModelInfo
+        val sourceTools = if (_perVolumeExtruders.value.isNotEmpty() && info?.hasPaintData != true) {
+            _meshSourceExtruders0Based.value.map { it + 1 }
+        } else info?.usedExtruderIndices.orEmpty().filter { it > 0 }
+        val tools = sourceTools.ifEmpty { listOf(1) }.toMutableSet()
+        val effective = slicingOverrides.value.resolveInto(_config.value)
+        val source = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+        val overrides = slicingOverrides.value
+        val supportsActive = if (overrides.supports.mode == OverrideMode.USE_FILE) {
+            source["enable_support"]?.toString()?.let { it == "1" || it == "true" } ?: effective.supportEnabled
+        } else effective.supportEnabled
+        if (supportsActive) {
+            val support = if (overrides.supportFilament.mode == OverrideMode.USE_FILE)
+                source["support_filament"]?.toString()?.toIntOrNull() ?: effective.supportFilament else effective.supportFilament
+            val interfaceTool = if (overrides.supportInterfaceFilament.mode == OverrideMode.USE_FILE)
+                source["support_interface_filament"]?.toString()?.toIntOrNull() ?: effective.supportInterfaceFilament else effective.supportInterfaceFilament
+            tools.addAll(listOf(support, interfaceTool).filter { it > 0 })
+        }
+        val recipe = resolveMixedFilamentDefinitionsForSlice(
+            _mixRecipeSource.value, _importedMixRecipeState.value, mixedFilamentManager, 4,
+        )
+        val mixes = parseMixedFilamentRecipe(recipe).rows
+        val remaps = _canonicalColourRemaps.value
+        val lowered = if (remaps.isNotEmpty()) resolveCanonicalColourRemap(
+            canonicalSize = _canonicalFilamentList.value?.size ?: 0,
+            remaps = remaps,
+            projectMixes = mixedFilamentManager.projectMixes.value,
+            libraryMixes = mixedFilamentManager.libraryMixes.value,
+        ) ?: error("Choose valid file-colour destinations before slicing.") else null
+        val mixSpace = lowered != null || _perVolumeExtruders.value.values.any { it > 4 } ||
+            (info?.fullSpectrumPhysicalCount ?: 0) > 0
+        val mixBase = if (lowered != null || (info?.fullSpectrumPhysicalCount ?: 0) > 0) 4 else
+            maxOf(4, _canonicalFilamentList.value?.size ?: 0)
+        val mapping = resolveExportMapping(GcodeToolSpace.CANONICAL)
+        val nativeTools = tools.map { lowered?.get(it - 1) ?: it }.toSet()
+        val physicalSlots = nativeTools.flatMap { loweredTool ->
+            if (mixSpace && loweredTool > mixBase) {
+                val row = mixes.getOrNull(loweredTool - mixBase - 1)
+                    ?: error("A selected ColorMix recipe is unavailable. Choose a valid mix before slicing.")
+                row.componentIds.map { it - 1 }
+            } else listOf(if (mixSpace) loweredTool - 1 else mapping?.getOrNull(loweredTool - 1) ?: loweredTool - 1)
+        }
+        return U1ToolUsage(nativeTools, physicalSlots.toSet())
+    }
+
     fun startSlicing() {
         if (!com.u1.slicer.slice.isLocalSliceAvailable(
                 activePrinter = activePrinterForSlicing.value,
             )
         ) {
             _state.value = SlicerState.Error(
-                "Local slicing is not yet available for this Bambu model. Use a project sliced for the active printer in Bambu Studio.",
+                "Local slicing is not available until a supported machine profile is selected or imported.",
             )
             return
         }
@@ -5471,6 +6068,38 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.w("SlicerVM", "Ignoring slice request because currentModelFile is null")
                     _state.value = SlicerState.Error("Model is not ready to slice yet")
                     return@launch
+                }
+                val printerForSlice = activePrinterForSlicing.value
+                val target = resolveDefaultSliceTarget(printerForSlice)
+                val u1NozzleDiameter = if (target == SlicerTarget.SnapmakerU1) u1DiameterForSlice() else null
+                val genericMachineForSlice = when (target) {
+                    SlicerTarget.ElegooCentauriCarbon -> GenericMachineProfile.centauriCarbon()
+                    SlicerTarget.GenericKlipper, SlicerTarget.GenericMarlin -> printerForSlice?.machineProfile
+                        ?: printerForSlice?.let(machineProfilesRepo::activeFor)?.let {
+                            GenericMachineProfile.fromJson(it.machineJson)
+                        }
+                    else -> null
+                }
+                val machineForSlice = printerForSlice?.let(machineProfilesRepo::activeFor)
+                    ?: machineProfilesRepo.builtInU1()
+                val genericSourceTuning = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+                val genericFilamentTuning = genericFilamentTuning(
+                    genericMachineForSlice?.applyTo(_config.value, target) ?: _config.value,
+                )
+                if (target.family == SliceTargetFamily.GENERIC) {
+                    requireNotNull(genericMachineForSlice) { "Import a Klipper machine profile before slicing" }
+                    val sourceInfo = _threeMfInfo.value ?: sourceModelInfo
+                    val physicalCount = genericMachineForSlice.extruderCount
+                    require(sourceInfo?.hasLayerToolChanges != true &&
+                        sourceInfo?.usedExtruderIndices?.all { it <= physicalCount } != false &&
+                        _perVolumeExtruders.value.values.all { it <= physicalCount } && _canonicalColourRemaps.value.isEmpty() &&
+                        (physicalCount > 1 || (sourceInfo?.hasPaintData != true && sourceInfo?.hasMultiExtruderAssignments != true))) {
+                        "The selected machine cannot print this model's paint, mix, or tool assignments."
+                    }
+                    require(slicingOverrides.value.supportFilament.value?.let { it <= physicalCount } != false &&
+                        slicingOverrides.value.supportInterfaceFilament.value?.let { it <= physicalCount } != false) {
+                        "The support filament is outside the selected machine's physical slots."
+                    }
                 }
                 LongOpService.start(context, "Slicing")
                 var maxPct = 0
@@ -5533,7 +6162,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // stripAssembleSection + stripUnreferencedConfigObjects).
                         val activePlateId = _currentPlateId.value
                         val reembedPlateId = activePlateId.takeIf { it > 0 }
-                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir(), plateId = reembedPlateId)
+                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir(), plateId = reembedPlateId, nozzleDiameter = u1NozzleDiameter)
                         // Acquire previewMutex before touching native model — prevents SIGSEGV
                         // when getPreparePreviewMesh is concurrently iterating model volumes
                         // on the preview coroutine while we clear+reload here.
@@ -5615,29 +6244,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         }
 
-                        // Step 2: replay any pending split-to-objects/parts ops.
-                        // The clearModel() + loadModel() above wiped the in-memory
-                        // post-split state; without replay, slicing would use the
-                        // original layout and the user's split would be lost.
-                        if (_splitObjectOps.value.isNotEmpty() || _splitVolumeOps.value.isNotEmpty()) {
-                            for (idx in _splitObjectOps.value) {
-                                native.nativeSplitObject(idx)
+                        // Step 2: replay structural edits in their exact action order.
+                        // A delete shifts all later indices, so separate lists cannot
+                        // safely reconstruct the user's model.
+                        val structuralOperations = structuralOperationsForReplay()
+                        if (structuralOperations.isNotEmpty()) {
+                            val replayed = NativeLibrary.previewMutex.withLock {
+                                replayStructuralOperations(structuralOperations)
                             }
-                            for (entry in _splitVolumeOps.value) {
-                                val parts = entry.split(":")
-                                if (parts.size == 2) {
-                                    val o = parts[0].toIntOrNull()
-                                    val v = parts[1].toIntOrNull()
-                                    if (o != null && v != null) native.nativeSplitVolume(o, v)
-                                }
+                            if (replayed != structuralOperations.size) {
+                                throw IllegalStateException("Couldn't replay all model edits before slicing")
                             }
-                            // Refresh bounding boxes after splits — the per-object
-                            // size cache feeds the renderer's drag clamps.
                             _objectBoundingBoxes.value = runCatching {
                                 native.getObjectBoundingBoxes()
                             }.getOrDefault(floatArrayOf())
-                            Log.i("SlicerVM", "F66: replayed ${_splitObjectOps.value.size} object split(s) " +
-                                "+ ${_splitVolumeOps.value.size} volume split(s) after re-embed")
+                            Log.i("SlicerVM", "F100: replayed $replayed structural operation(s) after re-embed")
                         }
 
                         // Step 3: replay per-volume extruder overrides. The
@@ -5651,13 +6272,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             canonicalCount = _canonicalFilamentList.value?.size ?: com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
                             hasActiveMixRows = mixedFilamentManager.activeOrder(com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).isNotEmpty(),
                             objectMixAssigned = _perVolumeExtruders.value.values.any { it > com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS },
-                            paintedMixAssigned = ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0,
+                            paintedMixAssigned = ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0 ||
+                                _canonicalColourRemaps.value.any { it.destination is CanonicalColourDestination.Mix },
+                            canonicalColourRemapActive = _canonicalColourRemaps.value.isNotEmpty(),
                         )
                         val isMixSpace = mixDecision.mixToolSpace
                         val hasPaintData = (_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.hasPaintData == true
 
                         var replayedCount = 0
-                        if (isMixSpace && !hasPaintData) {
+                        // F99 has already lowered source file states into U1's physical/mix
+                        // tool space in the staged 3MF. Re-applying the old canonical
+                        // colour mapping here mistakes virtual mix id 5 for source colour 5
+                        // and collapses it back to a physical tool, so leave those native
+                        // assignments intact. Explicit Parts-panel overrides still replay
+                        // through the branch below.
+                        if (shouldReplayCanonicalVolumeMapping(
+                                mixToolSpace = isMixSpace,
+                                hasPaintData = hasPaintData,
+                                canonicalColourRemapActive = _canonicalColourRemaps.value.isNotEmpty(),
+                            )) {
                             val canonicalCount = _canonicalFilamentList.value?.size ?: com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
                             val objectCount = native.nativeGetObjectCount()
                             for (o in 0 until objectCount) {
@@ -5718,30 +6351,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             Log.i("SlicerVM", "F66: replayed $replayedPoses per-object pose(s) after re-embed")
                         }
 
-                        // Step 5 (v2.10.12): replay per-object duplicates from
-                        // the Copies slider. Runs AFTER pose replay so dupes
-                        // copy the post-pose source state (Model::add_object's
-                        // deep-copy captures the source's instance transform —
-                        // including any user scale/rotation — at duplicate
-                        // time). Without this step, the slice path's
-                        // setObjectPositions(custom) at line ~4670 fails with
-                        // a count mismatch ("positions count N != object
-                        // count M") because customObjectPositions tracks the
-                        // dupes but the native model doesn't.
-                        if (_duplicateOps.value.isNotEmpty()) {
-                            var dupedCount = 0
-                            for (srcIdx in _duplicateOps.value) {
-                                val curCount = native.nativeGetObjectCount()
-                                if (srcIdx in 0 until curCount) {
-                                    if (native.nativeDuplicateObject(srcIdx) >= 0) dupedCount++
-                                }
-                            }
-                            _objectBoundingBoxes.value = runCatching {
-                                native.getObjectBoundingBoxes()
-                            }.getOrDefault(_objectBoundingBoxes.value)
-                            Log.i("SlicerVM", "v2.10.12: replayed $dupedCount of ${_duplicateOps.value.size} " +
-                                "duplicate op(s) after re-embed (objectCount=${native.nativeGetObjectCount()})")
-                        }
                     }
                 }
 
@@ -5772,14 +6381,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val copies = _copyCount.value
                 val custom = customObjectPositions
                 val mi = lastModelInfo
-                val target = effectiveSliceTarget.value
                 val artifactFilamentColours = extruderPresets.value
                     .sortedBy { it.index }
                     .map { it.color }
                     .ifEmpty { listOf("#FFFFFF") }
-                val targetMachineConfig = resolveTargetedSliceConfig(target, _config.value)
+                val targetMachineConfig = resolveActiveMachineSliceConfig(target, machineForSlice, _config.value, genericMachineForSlice)
                 val targetBedSizeX = targetMachineConfig.bedSizeX
                 val targetBedSizeY = targetMachineConfig.bedSizeY
+                if (target.family == SliceTargetFamily.GENERIC && mi != null && mi.sizeZ > targetMachineConfig.maxPrintHeight) {
+                    _state.value = SlicerState.Error("Model height (${mi.sizeZ.toInt()}mm) exceeds the selected machine's ${targetMachineConfig.maxPrintHeight.toInt()}mm printable height.")
+                    return@launch
+                }
 
                 // SAFETY CHECK: refuse to slice if model is larger than the bed.
                 // A combined bounding box > 270mm means objects from multiple plates were loaded,
@@ -5874,7 +6486,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // USE_FILE passthrough: base values from _config.value are used as-is.
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
-                val resolvedSliceConfig = resolveTargetedSliceConfig(target, ov.resolveInto(_config.value)).let { cfg ->
+                val u1Base = u1NozzleDiameter?.let { U1NozzlePolicy.baseConfig(_config.value, it) } ?: _config.value
+                val resolvedSliceConfig = resolveActiveMachineSliceConfig(target, machineForSlice, ov.resolveInto(u1Base), genericMachineForSlice).let { cfg ->
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
                     if (cfg.wipeTowerEnabled) {
@@ -5927,13 +6540,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val hasActiveMixRows = mixedFilamentManager.activeOrder(numPhysical).isNotEmpty()
                     val objectMixAssigned = _perVolumeExtruders.value.values.any { it > numPhysical }
                     val paintedMixAssigned =
-                        ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0
+                        ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0 ||
+                            _canonicalColourRemaps.value.any { it.destination is CanonicalColourDestination.Mix }
                     val mixDecision = decideSliceMixToolSpace(
                         numPhysical = numPhysical,
                         canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical,
                         hasActiveMixRows = hasActiveMixRows,
                         objectMixAssigned = objectMixAssigned,
                         paintedMixAssigned = paintedMixAssigned,
+                        canonicalColourRemapActive = _canonicalColourRemaps.value.isNotEmpty(),
                     )
                     // M4/#2: use max(numPhysical, canonicalCount) as the mix base so mix slot ids
                     // (base + idx) cannot collide with canonical filament slots when the 3MF
@@ -5949,6 +6564,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         cfg.supportFilament,
                         cfg.supportInterfaceFilament,
                         mixPhysicalBase,
+                        requiredAssignedToolCount(_perVolumeExtruders.value.values,
+                            _canonicalFilamentList.value?.size ?: 0, numPhysical),
                     )
                     val slotFilamentTypes = extruderPresets.value
                         .sortedBy { it.index }
@@ -5967,10 +6584,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         filaments = filaments.value
                     ))
                 }
-                val targetAwareSliceConfig = resolveTargetedSliceConfig(
+                val targetAwareSliceConfig = resolveActiveMachineSliceConfig(
                     target = target,
+                    profile = machineForSlice,
                     base = sliceConfig,
+                    machineProfile = genericMachineForSlice,
                 )
+                if (target.family == SliceTargetFamily.GENERIC) _sliceMixToolSpace.value = false
                 val profileOverrides = buildProfileOverrides(
                     targetAwareSliceConfig,
                     targetAwareSliceConfig.extruderCount,
@@ -6038,13 +6658,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Pass the machine G-code templates from assets so applyConfigToPrusa injects
                 // them when has_embedded_profile=false. 3MF files (sourceModelFile != null)
                 // already embed the profile via ProfileEmbedder — pass empty to avoid overriding it.
-                val usesSnapmakerMachineGcode =
-                    sourceModelFile == null && target == SlicerTarget.SnapmakerU1
-                val (b106StartGcode, b106EndGcode) = if (usesSnapmakerMachineGcode) {
-                    readPrinterMachineGcode()
-                } else {
-                    "" to ""
-                }
+                val (jniMachineStartGcode, jniMachineEndGcode) =
+                    if (target == SlicerTarget.SnapmakerU1) {
+                        machineGcodeForSlice(
+                            target = target,
+                            profile = machineForSlice,
+                            hasEmbeddedProfile = sourceModelFile != null,
+                        )
+                    } else {
+                        targetAwareSliceConfig.machineStartGcode to targetAwareSliceConfig.machineEndGcode
+                    }
                 // F91 (2026-05-25): populate per-extruder SliceConfig fields from the user's
                 // filament library so native applies them even when the slice bypasses
                 // ProfileEmbedder (raw STL). buildFilamentLibraryArrays inspects the active
@@ -6060,10 +6683,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // immediately before native.slice() — so it captures any row added after
                 // the last config change.
                 val jniSliceConfig = targetAwareSliceConfig.copy(
-                    layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE)
+                    layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE ||
+                        (u1NozzleDiameter != null && u1NozzleDiameter != 0.4f && sourceModelFile == null))
                         targetAwareSliceConfig.layerHeight else 0.0f,
-                    machineStartGcode = b106StartGcode.ifBlank { targetAwareSliceConfig.machineStartGcode },
-                    machineEndGcode = b106EndGcode.ifBlank { targetAwareSliceConfig.machineEndGcode },
+                    ironingType = resolveNativeIroningType(ov.ironing),
+                    machineStartGcode = jniMachineStartGcode,
+                    machineEndGcode = jniMachineEndGcode,
                     filamentFlowRatios = filamentArrays.flowRatios,
                     filamentMaxVolumetricSpeeds = filamentArrays.maxVolumetricSpeeds,
                     filamentFanMinSpeeds = filamentArrays.fanMinSpeeds,
@@ -6092,7 +6717,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // NOTE: this aligns the Kotlin recipe with the documented slot-id model;
                     // see the C-1 part-B concern in the branch report re: the native engine
                     // deriving num_physical from filament_diameter.size() (= 4 + nMix).
-                    mixedFilamentDefinitions = mixedFilamentDefinitions,
+                    mixedFilamentDefinitions = if (target.family == SliceTargetFamily.GENERIC) "" else mixedFilamentDefinitions,
                     bambuExplicitOverrides = if (target != SlicerTarget.SnapmakerU1) {
                         buildExplicitBambuProfileOverrides(
                             profileOverrides = profileOverrides,
@@ -6103,8 +6728,36 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         ""
                     },
                 )
+                // Re-embed/reload above replaces ModelObjects, so regenerate the recipe
+                // immediately before slicing rather than trusting a prior UI application.
+                if (!reapplyAdaptiveLayerHeightForSlice()) {
+                    diagnostics.clearSliceInProgress()
+                    return@launch
+                }
+                check(activePrinterForSlicing.value == printerForSlice) { "Printer configuration changed during slice preparation. Slice again for the selected printer." }
+                if (u1NozzleDiameter != null) {
+                    U1NozzlePolicy.validate(mapOf(
+                        "layer_height" to targetAwareSliceConfig.layerHeight,
+                        "initial_layer_print_height" to targetAwareSliceConfig.firstLayerHeight,
+                    ), u1NozzleDiameter)
+                    val variableLayers = native.nativeGetVariableLayerHeightRange()
+                    require(variableLayers == null || variableLayers[1] <= u1NozzleDiameter * 0.8f + 0.00001f) {
+                        "Variable layer heights exceed the limit for the $u1NozzleDiameter mm nozzle. Set variable layers to Off or regenerate them with a compatible nozzle profile."
+                    }
+                    check(u1DiameterForSlice() == u1NozzleDiameter) { "Nozzle assignments changed. Slice again." }
+                }
+                if (genericMachineForSlice != null) {
+                    val explicit = buildExplicitBambuProfileOverrides(
+                        profileOverrides, ov, hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+                    )
+                    val selectedProfileFile = File(transientWorkspaceDir(), "selected-machine-profile.json")
+                    val genericConfigForSlice = genericMachineForSlice.compose(genericSourceTuning, genericFilamentTuning + explicit)
+                    selectedProfileFile.writeText(profileEmbedder.serializeConfig(genericConfigForSlice))
+                    check(native.loadProfile(selectedProfileFile.absolutePath)) { "Native slicer could not load the selected machine profile" }
+                }
                 val result = native.slice(jniSliceConfig)
                 ensureActive()
+                if (activePrinterForSlicing.value != printerForSlice) _sliceStale.value = true
 
                 // Native cancel: slice() returned with cancelled=true from CanceledException
                 if (result?.cancelled == true) {
@@ -6117,83 +6770,85 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (result != null && result.success) {
-                    // B63: patch filament_type header with current extruder preset material types.
-                    // Needed for STL files (no embedded profile → native slicer uses OrcaSlicer
-                    // default "PLA") and as a staleness guard for 3MF files (profile was embedded
-                    // at model-load time; user may have changed presets since).
-                    //
-                    // Phase 2.7: when the file has more filaments than the user's extruder count
-                    // (multi-filament file mapped to fewer slots), emit one filament_type per
-                    // canonical filament so per-filament overrides reach the G-code header.
-                    val canonicalForPatch = getCanonicalFilamentList()
-                    val basePresets = extruderPresets.value
-                    val supportDrivenSlotCount = maxOf(
-                        slicingOverrides.value.supportFilament.value ?: 0,
-                        slicingOverrides.value.supportInterfaceFilament.value ?: 0,
-                    )
-                    // B110: produce filament_type AND nozzle_temperature header arrays
-                    // from the same physical-slot-indexed source so they agree on which
-                    // slot received a Prepare-screen override. Without this, the
-                    // post-slice `filament_type` patch is physical-slot-indexed (B102) but
-                    // `nozzle_temperature` stays in canonical/UI order — the two header
-                    // rows disagree (PLA at slot 0 but 235°C at slot 0, vs PETG at slot 2).
-                    val ftTypes: List<String>
-                    val ntTemps: List<Int>
-                    if (
-                        canonicalForPatch != null &&
-                        !(canonicalForPatch.size <= 1 && supportDrivenSlotCount > canonicalForPatch.size)
-                    ) {
-                        val padTo = maxOf(canonicalForPatch.size, supportDrivenSlotCount)
-                        ftTypes = resolveFilamentTypesForHeaderPatch(
-                            canonical = canonicalForPatch,
-                            overrides = _filamentOverrides.value
-                                .mapValues { (_, ov) -> ov.color to ov.materialType },
-                            colorMapping = _colorMapping.value,
-                            presets = basePresets,
-                            filamentLibrary = filaments.value,
-                            padTo = padTo,
+                    if (target.family != SliceTargetFamily.GENERIC) {
+                        // B63: patch filament_type header with current extruder preset material types.
+                        // Needed for STL files (no embedded profile → native slicer uses OrcaSlicer
+                        // default "PLA") and as a staleness guard for 3MF files (profile was embedded
+                        // at model-load time; user may have changed presets since).
+                        //
+                        // Phase 2.7: when the file has more filaments than the user's extruder count
+                        // (multi-filament file mapped to fewer slots), emit one filament_type per
+                        // canonical filament so per-filament overrides reach the G-code header.
+                        val canonicalForPatch = getCanonicalFilamentList()
+                        val basePresets = extruderPresets.value
+                        val supportDrivenSlotCount = maxOf(
+                            slicingOverrides.value.supportFilament.value ?: 0,
+                            slicingOverrides.value.supportInterfaceFilament.value ?: 0,
                         )
-                        ntTemps = resolveNozzleTempsForHeaderPatch(
-                            canonical = canonicalForPatch,
-                            overrides = _filamentOverrides.value
-                                .mapValues { (_, ov) -> ov.color to ov.materialType },
-                            colorMapping = _colorMapping.value,
-                            presets = basePresets,
-                            filamentLibrary = filaments.value,
-                            padTo = padTo,
-                        )
-                    } else {
-                        // B105: for non-canonical files (STL, generic 3MF) emit only the
-                        // materials for the physically-used slots. Using all 4 presets
-                        // here wrote a 4-entry filament_type header even for single-colour
-                        // prints (matched the slotTypes bug in buildProfileOverrides).
-                        // B117: prefer the Prepare-screen `_filamentOverrides[0]` material
-                        // for the FIRST slot — that's where DC15's "I want PETG on a
-                        // single-colour 3MF" override lands. Without this the G-code
-                        // header would still read PLA even though the slice used PETG.
-                        val usedSlotsForPatch = toolRemapSlots
-                            ?: _colorMapping.value?.distinct()?.sorted()
-                            ?: listOf(_selectedExtruder.value)
-                        val nonCanonicalOverride0 = _filamentOverrides.value[0]
-                        ftTypes = applyNonCanonicalOverride(
-                            slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
-                            slotTemps = resolveNonCanonicalHeaderPatchTemps(
-                                usedSlotsForPatch, basePresets, filaments.value
-                            ),
-                            override = nonCanonicalOverride0,
-                        ).first
-                        ntTemps = applyNonCanonicalOverride(
-                            slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
-                            slotTemps = resolveNonCanonicalHeaderPatchTemps(
-                                usedSlotsForPatch, basePresets, filaments.value
-                            ),
-                            override = nonCanonicalOverride0,
-                        ).second
+                        // B110: produce filament_type AND nozzle_temperature header arrays
+                        // from the same physical-slot-indexed source so they agree on which
+                        // slot received a Prepare-screen override. Without this, the
+                        // post-slice `filament_type` patch is physical-slot-indexed (B102) but
+                        // `nozzle_temperature` stays in canonical/UI order — the two header
+                        // rows disagree (PLA at slot 0 but 235°C at slot 0, vs PETG at slot 2).
+                        val ftTypes: List<String>
+                        val ntTemps: List<Int>
+                        if (
+                            canonicalForPatch != null &&
+                            !(canonicalForPatch.size <= 1 && supportDrivenSlotCount > canonicalForPatch.size)
+                        ) {
+                            val padTo = maxOf(canonicalForPatch.size, supportDrivenSlotCount)
+                            ftTypes = resolveFilamentTypesForHeaderPatch(
+                                canonical = canonicalForPatch,
+                                overrides = _filamentOverrides.value
+                                    .mapValues { (_, ov) -> ov.color to ov.materialType },
+                                colorMapping = _colorMapping.value,
+                                presets = basePresets,
+                                filamentLibrary = filaments.value,
+                                padTo = padTo,
+                            )
+                            ntTemps = resolveNozzleTempsForHeaderPatch(
+                                canonical = canonicalForPatch,
+                                overrides = _filamentOverrides.value
+                                    .mapValues { (_, ov) -> ov.color to ov.materialType },
+                                colorMapping = _colorMapping.value,
+                                presets = basePresets,
+                                filamentLibrary = filaments.value,
+                                padTo = padTo,
+                            )
+                        } else {
+                            // B105: for non-canonical files (STL, generic 3MF) emit only the
+                            // materials for the physically-used slots. Using all 4 presets
+                            // here wrote a 4-entry filament_type header even for single-colour
+                            // prints (matched the slotTypes bug in buildProfileOverrides).
+                            // B117: prefer the Prepare-screen `_filamentOverrides[0]` material
+                            // for the FIRST slot — that's where DC15's "I want PETG on a
+                            // single-colour 3MF" override lands. Without this the G-code
+                            // header would still read PLA even though the slice used PETG.
+                            val usedSlotsForPatch = toolRemapSlots
+                                ?: _colorMapping.value?.distinct()?.sorted()
+                                ?: listOf(_selectedExtruder.value)
+                            val nonCanonicalOverride0 = _filamentOverrides.value[0]
+                            ftTypes = applyNonCanonicalOverride(
+                                slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
+                                slotTemps = resolveNonCanonicalHeaderPatchTemps(
+                                    usedSlotsForPatch, basePresets, filaments.value
+                                ),
+                                override = nonCanonicalOverride0,
+                            ).first
+                            ntTemps = applyNonCanonicalOverride(
+                                slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
+                                slotTemps = resolveNonCanonicalHeaderPatchTemps(
+                                    usedSlotsForPatch, basePresets, filaments.value
+                                ),
+                                override = nonCanonicalOverride0,
+                            ).second
+                        }
+                        val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
+                        val ntPatched = fixNozzleTemperatureHeader(result.gcodePath, ntTemps)
+                        Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
+                        Log.i("SlicerVM", "B110 nozzle_temperature patch: $ntPatched (temps=$ntTemps)")
                     }
-                    val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
-                    val ntPatched = fixNozzleTemperatureHeader(result.gcodePath, ntTemps)
-                    Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
-                    Log.i("SlicerVM", "B110 nozzle_temperature patch: $ntPatched (temps=$ntTemps)")
 
                     // Sub-plan #2c P1 fix: when a plate is selected (currentPlateId > 0), the
                     // plate-filtered custom_gcode_per_layer.xml lives in currentModelFile
@@ -6203,6 +6858,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // pauses for non-selected plates post-slice. Prefer currentModelFile
                     // whenever a plate is selected; fall back to sourceModelFile only for
                     // non-plate (STL / single-plate) flows.
+                    val gcodeDialect = machineForSlice.gcodeDialect()
                     val activePlateIdUi = _currentPlateId.value
                     val layerToolMetadataFile = when {
                         _threeMfInfo.value?.hasLayerToolChanges != true -> null
@@ -6220,7 +6876,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 result.gcodePath,
                                 it,
                                 plateIdxForInjector,
-                                native::nativeGetPlateData
+                                native::nativeGetPlateData,
+                                gcodeDialect,
                             )
                         }
                         ?: false
@@ -6251,6 +6908,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val outputValidation = validateSliceOutput(
                         result,
                         buildExpectedModelFootprint(mi, copies, custom),
+                        dialect = gcodeDialect,
                         // Only force pause-segment coloring when we actually injected pause markers.
                         // Painted/toolchange workflows should continue to use T-command extruder indices.
                         colorSegmentsByPausePrint = injectedLayerToolPause
@@ -6279,10 +6937,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // 3MF: extract preview image from ZIP. STL: fall back to GL capture bitmap.
                     try {
                         val sourcePath = rawInputFile?.absolutePath ?: sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
-                        val injected = sourcePath != null && GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
+                        val injected = sourcePath != null && GcodeThumbnailInjector.inject(
+                            result.gcodePath,
+                            sourcePath,
+                            gcodeDialect,
+                        )
                         if (injected) {
                             Log.i("SlicerVM", "Thumbnails injected from 3MF preview")
-                        } else if (capturedBitmap != null && GcodeThumbnailInjector.injectFromBitmap(result.gcodePath, capturedBitmap)) {
+                        } else if (
+                            capturedBitmap != null &&
+                            GcodeThumbnailInjector.injectFromBitmap(
+                                result.gcodePath,
+                                capturedBitmap,
+                                gcodeDialect,
+                            )
+                        ) {
                             Log.i("SlicerVM", "Thumbnails injected from GL capture")
                         }
                     } catch (e: Throwable) {
@@ -6297,6 +6966,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Preview exposes upload actions. Previously SliceComplete was emitted
                     // first, allowing FTPS to read output.gcode.3mf while this block
                     // truncated and rewrote it for the new slice.
+                    if (u1NozzleDiameter != null) {
+                        val gcode = File(result.gcodePath)
+                        val tools = com.u1.slicer.slice.readUsedFilamentIndicesFromGcodeHeader(gcode).ifEmpty { listOf(0) }
+                        val requirements = U1SliceNozzles(
+                            u1NozzleDiameter, tools,
+                            if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL,
+                        )
+                        requirements.validate(printerForSlice?.u1Nozzles ?: U1NozzleConfiguration(), resolveExportMapping())
+                        gcode.appendText("\n${requirements.toGcodeLine()}\n")
+                    }
                     val preparedBambuArtifact = if (
                         target.family == SliceTargetFamily.BAMBU && target.supportsLocalSlicing
                     ) {
@@ -6362,12 +7041,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         SliceJob(
                             modelName = currentModelName.ifEmpty { "Unknown" },
                             gcodePath = result.gcodePath,
+                            sliceTarget = target.name,
+                            machineProfileFingerprint = if (target.family == SliceTargetFamily.GENERIC) genericMachineForSlice?.fingerprint else null,
                             sourcePath = null, // filled in below once we have the rowid
                             totalLayers = result.totalLayers,
                             estimatedTimeSeconds = result.estimatedTimeSeconds,
                             estimatedFilamentMm = result.estimatedFilamentMm,
                             estimatedFilamentGrams = result.estimatedFilamentGrams,
-                            layerHeight = cfg.layerHeight,
+                            layerHeight = if (u1NozzleDiameter != null && u1NozzleDiameter != 0.4f) targetAwareSliceConfig.layerHeight else cfg.layerHeight,
                             fillDensity = cfg.fillDensity,
                             nozzleTemp = cfg.nozzleTemp,
                             bedTemp = cfg.bedTemp,
@@ -6405,7 +7086,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             // shareJobGcode reads it only when the
                             // canonical list is single-filament.
                             selectedExtruderAtSlice = _selectedExtruder.value
-                                .takeIf { it in 0..3 },
+                                .takeIf { it in 0 until activePhysicalSlotCount() },
                             gcodeToolSpace = gcodeToolSpaceToDb(
                                 if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL
                             ),
@@ -6438,6 +7119,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 target = target,
                                 sourceModelName = currentModelName.ifEmpty { "Unknown" },
                                 gcodeFile = finalGcodeFile,
+                                machineProfileFingerprint = if (target.family == SliceTargetFamily.GENERIC) genericMachineForSlice?.fingerprint else null,
                                 workingDir = context.cacheDir,
                                 plateId = recoveryPlateId.takeIf { it > 0 } ?: 1,
                                 filamentColours = artifactFilamentColours,
@@ -6507,6 +7189,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun validateSliceOutput(
         result: SliceResult,
         expectedFootprint: ExpectedModelFootprint?,
+        dialect: GcodeDialect,
         colorSegmentsByPausePrint: Boolean = false
     ): SliceOutputValidation {
         val gcodeFile = File(result.gcodePath)
@@ -6536,7 +7219,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         return try {
-            val parsed = GcodeParser.parse(gcodeFile, colorSegmentsByPausePrint = colorSegmentsByPausePrint)
+            val dialectValidation = gcodeFile.useLines { lines ->
+                GcodeValidator.validateDialectLines(lines, dialect)
+            }
+            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            val parsed = GcodeParser.parse(
+                gcodeFile,
+                bedSizeX,
+                bedSizeY,
+                colorSegmentsByPausePrint = colorSegmentsByPausePrint,
+            )
             val outputSummary = GcodeValidator.summarizeParsedOutput(parsed)
             val modelBounds = outputSummary.modelExtrudeBounds
             val nonPrimeBounds = outputSummary.nonPrimeExtrudeBounds
@@ -6600,9 +7292,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 },
                 "overlapsExpectedModelFootprint" to overlapsExpectedModelFootprint,
-                "parsedWipeTowerFilamentMm" to parsed.wipeTowerFilamentMm
+                "parsedWipeTowerFilamentMm" to parsed.wipeTowerFilamentMm,
+                "gcodeDialect" to dialect.javaClass.simpleName,
+                "missingRequiredGcodeCommands" to
+                    dialectValidation.missingRequiredCommandPrefixes.toList(),
+                "presentForbiddenGcodeCommands" to
+                    dialectValidation.presentForbiddenCommandPrefixes.toList(),
+                "rejectedBowdenUnloadSequence" to
+                    dialectValidation.hasRejectedBowdenUnloadSequence,
             )
             val errorMessage = when {
+                !dialectValidation.isValid ->
+                    "Slicing produced G-code incompatible with the selected printer.\n\n${dialectValidation.describe()}."
                 GcodeValidator.isEffectivelyEmpty(outputSummary) ->
                     "Slicing produced empty or invalid output.\n\nThe generated G-code did not contain any printable model extrusion. Try Reset App State and slice again."
                 GcodeValidator.hasSuspiciousModelGeometry(outputSummary) ->
@@ -6902,7 +7603,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             //     pre-schema-v5 multi-colour job. Identity-mod-4 fallback
             //     via the helper.
             val mapping = resolveExportMapping(job)
-            if (!prepareExportableGcodeWithMapping(sourceFile, shareFile, mapping)) return@launch
+            try {
+                if (!prepareExportableGcodeWithMapping(sourceFile, shareFile, mapping)) return@launch
+            } catch (error: IllegalArgumentException) {
+                _toastEvents.tryEmit(error.message ?: "Cannot share this nozzle configuration")
+                return@launch
+            }
 
             val uri = FileProvider.getUriForFile(
                 context,
@@ -6927,6 +7633,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // F60: parse saved G-code and set it as the active preview so the viewer can display it.
     // Returns true if the file existed and parsing was started, false if the file is missing.
     fun loadJobGcodeForViewer(job: SliceJob, onResult: (success: Boolean) -> Unit) {
+        _latestSliceArtifact.value = null
         if (!restoreInProgress) restoreSessionJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             val gcodeFile = File(job.gcodePath)
@@ -6936,9 +7643,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
             try {
                 _sliceMixToolSpace.value = false
-                val parsed = GcodeParser.parse(gcodeFile)
+                val (bedSizeX, bedSizeY) = activeBedDimensions()
+                val parsed = GcodeParser.parse(gcodeFile, bedSizeX, bedSizeY)
                 setParsedGcodeWithRangeReset(parsed)
                 _sliceMixToolSpace.value = storedGcodeIsPhysical(job)
+                _latestSliceArtifact.value = sliceArtifactForJob(job)
                 _state.value = SlicerState.SliceComplete(sliceResultFromJob(job))
                 _gcodePreview.value = ""
                 launch(Dispatchers.Main) { onResult(true) }
@@ -6983,22 +7692,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Copy the current source model to files/jobs/<jobId>/ for durable storage (F61).
-    private fun readPrinterMachineGcode(): Pair<String, String> {
-        return try {
-            val context = getApplication<Application>()
-            val json = context.assets.open("orca_profiles/printer/snapmaker_u1.json")
-                .bufferedReader().use { org.json.JSONObject(it.readText()) }
-            Pair(
-                json.optString("machine_start_gcode", ""),
-                json.optString("machine_end_gcode", ""),
-            )
-        } catch (e: Throwable) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Log.w("SlicerVM", "B106: failed to read machine G-code from assets: ${e.message}")
-            "" to ""
-        }
-    }
-
     private fun copySourceToDurableJobDir(jobId: Long, sourceFile: File?): File? {
         if (sourceFile == null || !sourceFile.exists()) return null
         return try {
@@ -7180,6 +7873,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             perVolumeExtruders = _perVolumeExtruders.value,
             splitObjectOperations = _splitObjectOps.value,
             splitVolumeOperations = _splitVolumeOps.value,
+            modelOperations = _modelOperations.value,
+            projectMixes = mixedFilamentManager.projectMixes.value,
+            adaptiveLayerHeight = _adaptiveLayerHeight.value,
+            canonicalColourRemaps = _canonicalColourRemaps.value,
         )
     }
 
@@ -7309,7 +8006,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // the user sees a blank screen post-Resume.
         val gcodeFile = File(row.gcodePath)
         val parsed = try {
-            kotlinx.coroutines.withContext(Dispatchers.IO) { GcodeParser.parse(gcodeFile) }
+            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
+                GcodeParser.parse(gcodeFile, bedSizeX, bedSizeY)
+            }
         } catch (e: Exception) {
             Log.w("SlicerVM", "F89 fast-path: gcode parse failed: ${e.message}")
             null
@@ -7318,6 +8018,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _sliceMixToolSpace.value = saved.gcodeToolSpace?.let {
             gcodeToolSpaceFromDb(it) == GcodeToolSpace.PHYSICAL
         } ?: storedGcodeIsPhysical(row)
+        _latestSliceArtifact.value = sliceArtifactForJob(row)
         _state.value = SlicerState.SliceComplete(sliceResultFromJob(row))
         _gcodePreview.value = ""
         _navigateEvents.tryEmit("preview")
@@ -7372,19 +8073,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // the original 1-object cube and then apply N positions, leaving
             // the renderer to draw the un-split cube N times ("multiple sets
             // of the object on the plate" user report).
-            for (idx in saved.splitObjectOperations) {
-                splitObject(idx)
-            }
-            _splitObjectOps.value = saved.splitObjectOperations
-            for (entry in saved.splitVolumeOperations) {
-                val parts = entry.split(":")
-                if (parts.size == 2) {
-                    val o = parts[0].toIntOrNull()
-                    val v = parts[1].toIntOrNull()
-                    if (o != null && v != null) splitVolume(o, v)
-                }
-            }
-            _splitVolumeOps.value = saved.splitVolumeOperations
+            restoreStructuralOperations(structuralOperationsForReplay(saved))
             snapshotLoadTimePoses()
             for ((idx, pose) in saved.perObjectPoses) {
                 setObjectRotation(idx, pose.rotXDeg, pose.rotYDeg, pose.rotZDeg)
@@ -7428,6 +8117,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     /** F89: replay the saved session. Runs on the caller's coroutine (already
      *  in viewModelScope). Suspends through the existing loading paths. */
     private suspend fun restoreSession(saved: SessionState, raw: File) {
+        mixedFilamentManager.replaceProjectMixes(saved.projectMixes)
+        _canonicalColourRemaps.value = saved.canonicalColourRemaps
         // 1. Trigger the standard load. loadModelFromFile launches its own
         //    coroutine; we observe _state to know when it completes.
         loadModelFromFile(raw, preserveDisplayName = saved.modelName)
@@ -7487,22 +8178,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // refreshObjectGeometryAfterPoseChange — that writes worldMins to
         // customObjectPositions, so applyPlacementPositions must come AFTER pose
         // replay or the saved drag positions get overwritten with auto-mins.
-        for (idx in saved.splitObjectOperations) {
-            splitObject(idx)  // each call appends to _splitObjectOps; that's the same list we just replayed,
-                              // so blank it before iterating and let splitObject rebuild it from the replay.
-        }
-        // splitObject() pushed onto _splitObjectOps during replay — replace
-        // the live list with the canonical persisted one to avoid duplicates.
-        _splitObjectOps.value = saved.splitObjectOperations
-        for (entry in saved.splitVolumeOperations) {
-            val parts = entry.split(":")
-            if (parts.size == 2) {
-                val o = parts[0].toIntOrNull()
-                val v = parts[1].toIntOrNull()
-                if (o != null && v != null) splitVolume(o, v)
-            }
-        }
-        _splitVolumeOps.value = saved.splitVolumeOperations
+        restoreStructuralOperations(structuralOperationsForReplay(saved))
         // Per-object pose — also captures load-time baselines first so Reset
         // works (snapshotLoadTimePoses reads native; the pose has not been
         // mutated by the saved state yet because the loadModelFromFile +
@@ -7523,6 +8199,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         // 5. Custom placement — last so it overrides the per-object pose
         // replay's customObjectPositions side-effect.
+        // Curves are native model state, so regenerate after structural and pose replay.
+        applyAdaptiveLayerHeight(saved.adaptiveLayerHeight)
         val positions = saved.customObjectPositions
         val tower = saved.customWipeTowerPos
         if (positions != null && tower != null) {
@@ -7655,6 +8333,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // file (the StateFlow value persists across model loads).
         _filamentOverrides.value = emptyMap()
         currentModelFile = null
+        _canonicalColourRemaps.value = emptyList()
         lastModelInfo = null
         _modelInfo.value = null
         _copyCount.value = 1
@@ -7677,6 +8356,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
         _duplicateOps.value = emptyList()
+        _modelOperations.value = emptyList()
         resetToolRemapState()
         // Reset multi-extruder config to single extruder
         _config.value = _config.value.copy(
@@ -7764,7 +8444,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * `_selectedExtruder`. See [com.u1.slicer.gcode.resolveCanonicalExportMapping]
      * for the four-case logic.
      */
-    internal fun resolveExportMapping(): List<Int>? {
+    internal fun resolveExportMapping(
+        toolSpace: GcodeToolSpace = if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL,
+    ): List<Int>? {
         val canonical = _canonicalFilamentList.value
         // Phase 2 (post-round-2-review, Reviewer 3 P1; tightened
         // post-round-3-review for F2 fallback gap) — supply
@@ -7815,11 +8497,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         } else null
 
         return resolveExportMappingForToolSpace(
-            toolSpace = if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL,
+            toolSpace = toolSpace,
             canonicalSize = canonicalSize,
             confirmedMapping = confirmed,
             selectedExtruder = _selectedExtruder.value,
             confirmedMappingFileIndices = mappingFileIndices,
+            slotCount = activePhysicalSlotCount(),
         )
     }
 
@@ -7838,6 +8521,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         mapping: List<Int>?,
     ): Boolean {
         if (!sourceFile.exists()) return false
+        validateU1NozzleMapping(sourceFile, mapping)
+        val nozzleRequirements = U1SliceNozzles.read(sourceFile)
         if (mapping.isNullOrEmpty()) {
             sourceFile.copyTo(destFile, overwrite = true)
         } else {
@@ -7847,7 +8532,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 colorMapping = mapping,
             )
         }
+        nozzleRequirements?.let { requirements ->
+            val toolMap = mapping.orEmpty().mapIndexed { index, slot -> index to slot }.toMap()
+            destFile.appendText("\n${requirements.remap(toolMap).toGcodeLine()}\n")
+        }
         return true
+    }
+
+    internal fun validateU1NozzleMapping(sourceFile: File, mapping: List<Int>?) {
+        val printer = activePrinterForSlicing.value
+        val requirements = U1SliceNozzles.read(sourceFile)
+        if (requirements == null) {
+            require(printer?.machine != com.u1.slicer.data.MachineKind.SNAPMAKER_U1 ||
+                printer.u1Nozzles.diametersMm.all { it == 0.4f }) {
+                "This older G-code has no saved nozzle requirements. Slice it again for the installed nozzles."
+            }
+            return
+        }
+        require(printer == null || printer.machine == com.u1.slicer.data.MachineKind.SNAPMAKER_U1) {
+            "This G-code was sliced for a Snapmaker U1. Select the matching printer."
+        }
+        requirements.validate(printer?.u1Nozzles ?: U1NozzleConfiguration(), mapping)
     }
 
     fun shareGcode() {
@@ -7893,6 +8598,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
                 }
+            } catch (error: IllegalArgumentException) {
+                _toastEvents.tryEmit(error.message ?: "Cannot share this nozzle configuration")
             } finally {
                 endLongOp(longOpCtx)
             }
@@ -8741,11 +9448,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         internal fun buildPreviewSlotColors(
             extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
-            usedSlots: List<Int>
+            usedSlots: List<Int>,
+            slotCount: Int = 4,
         ): List<String> {
-            val fullColors = MutableList(4) { "" }
+            val slots = slotCount.coerceIn(1, 4)
+            val fullColors = MutableList(slots) { "" }
             usedSlots.forEach { slotIndex ->
-                if (slotIndex !in 0..3) return@forEach
+                if (slotIndex !in 0 until slots) return@forEach
                 val presetColor = extruderPresets.firstOrNull { it.index == slotIndex }?.color
                 fullColors[slotIndex] = presetColor
                     ?.takeIf { it.isNotBlank() }
@@ -8910,6 +9619,7 @@ internal fun buildProfileOverridesImpl(
     val bottomShellLayers = resolve(ov.bottomShellLayers, cfg.bottomSolidLayers, "bottomShellLayers")
     val topSurfacePattern = resolve(ov.topSurfacePattern, "monotonic", "topSurfacePattern")
     val bottomSurfacePattern = resolve(ov.bottomSurfacePattern, "monotonic", "bottomSurfacePattern")
+    val ironing = resolve(ov.ironing, "no ironing", "ironing")
     val sparseInfillSpeed = resolve(ov.sparseInfillSpeed, 0, "sparseInfillSpeed")
     val reduceInfillRetraction = resolve(ov.reduceInfillRetraction, false, "reduceInfillRetraction")
     val wallGenerator = resolve(ov.wallGenerator, "arachne", "wallGenerator")
@@ -9016,6 +9726,12 @@ internal fun buildProfileOverridesImpl(
     // profile value from profile_keys[] wins when the user hasn't chosen a specific override.
     if (ov.layerHeight.mode != OverrideMode.USE_FILE) {
         result["layer_height"] = layerHeight.toString()
+    }
+
+    // As with layer height, preserve the source 3MF's ironing when the user chooses
+    // Use File. Orca's factory/default and explicit choices must be written instead.
+    if (ov.ironing.mode != OverrideMode.USE_FILE) {
+        result["ironing_type"] = ironing
     }
 
     // Support keys: when mode is USE_FILE and the file has its own config (Bambu 3MF),
@@ -9390,7 +10106,8 @@ internal fun resolveFilamentTypeLabelFromMapping(
 
 internal fun buildCompactExtruderRemap(
     info: ThreeMfInfo,
-    colorMapping: List<Int>?
+    colorMapping: List<Int>?,
+    slotCount: Int = 4,
 ): Map<Int, Int>? {
     if (colorMapping.isNullOrEmpty()) return null
     if (info.hasLayerToolChanges && !info.hasPaintData) return null
@@ -9400,7 +10117,11 @@ internal fun buildCompactExtruderRemap(
     // remap here.
     if (info.hasPaintData) return null
 
-    val compactSlotOrder = colorMapping.distinct().sorted().take(4)
+    val slots = slotCount.coerceIn(1, 4)
+    val compactSlotOrder = colorMapping
+        .filter { it in 0 until slots }
+        .distinct()
+        .sorted()
     if (compactSlotOrder.isEmpty()) return null
 
     val sortedSourceExtruders = info.usedExtruderIndices

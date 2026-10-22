@@ -2,6 +2,9 @@ package com.u1.slicer.bambu
 
 import android.content.Context
 import android.util.Log
+import com.u1.slicer.machine.MachineProfile
+import com.u1.slicer.machine.MachineProfileRepository
+import com.u1.slicer.machine.U1NozzlePolicy
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -156,15 +159,20 @@ class ProfileEmbedder(private val context: Context) {
     private var printerProfile: MutableMap<String, Any>? = null
     private var processProfile: MutableMap<String, Any>? = null
     private var filamentProfile: MutableMap<String, Any>? = null
+    private var loadedMachineProfileId: String? = null
 
-    /**
-     * Load Snapmaker U1 profiles from assets.
-     */
-    private fun loadProfiles() {
-        if (printerProfile != null) return
-        printerProfile = loadJsonAsMap("orca_profiles/printer/snapmaker_u1.json")
-        processProfile = loadJsonAsMap("orca_profiles/process/standard_0.20mm.json")
-        filamentProfile = loadJsonAsMap("orca_profiles/filament/pla.json")
+    /** Load the active machine profile plus the bundled process and filament profiles. */
+    private fun loadProfiles(machineProfile: MachineProfile? = null) {
+        val profileKey = machineProfile?.id ?: MachineProfileRepository.U1_MACHINE_ASSET
+        if (printerProfile != null && loadedMachineProfileId == profileKey) return
+        printerProfile = if (machineProfile == null) {
+            loadJsonAsMap(MachineProfileRepository.U1_MACHINE_ASSET)
+        } else {
+            jsonToMap(JSONObject(machineProfile.machineJson))
+        }
+        processProfile = loadJsonAsMap(MachineProfileRepository.U1_PROCESS_ASSET)
+        filamentProfile = loadJsonAsMap(MachineProfileRepository.U1_FILAMENT_ASSET)
+        loadedMachineProfileId = profileKey
         Log.i(TAG, "Loaded profiles: printer=${printerProfile!!.size} keys, " +
                 "process=${processProfile!!.size} keys, filament=${filamentProfile!!.size} keys")
     }
@@ -200,6 +208,7 @@ class ProfileEmbedder(private val context: Context) {
      * @param filamentSettings Per-extruder filament settings (temps, colors, materials)
      * @param overrides User overrides (layer height, infill, supports, etc.)
      * @param targetExtruderCount Number of active extruders
+     * @param machineProfile Active machine profile; null keeps the bundled U1 profile.
      */
     fun buildConfig(
         info: ThreeMfInfo,
@@ -212,8 +221,10 @@ class ProfileEmbedder(private val context: Context) {
         // (preserve path), but BEFORE filamentSettings and overrides, so user-set
         // SlicingOverrides still win.
         processProfileKeys: Map<String, Any> = emptyMap(),
+        machineProfile: MachineProfile? = null,
+        nozzleDiameter: Float? = null,
     ): MutableMap<String, Any> {
-        loadProfiles()
+        loadProfiles(machineProfile)
 
         val config: MutableMap<String, Any>
 
@@ -260,6 +271,10 @@ class ProfileEmbedder(private val context: Context) {
             config.putAll(processProfile!!)
             config.putAll(filamentProfile!!)
             Log.i(TAG, "Using standard profile stack")
+        }
+
+        nozzleDiameter?.let {
+            U1NozzlePolicy.applyDefaults(config, it, targetExtruderCount)
         }
 
         // F87: layer on user-imported process profile keys. Sits above the bundled
@@ -316,6 +331,9 @@ class ProfileEmbedder(private val context: Context) {
         config["printer_settings_id"] = "Snapmaker U1 (0.4 nozzle) - multiplate"
         config["print_settings_id"] = "0.20mm Standard @Snapmaker U1"
         config["print_compatible_printers"] = mutableListOf("Snapmaker U1 (0.4 nozzle) - multiplate")
+        nozzleDiameter?.let {
+            U1NozzlePolicy.finalize(config, it, targetExtruderCount)
+        }
 
         // Phase 2 B.3 (2026-04-28, post-adversarial-review) — explicit
         // marker for native `is_snapmaker_profile` detection. The pre-
@@ -550,10 +568,19 @@ class ProfileEmbedder(private val context: Context) {
         outputDir: File,
         info: ThreeMfInfo,
         extruderRemap: Map<Int, Int>? = null,
-        plateId: Int? = null
+        plateId: Int? = null,
+        nozzleDiameter: Float? = null,
     ): File {
         val outputFile = File(outputDir, "embedded_${inputFile.name}")
-        val configIni = serializeConfig(config)
+        // An embed written by this app is safe for native profile_keys[]. Keep the
+        // provenance on the output boundary so every app-authored embed is marked,
+        // including callers that do not use the U1-oriented buildConfig() helper.
+        val resolvedConfig = config.toMutableMap()
+        nozzleDiameter?.let {
+            val count = (config["extruder_count"]?.toString()?.toIntOrNull() ?: 1)
+            U1NozzlePolicy.finalize(resolvedConfig, it, count)
+        }
+        val configIni = serializeConfig(resolvedConfig + ("snapmaker_authored_profile" to "1"))
 
         ZipFile(inputFile).use { srcZip ->
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->

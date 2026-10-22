@@ -55,6 +55,11 @@ class NativeLibrary {
     external fun loadModelForPlate(path: String, plateIdx: Int): Boolean
 
     external fun clearModel()
+    /** F101: returns [minMm, maxMm, pointCount] or null when generation is unavailable. */
+    external fun nativeSetAdaptiveLayerHeight(quality: Float, smoothingRadius: Int, keepMin: Boolean, nozzleDiameter: Float = 0f): FloatArray?
+    external fun nativeClearVariableLayerHeights(): Boolean
+    /** Returns [minMm, maxMm, pointCount], or null when the model has fixed layers. */
+    external fun nativeGetVariableLayerHeightRange(): FloatArray?
     // Cancel an in-progress QEM preview decimation. Called from clearModel() before
     // acquiring previewMutex so QEM bails out immediately.
     external fun cancelPreviewMesh()
@@ -296,7 +301,7 @@ class NativeLibrary {
 
     /** Split one volume into multiple volumes within the same object. Returns the
      *  new volume count, or -1 on failure. */
-    external fun nativeSplitVolume(objIdx: Int, volIdx: Int): Int
+    external fun nativeSplitVolume(objIdx: Int, volIdx: Int, configuredExtruderCount: Int): Int
 
     /** B132c follow-up (v2.10.4): deep-copy an existing object at [objIdx].
      *  Returns the new object's index on success (always `nativeGetObjectCount()-1`),
@@ -304,6 +309,9 @@ class NativeLibrary {
      *  per-volume extruder overrides, and instance transform — callers should
      *  call `setObjectPositions` afterwards to place the new object on the bed. */
     external fun nativeDuplicateObject(objIdx: Int): Int
+
+    /** Removes one object. Returns false for an invalid index or the final object. */
+    external fun nativeDeleteObject(objIdx: Int): Boolean
 
     /** Auto-orient one object so a stable face is on the bed. Returns the new
      *  Euler rotation `[x, y, z]` in radians, or `null` on failure. TBB-parallel

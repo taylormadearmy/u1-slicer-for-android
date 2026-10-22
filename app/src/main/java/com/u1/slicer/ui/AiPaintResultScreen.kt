@@ -13,11 +13,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.u1.slicer.aipaint.*
+import com.u1.slicer.machine.MachineFamily
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AiPaintResultScreen(
     uiState: AiPaintUiState,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     onUsePainting: (paintedPath: String) -> Unit,
     onRedo: () -> Unit,
     onBack: () -> Unit,
@@ -44,9 +49,10 @@ fun AiPaintResultScreen(
     libraryMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     numPhysical: Int = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
     canonicalCount: Int = numPhysical,
-    onCreateMix: () -> Unit = {},
+    onCreateMix: (() -> Unit)? = null,
     onEditMix: (com.u1.slicer.data.MixedFilamentRow) -> Unit = {},
 ) {
+    val mixesAvailable = numPhysical == com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
     // Which slot the HSV colour picker is open for (or null when closed). Driven by tapping the
     // leading swatch on a RegionRow — applies the new hex to the slot's canonical region so the
     // 3D viewer palette updates too.
@@ -133,8 +139,10 @@ fun AiPaintResultScreen(
                     // picker would then show grey instead of the real filament colour.
                     // F3 (M3-Phase-B): palette extended beyond the 4 physical slots to include
                     // one naive-blend entry per active mix (in MixSlotOrdering order).
-                    val activeMixes = remember(projectMixes, libraryMixes, numPhysical) {
-                        com.u1.slicer.data.MixSlotOrdering.activeOrder(projectMixes, libraryMixes, numPhysical)
+                    val activeMixes = remember(projectMixes, libraryMixes, numPhysical, mixesAvailable) {
+                        if (mixesAvailable) {
+                            com.u1.slicer.data.MixSlotOrdering.activeOrder(projectMixes, libraryMixes, numPhysical)
+                        } else emptyList()
                     }
                     val slotPalette: List<Color> = remember(filamentColours, activeMixes, numPhysical) {
                         val physical = (0 until numPhysical).map { slot ->
@@ -157,7 +165,7 @@ fun AiPaintResultScreen(
                         physical + mixes
                     }
                     // fix38.1: float-array form of slotPalette for the GL renderer. Used by
-                    // AiPaintViewer's recolor path so triangleRegions[t] (a slot byte 0..3)
+                    // AiPaintViewer's recolor path so each physical slot byte
                     // correctly indexes into the user's loaded filament colours, regardless of
                     // how many leaves are currently assigned to that slot or in what order.
                     val slotPaletteFloats: List<FloatArray> = remember(slotPalette) {
@@ -192,6 +200,10 @@ fun AiPaintResultScreen(
                     ) {
                     AiPaintViewer(
                         state = result,
+                        bedSizeXmm = bedSizeXmm,
+                        bedSizeYmm = bedSizeYmm,
+                        bedStlAsset = bedStlAsset,
+                        machineFamily = machineFamily,
                         onTriangleTapped = { triangleIdx ->
                             // Find the deepest leaf whose triangleIds contain the tapped index
                             // and highlight it. The tree row also visually selects.
@@ -506,7 +518,7 @@ fun AiPaintResultScreen(
         // surface that reads filamentColours / extruderPresets — Smart Paint picker, tree
         // rows, Prepare filaments row, Map dialog — so the user only edits it once and the
         // change sticks for future loads.
-        if (slot in 0..3) {
+        if (slot in 0 until numPhysical) {
             val initialHex = filamentColours.getOrNull(slot)
                 ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS.getOrNull(slot)
                 ?: "#888888"

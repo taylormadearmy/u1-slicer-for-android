@@ -12,6 +12,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
+import com.u1.slicer.OfflineU1PrinterRule
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -33,15 +35,16 @@ import java.io.File
  *   - First 50 lines after the first tool change (toolchange sequence
  *     sample) for fixtures that have multi-colour output
  *
- * Snapshots are written to
- * `/sdcard/Android/media/com.u1.slicer.orca/baselines/<fixture>.snapshot.txt`
- * for `adb pull` to host.
+ * Snapshots are written to the app-owned directory
+ * `files/diagnostics/gcode-baselines/<fixture>.snapshot.txt`.
+ * Export them with `adb exec-out run-as com.u1.slicer.orca tar` before clearing,
+ * uninstalling, or restoring the app's data. No public-storage permission is required.
  *
  * To use:
- *   1. Run on the BASELINE build (e.g. tag v1.6.13). `adb pull` the
- *      baselines dir to `c:/tmp/gcode-baselines/baseline/`.
- *   2. Run on the CANDIDATE build (e.g. current HEAD). `adb pull` to
- *      `c:/tmp/gcode-baselines/candidate/`.
+ *   1. Run on the BASELINE build (e.g. tag v1.6.13). Export its snapshots
+ *      to `c:/tmp/gcode-baselines/baseline/`.
+ *   2. Run on the CANDIDATE build (e.g. current HEAD). Export its snapshots
+ *      to `c:/tmp/gcode-baselines/candidate/`.
  *   3. `diff -ru c:/tmp/gcode-baselines/baseline c:/tmp/gcode-baselines/candidate`
  *      Inspect each diff: any change in retraction*, nozzle_temperature*,
  *      hot_plate_temp*, fan_*, ooze_*, idle_*, standby_*, ramming, loading,
@@ -55,6 +58,7 @@ import java.io.File
  */
 @RunWith(AndroidJUnit4::class)
 class GcodeBaselineDiffTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private val targetContext get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val assetContext get() = InstrumentationRegistry.getInstrumentation().context
@@ -64,30 +68,17 @@ class GcodeBaselineDiffTest {
     @Before
     fun setup() {
         assertTrue("Native library required", NativeLibrary.isLoaded)
-        // Use the package's own external files dir AND a parallel public
-        // Download mirror so the snapshots survive both:
-        //   (a) Android 14 scoped storage hiding `/sdcard/Android/data/`
-        //       from `adb pull` and `adb shell ls` outside the app process.
-        //   (b) The uid mismatch when reinstalling the app (the next
-        //       install gets a different uid that can't write into a dir
-        //       owned by the previous install's uid).
-        //
-        // The fix for (b): use a uid-stamped subdirectory. Each install
-        // gets a distinct dir owned by its own uid; old dirs persist on
-        // disk but don't block new writes. Host runner picks the most
-        // recent dir to pull from.
-        //
-        // We deliberately DO NOT wipe the directory here — Orchestrator
-        // gives each test its own process, so a `listFiles().delete()` in
-        // @Before would erase prior tests' snapshots in the same run.
-        val uidStamp = android.os.Process.myUid()
-        baselineDir = File("/sdcard/Download/u1-slicer-baselines-uid$uidStamp")
-            .also { it.mkdirs() }
+        // Private app storage supports writes under scoped storage and run-as export.
+        // The cleanup listener removes transient workspaces, not this diagnostics directory.
+        // Do not wipe it in @Before: Orchestrator starts a new process per fixture,
+        // so deleting here would erase snapshots from earlier tests in this run.
+        baselineDir = File(targetContext.filesDir, "diagnostics/gcode-baselines")
+            .also { assertTrue("Snapshot directory must be writable: $it", it.isDirectory || it.mkdirs()) }
     }
 
     @After
     fun teardown() {
-        // Leave baseline files for adb pull. They're gitignored / transient.
+        // Leave snapshots for run-as export before the runner restores the app sandbox.
     }
 
     private fun copyAssetToCache(assetName: String): File {
@@ -316,15 +307,6 @@ class GcodeBaselineDiffTest {
             sliceState as SlicerViewModel.SlicerState.SliceComplete
             val snapshot = buildSnapshot(snapshotName, sliceState.result.gcodePath)
             val outFile = File(baselineDir, "$snapshotName.snapshot.txt")
-            // Delete-before-write: across reinstalls the test app's UID
-            // changes, so files left from prior runs are owned by a
-            // previous UID and trigger EACCES on overwrite even though
-            // the directory is shared via media_rw group. Deleting the
-            // stale file first lets the fresh-UID write succeed.
-            // (Discovered 2026-04-28 sweep run b37v82bdb after the
-            // post-Buzz-fix sweep retained snapshots from an earlier
-            // sweep with a prior UID.)
-            if (outFile.exists()) outFile.delete()
             outFile.writeText(snapshot)
             assertNotNull(
                 "Wrote snapshot to ${outFile.absolutePath} (size=${outFile.length()})",
