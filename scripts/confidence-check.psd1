@@ -16,6 +16,8 @@
         'com.u1.slicer.slicing.SlicingIntegrationTest'
         'com.u1.slicer.slicing.U1NozzleSlicingTest'
         'com.u1.slicer.slicing.U1NozzleViewModelTest'
+        'com.u1.slicer.slicing.TrollNozzleRegressionTest'
+        'com.u1.slicer.native.NativeAdaptiveLayerHeightTest'
         'com.u1.slicer.viewer.PrepareSceneCompletionTest'
         'com.u1.slicer.ui.printer.U1PrepareSettingsTest'
         'com.u1.slicer.slicing.MachineBedSizeTest'

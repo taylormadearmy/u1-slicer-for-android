@@ -436,9 +436,9 @@ Java_com_u1_slicer_NativeLibrary_nativeDuplicateObject(JNIEnv*, jobject, jint ob
 
 JNIEXPORT jfloatArray JNICALL
 Java_com_u1_slicer_NativeLibrary_nativeSetAdaptiveLayerHeight(
-        JNIEnv* env, jobject, jfloat quality, jint smoothing_radius, jboolean keep_min) {
+        JNIEnv* env, jobject, jfloat quality, jint smoothing_radius, jboolean keep_min, jfloat nozzle_diameter) {
     if (!g_engine || smoothing_radius < 0) return nullptr;
-    const auto range = g_engine->setAdaptiveLayerHeight(quality, static_cast<unsigned int>(smoothing_radius), keep_min == JNI_TRUE);
+    const auto range = g_engine->setAdaptiveLayerHeight(quality, static_cast<unsigned int>(smoothing_radius), keep_min == JNI_TRUE, nozzle_diameter);
     if (range.empty()) return nullptr;
     jfloatArray result = env->NewFloatArray(static_cast<jsize>(range.size()));
     env->SetFloatArrayRegion(result, 0, static_cast<jsize>(range.size()), range.data());

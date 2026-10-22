@@ -27,6 +27,30 @@ import org.junit.runner.RunWith
 class PrinterEditDialogInstrumentedTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun changingGenericMachineToU1ClearsThePreviousProfileBinding() {
+        val snapshot = com.u1.slicer.slice.GenericMachineProfile.fromJson(
+            org.json.JSONObject(com.u1.slicer.slice.GenericMachineProfile.centauriCarbon().resolvedJson)
+                .put("machine_start_gcode", "G28").put("machine_end_gcode", "M104 S0").toString()
+        )
+        val existing = Printer("generic", "Workshop", moonrakerUrl = "http://127.0.0.1:9",
+            machineProfile = snapshot, machineProfileId = "old-generic-profile")
+        var saved: Printer? = null
+        compose.setContent {
+            MaterialTheme {
+                PrinterEditDialog(existing, onSave = { saved = it },
+                    onTest = { error("No printer should be contacted") }, onDismiss = {})
+            }
+        }
+        compose.onNodeWithText("Generic Klipper").performScrollTo().performClick()
+        compose.onNode(hasText("Snapmaker U1") and hasAnyAncestor(isPopup())).performClick()
+        compose.onNodeWithText("Save").performClick()
+        compose.runOnIdle {
+            assertEquals(MachineKind.SNAPMAKER_U1, saved?.machine)
+            org.junit.Assert.assertNull(saved?.machineProfile)
+            org.junit.Assert.assertNull(saved?.machineProfileId)
+        }
+    }
+
     @Test fun existingOfflineU1SavesInstalledNozzleDiameterForEachHead() {
         val existing = Printer("offline-u1", "Offline U1")
         var saved: Printer? = null

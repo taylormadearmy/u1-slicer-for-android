@@ -32,12 +32,12 @@ class AppContainer(context: Context) {
             com.u1.slicer.printer.PahoBambuMqttSessionFactory()
         )
     }
-    val printersRepository = PrintersRepository(context.applicationContext)
     private val machineProfilesDir = java.io.File(context.filesDir, "machine_profiles")
     val machineProfileRepository = MachineProfileRepository.fromContext(
         context.applicationContext,
         machineProfilesDir,
     )
+    val printersRepository = PrintersRepository(context.applicationContext, machineProfileRepository)
     val vendorCatalogClient = VendorCatalogClient()
     val profileCache = ProfileCache(machineProfilesDir)
     val cachedOrcaProfileLookup = CachedOrcaProfileLookup(profileCache, vendorCatalogClient)

@@ -56,7 +56,7 @@ class NativeLibrary {
 
     external fun clearModel()
     /** F101: returns [minMm, maxMm, pointCount] or null when generation is unavailable. */
-    external fun nativeSetAdaptiveLayerHeight(quality: Float, smoothingRadius: Int, keepMin: Boolean): FloatArray?
+    external fun nativeSetAdaptiveLayerHeight(quality: Float, smoothingRadius: Int, keepMin: Boolean, nozzleDiameter: Float = 0f): FloatArray?
     external fun nativeClearVariableLayerHeights(): Boolean
     /** Returns [minMm, maxMm, pointCount], or null when the model has fixed layers. */
     external fun nativeGetVariableLayerHeightRange(): FloatArray?

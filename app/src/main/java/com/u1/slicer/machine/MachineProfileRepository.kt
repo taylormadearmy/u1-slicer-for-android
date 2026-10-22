@@ -2,6 +2,8 @@ package com.u1.slicer.machine
 
 import android.content.Context
 import com.u1.slicer.data.Printer
+import com.u1.slicer.data.MachineKind
+import com.u1.slicer.slice.GenericMachineProfile
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -48,17 +50,48 @@ class MachineProfileRepository(
 
     /** Snapshots take precedence over catalogue IDs. An unresolved explicit binding never becomes U1. */
     fun activeFor(printer: Printer): MachineProfile {
-        printer.machineProfile?.let { return MachineProfile.fromSnapshot(it) }
-        if (printer.machine == com.u1.slicer.data.MachineKind.ELEGOO_CENTAURI_CARBON) {
-            return MachineProfile.fromSnapshot(com.u1.slicer.slice.GenericMachineProfile.centauriCarbon())
+        val profile = when {
+            printer.machineProfile != null -> MachineProfile.fromSnapshot(printer.machineProfile)
+            printer.machine == MachineKind.ELEGOO_CENTAURI_CARBON ->
+                MachineProfile.fromSnapshot(GenericMachineProfile.centauriCarbon())
+            printer.machineProfileId != null -> requireNotNull(byId(printer.machineProfileId)) {
+                "Machine profile '${printer.machineProfileId}' is unavailable. Choose a profile before slicing."
+            }
+            printer.machine in setOf(MachineKind.GENERIC_KLIPPER, MachineKind.GENERIC_MARLIN) ->
+                throw IllegalArgumentException("Choose a machine profile before slicing")
+            else -> builtInU1()
         }
-        printer.machineProfileId?.let { id ->
-            return requireNotNull(byId(id)) { "Machine profile '$id' is unavailable. Choose a profile before slicing." }
+        when (printer.machine) {
+            MachineKind.GENERIC_KLIPPER, MachineKind.GENERIC_MARLIN -> {
+                val expectedFlavor = if (printer.machine == MachineKind.GENERIC_KLIPPER) GcodeFlavor.KLIPPER else GcodeFlavor.MARLIN
+                require(profile.family == MachineFamily.GENERIC && profile.gcodeFlavor == expectedFlavor) {
+                    "Machine firmware must match the selected profile"
+                }
+            }
+            MachineKind.SNAPMAKER_U1 -> require(profile.family == MachineFamily.SNAPMAKER) {
+                "Select a Snapmaker U1 machine profile"
+            }
+            else -> Unit
         }
-        require(printer.machine !in setOf(com.u1.slicer.data.MachineKind.GENERIC_KLIPPER, com.u1.slicer.data.MachineKind.GENERIC_MARLIN)) {
-            "Choose a machine profile before slicing"
-        }
-        return builtInU1()
+        return profile
+    }
+
+    /** Older catalogue printers stored only an ID; restore the same immutable snapshot as new printers. */
+    fun restoreCachedBinding(printer: Printer, inferMachine: Boolean = false): Printer {
+        if (printer.machineProfile != null || printer.machineProfileId == null ||
+            printer.machine !in setOf(MachineKind.GENERIC_KLIPPER, MachineKind.GENERIC_MARLIN)) return printer
+        // Keep an unavailable printer visible so Settings can repair its binding.
+        return runCatching {
+            val cached = byId(printer.machineProfileId)?.takeIf { it.family == MachineFamily.GENERIC }
+                ?: return printer
+            val snapshot = GenericMachineProfile.fromPersistedJson(cached.machineJson)
+            printer.copy(
+                machineProfile = snapshot,
+                machine = if (!inferMachine) printer.machine else if (snapshot.gcodeFlavor == "klipper") {
+                    MachineKind.GENERIC_KLIPPER
+                } else MachineKind.GENERIC_MARLIN,
+            )
+        }.getOrDefault(printer)
     }
 
     /** Returns the supported physical slot count for a configured printer. */

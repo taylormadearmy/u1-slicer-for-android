@@ -2624,7 +2624,7 @@ fun PrepareScreen(
                         label = if (com.u1.slicer.slice.isLocalSliceAvailable(activePrinter)) {
                             "Slice Model"
                         } else {
-                            "Use a Bambu Studio project"
+                            "Select a machine profile"
                         },
                         onClick = {
                         val viewer = captureViewer

@@ -12,6 +12,14 @@ import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class NativeAdaptiveLayerHeightTest {
+    @Test fun adaptiveProfile_usesInstalledSmallNozzleForRawModel() {
+        val lib = NativeLibrary()
+        try {
+            assertTrue(lib.loadModel(copyAsset("3DBenchy.stl")))
+            val range = requireNotNull(lib.nativeSetAdaptiveLayerHeight(.5f, 5, false, 0.2f))
+            assertTrue("Layer heights must fit the installed 0.2 mm nozzle", range[0] > 0f && range[1] <= .16001f)
+        } finally { lib.clearModel() }
+    }
     private fun copyAsset(name: String): String {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val file = File(instrumentation.targetContext.cacheDir, name)

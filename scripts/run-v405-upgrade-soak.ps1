@@ -31,12 +31,12 @@ function Run-Fixture([string]$Method) {
     }
 }
 # Caller must preserve the complete sandbox before any regression suite modifies it.
-Invoke-CheckedAdb @('install', '-r', '-d', (Resolve-Path -LiteralPath $PublishedApk).Path)
-Invoke-CheckedAdb @('install', '-r', (Resolve-Path -LiteralPath $TestApk).Path)
+Invoke-CheckedAdb -AdbArgs @('install', '-r', '-d', (Resolve-Path -LiteralPath $PublishedApk).Path)
+Invoke-CheckedAdb -AdbArgs @('install', '-r', (Resolve-Path -LiteralPath $TestApk).Path)
 Run-Fixture 'seedPublished405DataAndGenericJob'
-Invoke-CheckedAdb @('install', '-r', (Resolve-Path -LiteralPath $CandidateApk).Path)
-Invoke-CheckedAdb @('shell', 'am', 'start', '-W', '-n', 'com.u1.slicer.orca/com.u1.slicer.MainActivity')
+Invoke-CheckedAdb -AdbArgs @('install', '-r', (Resolve-Path -LiteralPath $CandidateApk).Path)
+Invoke-CheckedAdb -AdbArgs @('shell', 'am', 'start', '-W', '-n', 'com.u1.slicer.orca/com.u1.slicer.MainActivity')
 Run-Fixture 'verifyPublished405PrintersAndSchema9JobAfterUpgrade'
-Invoke-CheckedAdb @('install', '-r', (Resolve-Path -LiteralPath $CandidateApk).Path)
+Invoke-CheckedAdb -AdbArgs @('install', '-r', (Resolve-Path -LiteralPath $CandidateApk).Path)
 Run-Fixture 'verifyPublished405PrintersAndSchema9JobAfterUpgrade'
 Write-Host 'Published 405 printer snapshots, credentials, profile identity, and schema 9 job survived upgrade and reinstall.'

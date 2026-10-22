@@ -200,7 +200,7 @@ public:
 
     // F101: generate/clear/query per-object variable-layer profiles.  Orca stores
     // these on ModelObject rather than in the (legacy) adaptive_layer_height key.
-    std::vector<float> setAdaptiveLayerHeight(float quality, unsigned int smoothing_radius, bool keep_min);
+    std::vector<float> setAdaptiveLayerHeight(float quality, unsigned int smoothing_radius, bool keep_min, float nozzle_diameter = 0.f);
     bool clearVariableLayerHeights();
     std::vector<float> getVariableLayerHeightRange() const;
 

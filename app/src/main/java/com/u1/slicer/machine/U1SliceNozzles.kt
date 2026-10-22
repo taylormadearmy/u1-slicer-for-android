@@ -27,8 +27,12 @@ data class U1SliceNozzles(
         val slots = tools.map { tool ->
             mapping?.getOrNull(tool) ?: tool
         }
-        require(slots.all { it in 0..3 && hardware.diameterMm(it) == diameterMm }) {
-            "This G-code requires $diameterMm mm nozzles. Choose matching toolheads or slice again for the installed nozzle size."
+        val mismatches = slots.distinct().filter { it !in 0..3 || hardware.diameterMm(it) != diameterMm }
+        require(mismatches.isEmpty()) {
+            val details = mismatches.joinToString { slot ->
+                if (slot in 0..3) "E${slot + 1} is configured as ${hardware.diameterMm(slot)} mm" else "E${slot + 1} is unavailable"
+            }
+            "This G-code requires $diameterMm mm nozzles, but $details. Choose matching toolheads or slice again for the installed nozzle size."
         }
     }
 

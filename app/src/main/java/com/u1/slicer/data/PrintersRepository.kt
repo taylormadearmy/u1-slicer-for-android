@@ -5,9 +5,11 @@ import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.u1.slicer.machine.MachineProfileRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import org.json.JSONObject
 
 private val Context.printersDataStore by preferencesDataStore(name = "printers_config")
 
@@ -20,13 +22,17 @@ private val Context.printersDataStore by preferencesDataStore(name = "printers_c
  * unit-tested without DataStore. The instance methods wrap them with the
  * DataStore.edit { } write.
  */
-class PrintersRepository(private val context: Context) {
+class PrintersRepository(
+    private val context: Context,
+    private val machineProfiles: MachineProfileRepository,
+) {
+    constructor(context: Context) : this(context, MachineProfileRepository.fromContext(context))
 
     private val key = stringPreferencesKey(KEY_NAME)
 
     val config: Flow<PrintersConfig?> = context.printersDataStore.data.map { prefs ->
         val raw = prefs[key]
-        if (raw.isNullOrBlank()) null else runCatching { PrintersConfig.fromJson(raw) }.getOrNull()
+        if (raw.isNullOrBlank()) null else runCatching { decodeConfig(raw, machineProfiles) }.getOrNull()
     }
 
     /** Convenience: emits the active printer once config exists. */
@@ -50,14 +56,21 @@ class PrintersRepository(private val context: Context) {
     }
 
     /**
-     * Runs migration if `printers_config_json` is not yet present.
-     * Idempotent — calling repeatedly is a no-op after the first successful run.
+     * Seeds legacy settings on first launch and backfills older cached profile bindings.
+     * Existing snapshots and unresolved printer records remain intact.
      */
     suspend fun runMigrationIfNeeded(settingsRepository: SettingsRepository) {
         val current = context.printersDataStore.data
             .map { it[key] }
             .first()
-        if (!current.isNullOrBlank()) return  // already migrated
+        if (!current.isNullOrBlank()) {
+            context.printersDataStore.edit { prefs ->
+                val raw = prefs[key] ?: return@edit
+                val restored = runCatching { restoreCachedBindings(raw, machineProfiles) }.getOrNull()
+                if (restored != null && restored != raw) prefs[key] = restored
+            }
+            return
+        }
 
         val legacyUrl = settingsRepository.printerUrl.first()
         val legacyPresetsJson = settingsRepository.extruderPresetsJson.first()
@@ -69,7 +82,7 @@ class PrintersRepository(private val context: Context) {
     private suspend fun mutate(transform: (PrintersConfig) -> PrintersConfig) {
         context.printersDataStore.edit { prefs ->
             val raw = prefs[key] ?: return@edit
-            val current = runCatching { PrintersConfig.fromJson(raw) }.getOrNull() ?: return@edit
+            val current = runCatching { decodeConfig(raw, machineProfiles) }.getOrNull() ?: return@edit
             val next = transform(current)
             if (next !== current) {
                 prefs[key] = PrintersConfig.toJson(next)
@@ -80,6 +93,26 @@ class PrintersRepository(private val context: Context) {
     companion object {
         const val KEY_NAME = "printers_config_json"
         private const val TAG = "PrintersRepository"
+
+        internal fun decodeConfig(raw: String, machineProfiles: MachineProfileRepository): PrintersConfig =
+            PrintersConfig.fromJson(restoreCachedBindings(raw, machineProfiles))
+
+        /** Backfill only resolved bindings, preserving unavailable records and unknown persisted fields. */
+        internal fun restoreCachedBindings(raw: String, machineProfiles: MachineProfileRepository): String {
+            val root = JSONObject(raw)
+            val printers = root.getJSONArray("printers")
+            var changed = false
+            for (index in 0 until printers.length()) {
+                val source = printers.optJSONObject(index) ?: continue
+                val printer = runCatching { Printer.fromJsonObject(source) }.getOrNull() ?: continue
+                val restored = machineProfiles.restoreCachedBinding(printer, inferMachine = !source.has("machine"))
+                if (restored == printer) continue
+                source.put("machineProfile", JSONObject(requireNotNull(restored.machineProfile).resolvedJson))
+                source.put("machine", restored.machine.name)
+                changed = true
+            }
+            return if (changed) root.toString() else raw
+        }
 
         fun applyAdd(cfg: PrintersConfig, p: Printer): PrintersConfig =
             cfg.copy(printers = cfg.printers + p)

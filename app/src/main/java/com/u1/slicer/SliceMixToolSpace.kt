@@ -1,5 +1,16 @@
 package com.u1.slicer
 
+/** Array capacity must cover sparse real tool ids; virtual ColorMix ids use a separate recipe. */
+internal fun requiredAssignedToolCount(assignments: Collection<Int>, canonicalCount: Int, physicalCount: Int): Int =
+    assignments.filter { it in 1..maxOf(canonicalCount, physicalCount) }.maxOrNull() ?: 1
+
+internal fun adaptiveLayerCompatibilityError(usedToolCount: Int, hasMix: Boolean, organicSupports: Boolean): String? = when {
+    hasMix -> "Adaptive layer height requires a single tool and cannot be used with ColorMix."
+    usedToolCount > 1 -> "Adaptive layer height requires a single-tool print; prime-tower layers must stay aligned."
+    organicSupports -> "Adaptive layer height is not supported with Organic supports. Turn supports off, choose a compatible support style, or use fixed layer heights."
+    else -> null
+}
+
 internal data class SliceMixToolSpaceDecision(
     val anyMixAssigned: Boolean,
     val mixToolSpace: Boolean,

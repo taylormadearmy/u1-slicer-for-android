@@ -112,7 +112,9 @@ fun PrinterEditDialog(
         bambu = if (kind == PrinterKind.BAMBU_LAN) BambuConfig(ip.trim(), accessCode.trim(), serial.trim().uppercase(java.util.Locale.ROOT), model) else null,
         machine = machine,
         machineProfile = profile.takeIf { machine == MachineKind.GENERIC_KLIPPER || machine == MachineKind.GENERIC_MARLIN },
-        machineProfileId = existing?.machineProfileId.takeIf { existing?.machineProfile == profile },
+        machineProfileId = existing?.machineProfileId.takeIf {
+            existing?.machine == machine && existing?.machineProfile == profile
+        },
         host = if (kind == PrinterKind.ELEGOO_CC1 || kind == PrinterKind.OCTOPRINT) PrintHostConfig(url.trim(), if (kind == PrinterKind.OCTOPRINT) apiKey.trim() else "") else null,
         extruderPresets = existing?.extruderPresets ?: if (machine == MachineKind.SNAPMAKER_U1) defaultExtruderPresets() else emptyList(),
         u1Nozzles = u1Nozzles,

@@ -6,6 +6,9 @@ import com.u1.slicer.printer.elegoo.ElegooCc1Transport
 import com.u1.slicer.data.HostType
 import com.u1.slicer.network.MoonrakerClient
 import com.u1.slicer.machine.MachineProfile
+import com.u1.slicer.network.FilamentSlot
+import com.u1.slicer.network.PrinterStatus
+import kotlinx.coroutines.flow.flowOf
 import java.net.URI
 
 interface PrinterTransportFactory {
@@ -29,7 +32,7 @@ class DefaultPrinterTransportFactory(
     private val machineProfileFactory: (Printer) -> MachineProfile? = { null },
 ) : PrinterTransportFactory {
     override fun create(printer: Printer): PrinterTransport = when (printer.hostType) {
-        HostType.MOONRAKER -> {
+        HostType.MOONRAKER -> try {
             val profile = machineProfileFactory(printer)
             MoonrakerTransport(
                 client = moonrakerClientFactory().also { client ->
@@ -41,6 +44,8 @@ class DefaultPrinterTransportFactory(
                 maxNozzleTemperatureC = profile?.maxNozzleTemperatureC
                     ?: MachineProfile.DEFAULT_MAX_NOZZLE_TEMPERATURE_C,
             )
+        } catch (error: IllegalArgumentException) {
+            UnavailableMachineTransport(error.message ?: "Choose a valid machine profile in Settings")
         }
         HostType.BAMBU_LAN -> BambuLanTransport(
             config = requireNotNull(printer.bambu),
@@ -50,6 +55,14 @@ class DefaultPrinterTransportFactory(
         HostType.OCTOPRINT -> octoPrintTransportFactory(printer)
         HostType.PRUSALINK -> prusaLinkTransportFactory(printer)
     }
+}
+
+private class UnavailableMachineTransport(private val reason: String) : PrinterTransport {
+    override val capabilities = PrinterTransportCapabilities()
+    override val status = flowOf(PrinterStatus(state = "disconnected", progress = 0f))
+    override val cameraState = flowOf<CameraState>(CameraState.Disabled)
+    override val filamentSlots = flowOf(emptyList<FilamentSlot>())
+    override suspend fun testConnection(): String = reason
 }
 
 internal fun normalizePrintHostUrl(raw: String, hostType: HostType): String {

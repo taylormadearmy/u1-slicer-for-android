@@ -20,9 +20,20 @@ object ThreeMfColourRemapper {
     ): File {
         ZipFile(input).use { source ->
             ZipOutputStream(FileOutputStream(output)).use { dest ->
+                val implicitTool = sourceFileIndexToToolState[0]?.takeIf { it != 1 }
+                val needsDefaultAssignment = implicitTool != null &&
+                    source.getEntry("Metadata/model_settings.config") == null &&
+                    source.getEntry("Metadata/Slic3r_PE_model.config") == null
+                var defaultObjectIds: List<String> = emptyList()
                 source.entries().asSequence().forEach { entry ->
                     dest.putNextEntry(ZipEntry(entry.name))
                     val bytes = source.getInputStream(entry).readBytes()
+                    if (needsDefaultAssignment && entry.name == "3D/3dmodel.model") {
+                        val build = Regex("""<build\b[^>]*>([\s\S]*?)</build>""")
+                            .find(bytes.toString(Charsets.UTF_8))?.groupValues?.get(1).orEmpty()
+                        defaultObjectIds = Regex("""\bobjectid\s*=\s*["']([0-9]+)["']""")
+                            .findAll(build).map { it.groupValues[1] }.distinct().toList()
+                    }
                     val rewritten = when {
                         entry.name.endsWith(".model") -> rewriteModel(bytes, sourceStateToToolState)
                         entry.name == "Metadata/model_settings.config" || entry.name == "Metadata/Slic3r_PE_model.config" ->
@@ -30,6 +41,18 @@ object ThreeMfColourRemapper {
                         else -> bytes
                     }
                     dest.write(rewritten)
+                    dest.closeEntry()
+                }
+                if (defaultObjectIds.isNotEmpty()) {
+                    val settings = buildString {
+                        append("<config>")
+                        defaultObjectIds.forEach { id ->
+                            append("<object id=\"$id\"><metadata key=\"extruder\" value=\"$implicitTool\"/></object>")
+                        }
+                        append("</config>")
+                    }
+                    dest.putNextEntry(ZipEntry("Metadata/model_settings.config"))
+                    dest.write(settings.toByteArray(Charsets.UTF_8))
                     dest.closeEntry()
                 }
             }

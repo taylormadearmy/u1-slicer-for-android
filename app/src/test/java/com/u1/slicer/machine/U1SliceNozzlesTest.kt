@@ -9,6 +9,12 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class U1SliceNozzlesTest {
+    @Test fun `mismatch identifies the head and its installed diameter`() {
+        val error = runCatching {
+            U1SliceNozzles(0.2f, listOf(0), GcodeToolSpace.PHYSICAL).validate(U1NozzleConfiguration(), null)
+        }.exceptionOrNull()!!
+        assertTrue(error.message!!.contains("E1 is configured as 0.4 mm"))
+    }
     @get:Rule val temporary = TemporaryFolder()
 
     @Test fun `every supported diameter resolves for uniform active heads`() {

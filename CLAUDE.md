@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v5.0.3` (`versionCode 503`)
+Current release: `v5.0.4` (`versionCode 504`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -92,8 +92,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2274 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 511 independent device tests, uses Orchestrator
+./gradlew testDebugUnitTest                        # 2294 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 520 independent device tests, uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -122,7 +122,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2274 tests across 253 reported test suites
+### Unit tests (`app/src/test/`) - 2294 tests across 255 reported test suites
 - Generic printer coverage includes imported machine-profile validation and identity, saved-job compatibility, filament temperature composition, CC1 and OctoPrint protocol handling, and draft connection/preset persistence.
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
@@ -224,12 +224,13 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 522 tests across 90 Kotlin source files
+### Instrumented tests (`app/src/androidTest/`) - 531 tests across 97 Kotlin source files
 
-The default runner executes 511 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
+The default runner executes 520 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
 
 - `slicing/GenericIndependentExtruderNativeTest.kt` has three checks for two- and four-tool Klipper and Marlin output, actual extrusion, selected offsets and heating, and numeric test-oracle correctness.
-- `ui/printer/PrinterEditDialogInstrumentedTest.kt` has nine checks for the experimental add gate, the CC1 route, saved third-party editing, immutable Marlin snapshots, host credentials, and refusal to save a generic machine without its profile.
+- `ui/printer/PrinterEditDialogInstrumentedTest.kt` has 11 checks for the experimental add gate, the CC1 route, saved third-party editing, immutable Marlin snapshots, host credentials, installed nozzle settings, stale-binding removal, and refusal to save a generic machine without its profile.
+- `slicing/LegacyMachineBindingIntegrationTest.kt` has two checks for cached-profile recovery, native slicing after printer switching, and persistence after cache loss.
 - `migration/V405UpgradeMigrationTest.kt` seeds the published schema-9 app and verifies printer identity, credentials, job fingerprints, files, upgrade, and reinstall.
 - New device coverage includes generic native slicing and ViewModel filament propagation, saved-job migration, printer-edit validation, compact filament mapping rows, and large painted-model colour remapping.
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count

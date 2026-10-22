@@ -1124,9 +1124,11 @@ void SlicerEngine::clearModel() {
     SAPIL_LOGI("Model cleared");
 }
 
-std::vector<float> SlicerEngine::setAdaptiveLayerHeight(float quality, unsigned int smoothing_radius, bool keep_min) {
+std::vector<float> SlicerEngine::setAdaptiveLayerHeight(float quality, unsigned int smoothing_radius, bool keep_min, float nozzle_diameter) {
     if (!g_model_loaded || g_model.objects.empty() || !std::isfinite(quality) || quality < 0.f || quality > 1.f)
         return {};
+
+    if (!std::isfinite(nozzle_diameter) || nozzle_diameter < 0.f) return {};
 
     // The loaded project config is the closest source of truth for imported files.
     // Raw models have no embedded profile, so seed just the values the slicing-parameter
@@ -1140,6 +1142,22 @@ std::vector<float> SlicerEngine::setAdaptiveLayerHeight(float quality, unsigned 
         config.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(0.2));
     if (!config.has("initial_layer_print_height"))
         config.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(0.2));
+
+    if (nozzle_diameter > 0.f) {
+        const auto* nozzles = config.option<Slic3r::ConfigOptionFloats>("nozzle_diameter");
+        const bool changed = !nozzles || nozzles->values.empty() ||
+            std::any_of(nozzles->values.begin(), nozzles->values.end(), [nozzle_diameter](double value) {
+                return std::abs(value - nozzle_diameter) > 1e-6;
+            });
+        if (changed) {
+            const size_t count = nozzles ? std::max(size_t(1), nozzles->values.size()) : 1;
+            config.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(std::vector<double>(count, nozzle_diameter)));
+            config.set_key_value("min_layer_height", new Slic3r::ConfigOptionFloats(std::vector<double>(count, nozzle_diameter * 0.2)));
+            config.set_key_value("max_layer_height", new Slic3r::ConfigOptionFloats(std::vector<double>(count, nozzle_diameter * 0.8)));
+            config.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(nozzle_diameter * 0.5));
+            config.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(nozzle_diameter * 0.5));
+        }
+    }
 
     float min_height = std::numeric_limits<float>::infinity();
     float max_height = 0.f;

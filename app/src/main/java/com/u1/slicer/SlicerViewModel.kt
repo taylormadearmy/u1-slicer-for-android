@@ -417,7 +417,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     private val activeMachineResolution = printersRepo.activePrinter
-        .map { printer -> runCatching { printer?.let(machineProfilesRepo::activeFor) ?: machineProfilesRepo.builtInU1() } }
+        .map { printer ->
+            runCatching { printer?.let(machineProfilesRepo::activeFor) ?: machineProfilesRepo.builtInU1() }.also { result ->
+                diagnostics.recordEvent("machine_profile_resolution", mapOf(
+                    "printerId" to printer?.id,
+                    "machineKind" to printer?.machine?.name,
+                    "machineProfileId" to printer?.machineProfileId,
+                    "hasEmbeddedProfile" to (printer?.machineProfile != null),
+                    "resolvedProfileId" to result.getOrNull()?.id,
+                    "error" to result.exceptionOrNull()?.message,
+                ))
+            }
+        }
         .stateIn(
             viewModelScope,
             SharingStarted.Eagerly,
@@ -5020,12 +5031,38 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun adaptiveLayerBlockReason(): String? {
+        val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+        val hasMix = decideSliceMixToolSpace(
+            numPhysical = numPhysical,
+            canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical,
+            hasActiveMixRows = mixedFilamentManager.activeOrder(numPhysical).isNotEmpty(),
+            objectMixAssigned = _perVolumeExtruders.value.values.any { it > maxOf(numPhysical, _canonicalFilamentList.value?.size ?: 0) },
+            paintedMixAssigned = ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0 ||
+                _canonicalColourRemaps.value.any { it.destination is CanonicalColourDestination.Mix },
+            canonicalColourRemapActive = _canonicalColourRemaps.value.isNotEmpty(),
+        ).anyMixAssigned
+        val usedToolCount = if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) {
+            runCatching { u1ToolUsage().nativeTools.size }.getOrElse { return it.message ?: "Choose valid tool assignments." }
+        } else _config.value.extruderCount
+        val overrides = slicingOverrides.value
+        val effective = overrides.resolveInto(_config.value)
+        val source = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+        val supports = if (overrides.supports.mode == OverrideMode.USE_FILE) {
+            source["enable_support"]?.toString()?.let { it == "1" || it == "true" } ?: effective.supportEnabled
+        } else effective.supportEnabled
+        val type = if (overrides.supportType.mode == OverrideMode.USE_FILE) {
+            source["support_type"]?.toString() ?: effective.supportType
+        } else effective.supportType
+        val style = source["support_style"]?.toString() ?: "default"
+        return adaptiveLayerCompatibilityError(usedToolCount, hasMix,
+            supports && type.startsWith("tree") && style in setOf("default", "organic"))
+    }
+
     /** Applies project-scoped variable-layer state synchronously for UI and session replay. */
     private suspend fun applyAdaptiveLayerHeight(state: AdaptiveLayerHeightState): Boolean {
-        val needsTower = _config.value.extruderCount > 1 || _sliceMixToolSpace.value
-        if (state.mode == AdaptiveLayerHeightState.Mode.ADAPTIVE && needsTower) {
-            _toastEvents.tryEmit("Adaptive layers require a single-tool print; the prime tower needs aligned layers.")
-            return false
+        if (state.mode == AdaptiveLayerHeightState.Mode.ADAPTIVE) {
+            adaptiveLayerBlockReason()?.let { _toastEvents.tryEmit(it); return false }
         }
         val range = NativeLibrary.previewMutex.withLock {
             when (state.mode) {
@@ -5035,7 +5072,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     null
                 }
                 AdaptiveLayerHeightState.Mode.ADAPTIVE -> state.preset.let { preset ->
-                    native.nativeSetAdaptiveLayerHeight(preset.quality, preset.smoothingRadius, preset.keepMinimum)
+                    native.nativeSetAdaptiveLayerHeight(preset.quality, preset.smoothingRadius, preset.keepMinimum,
+                        if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) u1DiameterForSlice() else 0f)
                 }
             }
         }
@@ -5049,12 +5087,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun reapplyAdaptiveLayerHeightForSlice(): Boolean {
         val state = _adaptiveLayerHeight.value
         if (state.mode != AdaptiveLayerHeightState.Mode.ADAPTIVE) return true
-        if (_config.value.extruderCount > 1 || _sliceMixToolSpace.value) {
-            _state.value = SlicerState.Error("Adaptive layer height cannot slice with a prime tower or ColorMix.")
+        adaptiveLayerBlockReason()?.let {
+            _state.value = SlicerState.Error(it)
             return false
         }
         val preset = state.preset
-        val range = native.nativeSetAdaptiveLayerHeight(preset.quality, preset.smoothingRadius, preset.keepMinimum)
+        val range = native.nativeSetAdaptiveLayerHeight(preset.quality, preset.smoothingRadius, preset.keepMinimum,
+                        if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) u1DiameterForSlice() else 0f)
         _adaptiveLayerHeightRange.value = range
         return range != null
     }
@@ -5266,7 +5305,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             if (ov125.supportFilament.mode == OverrideMode.OVERRIDE) ov125.supportFilament.value ?: 0 else 0,
             if (ov125.supportInterfaceFilament.mode == OverrideMode.OVERRIDE) ov125.supportInterfaceFilament.value ?: 0 else 0
         )
-        var targetCount = maxOf(computedTarget, canonicalSize, maxSupportSlot)
+        val assignedToolCount = requiredAssignedToolCount(
+            _perVolumeExtruders.value.values, canonicalSize, activePhysicalSlotCount())
+        var targetCount = maxOf(computedTarget, canonicalSize, maxSupportSlot, assignedToolCount)
         val f99Remaps = _canonicalColourRemaps.value
         val f99UsesMix = f99Remaps.any { it.destination is CanonicalColourDestination.Mix }
         val remapPhysicalCount = if (f99UsesMix) {
@@ -5913,9 +5954,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Result.success(SliceConfig()))
 
+    private data class U1ToolUsage(val nativeTools: Set<Int>, val physicalSlots: Set<Int>)
+
     private fun u1DiameterForSlice(): Float {
         val hardware = activePrinterForSlicing.value?.u1Nozzles ?: U1NozzleConfiguration()
         hardware.diametersMm.distinct().singleOrNull()?.let { return it }
+        return resolveU1SliceDiameter(hardware, u1ToolUsage().physicalSlots)
+    }
+
+    private fun u1ToolUsage(): U1ToolUsage {
         val info = _threeMfInfo.value ?: sourceModelInfo
         val sourceTools = if (_perVolumeExtruders.value.isNotEmpty() && info?.hasPaintData != true) {
             _meshSourceExtruders0Based.value.map { it + 1 }
@@ -5950,15 +5997,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val mixBase = if (lowered != null || (info?.fullSpectrumPhysicalCount ?: 0) > 0) 4 else
             maxOf(4, _canonicalFilamentList.value?.size ?: 0)
         val mapping = resolveExportMapping(GcodeToolSpace.CANONICAL)
-        val physicalSlots = tools.flatMap { tool ->
-            val loweredTool = lowered?.get(tool - 1) ?: tool
+        val nativeTools = tools.map { lowered?.get(it - 1) ?: it }.toSet()
+        val physicalSlots = nativeTools.flatMap { loweredTool ->
             if (mixSpace && loweredTool > mixBase) {
                 val row = mixes.getOrNull(loweredTool - mixBase - 1)
                     ?: error("A selected ColorMix recipe is unavailable. Choose a valid mix before slicing.")
                 row.componentIds.map { it - 1 }
-            } else listOf(if (mixSpace) loweredTool - 1 else mapping?.getOrNull(tool - 1) ?: tool - 1)
+            } else listOf(if (mixSpace) loweredTool - 1 else mapping?.getOrNull(loweredTool - 1) ?: loweredTool - 1)
         }
-        return resolveU1SliceDiameter(hardware, physicalSlots)
+        return U1ToolUsage(nativeTools, physicalSlots.toSet())
     }
 
     fun startSlicing() {
@@ -6517,6 +6564,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         cfg.supportFilament,
                         cfg.supportInterfaceFilament,
                         mixPhysicalBase,
+                        requiredAssignedToolCount(_perVolumeExtruders.value.values,
+                            _canonicalFilamentList.value?.size ?: 0, numPhysical),
                     )
                     val slotFilamentTypes = extruderPresets.value
                         .sortedBy { it.index }

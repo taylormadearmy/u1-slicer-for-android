@@ -43,7 +43,9 @@ for ($index = 0; $index -lt $commandTexts.Count; $index++) {
     & ([scriptblock]::Create($commandTexts[$index]))
     $expected = $expectedCommands[$index]
     if (($expected -join "`0") -cne ($script:v405CapturedArguments -join "`0")) {
-        throw "Downgrade command differs: command $index expected [$($expected -join ' ')], actual [$($script:v405CapturedArguments -join ' ')]"
+        $expectedJson = ConvertTo-Json -InputObject $expected -Compress
+        $actualJson = ConvertTo-Json -InputObject $script:v405CapturedArguments -Compress
+        throw "Downgrade command differs: command $index expected $expectedJson, actual $actualJson"
     }
 }
 Write-Host 'Published 405 workflow argument capture: PASS; all five commands preserve every flag.'
