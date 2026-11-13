@@ -1,0 +1,15 @@
+{
+  "type": "machine",
+  "name": "Generic Klipper 300",
+  "printer_model": "Generic Klipper",
+  "printer_variant": "0.4",
+  "printable_area": ["0x0", "300x0", "300x300", "0x300"],
+  "printable_height": "350",
+  "nozzle_diameter": ["0.4"],
+  "gcode_flavor": "klipper",
+  "single_extruder_multi_material": "0",
+  "machine_start_gcode": "G28\nPRINT_START",
+  "machine_end_gcode": "END_PRINT",
+  "machine_change_filament_gcode": "",
+  "machine_pause_gcode": "PAUSE"
+}

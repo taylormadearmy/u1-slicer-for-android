@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.ViewConfiguration
+import com.u1.slicer.machine.MachineFamily
 
 class ModelViewerView(context: Context) : BaseGLViewerView(context) {
 
@@ -159,8 +160,13 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
-    fun setBedSizeMm(sizeXmm: Float, sizeYmm: Float = sizeXmm) {
-        renderer.pendingBedSizeMm = sizeXmm to sizeYmm
+    fun setBedProfile(
+        sizeXmm: Float,
+        sizeYmm: Float,
+        bedStlAsset: String?,
+        machineFamily: MachineFamily,
+    ) {
+        renderer.pendingBedProfile = BedRenderProfile(sizeXmm, sizeYmm, bedStlAsset, machineFamily)
         requestRender()
     }
 

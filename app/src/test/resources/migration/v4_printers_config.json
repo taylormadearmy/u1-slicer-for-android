@@ -1,0 +1,41 @@
+{
+  "printers": [
+    {
+      "id": "u1-primary-v4",
+      "nickname": "Workshop U1",
+      "kind": "MOONRAKER",
+      "moonrakerUrl": "http://127.0.0.1:7125",
+      "extruderPresets": [
+        {"index": 0, "color": "#E53935", "materialType": "PLA", "filamentProfileId": 11},
+        {"index": 1, "color": "#1E88E5", "materialType": "PETG", "filamentProfileId": 12},
+        {"index": 3, "color": "#43A047", "materialType": "TPU", "filamentProfileId": 13}
+      ],
+      "selectedWebcamUid": "u1-cam-primary"
+    },
+    {
+      "id": "u1-secondary-v4",
+      "nickname": "Spare U1",
+      "kind": "MOONRAKER",
+      "moonrakerUrl": "http://127.0.0.1:7126",
+      "extruderPresets": [
+        {"index": 0, "color": "#8E24AA", "materialType": "PLA", "filamentProfileId": 21},
+        {"index": 2, "color": "#FDD835", "materialType": "ABS", "filamentProfileId": 22}
+      ],
+      "selectedWebcamUid": "u1-cam-secondary"
+    },
+    {
+      "id": "bambu-a1-v4",
+      "nickname": "Offline Bambu",
+      "kind": "BAMBU_LAN",
+      "moonrakerUrl": "",
+      "bambu": {
+        "ip": "127.0.0.1",
+        "accessCode": "fixture-only-access-code",
+        "serial": "fixture-a1-serial",
+        "model": "A1"
+      },
+      "extruderPresets": []
+    }
+  ],
+  "activeId": "u1-secondary-v4"
+}

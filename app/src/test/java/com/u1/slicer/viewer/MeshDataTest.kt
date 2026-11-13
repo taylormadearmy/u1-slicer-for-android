@@ -7,8 +7,38 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class MeshDataTest {
+
+    @Test
+    fun `recolor preserves shared buffer positions while changing colors`() {
+        val mesh = makeMesh(2, byteArrayOf(0, 1))
+        val batch = mesh.batches.single()
+        batch.colorBuffer = ByteBuffer.allocateDirect(2 * 3 * 4 * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+        batch.colorBuffer!!.position(7)
+        batch.materialIndices!!.position(1)
+        mesh.recolor(listOf(floatArrayOf(1f, 0f, 0f, 1f), floatArrayOf(0f, 1f, 0f, 1f)))
+        assertEquals(7, batch.colorBuffer!!.position())
+        assertEquals(1, batch.materialIndices!!.position())
+        assertEquals(1f, batch.colorBuffer!!.get(0), 0f)
+        assertEquals(1f, batch.colorBuffer!!.get(13), 0f)
+    }
+
+    @Test
+    fun `layer recolor preserves shared buffer position while changing colors`() {
+        val mesh = makeMesh(2)
+        val batch = mesh.batches.single()
+        batch.colorBuffer = ByteBuffer.allocateDirect(2 * 3 * 4 * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+        batch.colorBuffer!!.position(7)
+        mesh.recolorByZBands(listOf(LayerToolSegment(topZ = 0f, extruderBambu = 2)),
+            listOf(floatArrayOf(1f, 0f, 0f, 1f), floatArrayOf(0f, 1f, 0f, 1f)))
+        assertEquals(7, batch.colorBuffer!!.position())
+        assertEquals(1f, batch.colorBuffer!!.get(1), 0f)
+        assertEquals(1f, batch.colorBuffer!!.get(13), 0f)
+    }
 
     private fun makeMesh(
         triangleCount: Int,

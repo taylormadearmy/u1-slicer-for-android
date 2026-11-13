@@ -52,13 +52,10 @@ class ModelScaleConverterTest {
         assertEquals(0f, ModelScaleConverter.scaleToMm(1f, 0f), 1e-4f)
     }
 
-    @Test fun `exceedsBed false for normal sizes`() {
-        assertFalse(ModelScaleConverter.exceedsBed(1f, 100f))
-        assertFalse(ModelScaleConverter.exceedsBed(2.7f, 100f)) // exactly 270 mm
-    }
-
-    @Test fun `exceedsBed true when scaled size exceeds 270mm`() {
-        assertTrue(ModelScaleConverter.exceedsBed(3f, 100f))
-        assertTrue(ModelScaleConverter.exceedsBed(1.5f, 200f))
+    @Test fun `exceedsBed uses the supplied axis limit`() {
+        for (limit in listOf(180f, 270f, 300f)) {
+            assertFalse(ModelScaleConverter.exceedsBed(1f, limit, limit))
+            assertTrue(ModelScaleConverter.exceedsBed(1f, limit + 0.1f, limit))
+        }
     }
 }

@@ -57,9 +57,9 @@ import com.u1.slicer.BuildConfig
 import com.u1.slicer.GITHUB_URL
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.U1SlicerApplication
-import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.network.UpdateChecker
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
@@ -100,8 +100,8 @@ fun SettingsScreen(
     val currentOverrides by viewModel.slicingOverrides.collectAsState()
     var overrides by remember(currentOverrides) { mutableStateOf(currentOverrides) }
     val plateType by viewModel.plateType.collectAsState()
-    val bambuBetaEnabled by viewModel.bambuBetaEnabled.collectAsState()
-    var showBambuBetaDialog by remember { mutableStateOf(false) }
+    val experimentalPrinterSupportEnabled by
+        viewModel.experimentalPrinterSupportEnabled.collectAsState()
 
     Scaffold(
         topBar = {
@@ -411,117 +411,63 @@ fun SettingsScreen(
             }
 
             // ---- Printer ----
-            SettingsSection("Experimental printer support") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Enable Bambu support", fontWeight = FontWeight.SemiBold)
-                        Text(
-                            if (bambuBetaEnabled) "Bambu mode is enabled."
-                            else "Off by default; requires explicit beta acknowledgement.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = bambuBetaEnabled,
-                        onCheckedChange = { checked ->
-                            if (checked) showBambuBetaDialog = true
-                            else {
-                                viewModel.setBambuBetaEnabled(false)
-                                printerViewModel?.disableBambuMode()
-                            }
-                        },
-                    )
-                }
-            }
-            if (showBambuBetaDialog) {
-                AlertDialog(
-                    onDismissRequest = { showBambuBetaDialog = false },
-                    title = { Text("Enable Bambu beta support?") },
-                    text = {
-                        Text(
-                            "Bambu support is very early beta software. The developer has only tested " +
-                                "the end-to-end workflow on the Bambu H2D and A1 Mini. Other Bambu models " +
-                                "and printer firmware may behave differently. Enable this only if you accept " +
-                                "that risk.",
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            viewModel.setBambuBetaEnabled(true)
-                            showBambuBetaDialog = false
-                        }) { Text("I understand") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showBambuBetaDialog = false }) { Text("Cancel") }
-                    },
-                )
-            }
             SettingsSection("Printer") {
                 // F78: multi-printer list with add/edit/delete
                 if (printerViewModel != null) {
                     val printerList by printerViewModel.printerList.collectAsState()
                     val activePrinterId by printerViewModel.activePrinterId.collectAsState()
-                    val visiblePrinters = if (bambuBetaEnabled) printerList else
-                        printerList.filter { it.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN }
-
                     com.u1.slicer.ui.printer.PrintersSettingsCard(
-                        printers = visiblePrinters,
+                        printers = printerList,
                         activeId = activePrinterId,
-                        onAdd = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                            printerViewModel.addPrinter(
-                                nick,
-                                kind,
-                                url,
-                                bambuIp,
-                                bambuAccessCode,
-                                bambuSerial,
-                                bambuModel,
+                        onAdd = printerViewModel::savePrinterDraft,
+                        onEdit = printerViewModel::savePrinterDraft,
+                        onDelete = printerViewModel::deletePrinter,
+                        onTestConnection = printerViewModel::testPrinterDraft,
+                        createPrinterWizardViewModel = {
+                            val container = (context.applicationContext as U1SlicerApplication).container
+                            com.u1.slicer.machine.PrinterWizardViewModel(
+                                fetchIndex = { vendor ->
+                                    container.cachedOrcaProfileLookup.refreshVendor(vendor)
+                                },
+                                resolveMachine = { vendor, name ->
+                                    container.cachedOrcaProfileLookup.resolveByName(
+                                        vendor,
+                                        com.u1.slicer.machine.OrcaProfileType.MACHINE,
+                                        name,
+                                    )
+                                },
+                                validate = container.machineProfileValidator::validate,
+                                save = { profile, nickname, connection ->
+                                    printerViewModel.addProfilePrinter(
+                                        profile = profile,
+                                        nickname = nickname,
+                                        url = connection.address,
+                                        hostType = connection.hostType,
+                                        apiKey = connection.apiKey,
+                                        username = connection.username,
+                                        password = connection.password,
+                                    )
+                                },
                             )
                         },
-                        onEdit = { id, nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                            printerViewModel.updatePrinter(
-                                id,
-                                nick,
-                                kind,
-                                url,
-                                bambuIp,
-                                bambuAccessCode,
-                                bambuSerial,
-                                bambuModel,
-                            )
-                        },
-                        onDelete = { id -> printerViewModel.deletePrinter(id) },
-                        onTestConnection = { kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                            when (kind) {
-                                com.u1.slicer.data.PrinterKind.MOONRAKER -> {
-                                    val client = com.u1.slicer.network.MoonrakerClient().apply {
-                                        baseUrl = com.u1.slicer.network.MoonrakerClient.normalizeUrl(url)
-                                    }
-                                    client.testConnection()
-                                }
-                                com.u1.slicer.data.PrinterKind.BAMBU_LAN -> {
-                                    if (bambuIp.isBlank() || bambuAccessCode.isBlank() || bambuSerial.isBlank()) {
-                                        "Enter IP, access code, and serial first"
-                                    } else {
-                                        val app = context.applicationContext as U1SlicerApplication
-                                        app.container.bambuLanClientFactory().testConnection(
-                                            BambuConfig(
-                                                ip = bambuIp.trim(),
-                                                accessCode = bambuAccessCode.trim(),
-                                                serial = bambuSerial.trim(),
-                                                model = bambuModel,
-                                            )
-                                        )
-                                    }
-                                }
+                        onImportOrcaPrinter = { input, fileName ->
+                            val container = (context.applicationContext as U1SlicerApplication).container
+                            val imported = container.orcaProfileBundleImporter.import(input, fileName)
+                            val existingFilaments = container.filamentDao.getAll().first()
+                                .mapTo(mutableSetOf()) { it.name }
+                            imported.filaments.filter { existingFilaments.add(it.name) }.forEach {
+                                container.filamentDao.insert(it)
+                            }
+                            imported.processes.forEach { profile ->
+                                container.processProfilesRepository.add(profile)
+                            }
+                            imported.machines.forEach { profile ->
+                                printerViewModel.addProfilePrinter(profile, profile.displayName, "")
                             }
                         },
-                        bambuEnabled = bambuBetaEnabled,
+                        experimentalPrinterSupportEnabled = experimentalPrinterSupportEnabled,
+                        onExperimentalPrinterSupportEnabledChange =
+                            viewModel::saveExperimentalPrinterSupportEnabled,
                     )
                 }
             }

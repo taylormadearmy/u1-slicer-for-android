@@ -430,7 +430,11 @@ private fun FilamentMappingRow(
             }
         }
 
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it },
+            modifier = Modifier.weight(2f),
+        ) {
                 OutlinedTextField(
                     value = buildString {
                         append(selectedPreset?.label ?: "E1")
@@ -457,7 +461,7 @@ private fun FilamentMappingRow(
                     // Share the remaining row width instead of forcing a fixed
                     // 190dp field; the fixed width made the H2D side labels
                     // wrap into a narrow vertical column on phone screens.
-                    modifier = Modifier.menuAnchor().weight(1f),
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
                     textStyle = MaterialTheme.typography.bodySmall,
                     singleLine = true
                 )

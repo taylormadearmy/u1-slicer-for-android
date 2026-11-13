@@ -36,6 +36,8 @@ import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.data.MixedFilamentSliceSummary
 import com.u1.slicer.data.resolveImportedMixRecipeDisplaySummary
 import com.u1.slicer.util.toFloatLenient
+import com.u1.slicer.U1SlicerApplication
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -57,6 +59,7 @@ fun FilamentScreen(
     // CreateMixSlotDialog.
     mixedFilamentManager: MixedFilamentManager? = null,
     extruderPresets: List<ExtruderPreset> = emptyList(),
+    slotCount: Int = 4,
     importedMixRecipe: MixedFilamentSliceSummary? = null,
     mixRecipeSource: MixedFilamentDefinitionSource = MixedFilamentDefinitionSource.MANAGER_STATE,
     onCreateEditableMixCopy: (() -> Unit)? = null,
@@ -66,6 +69,7 @@ fun FilamentScreen(
     var editingFilament by remember { mutableStateOf<FilamentProfile?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val importScope = rememberCoroutineScope()
 
     // M3 Phase A: mix-slot dialog state. `editingMix` non-null = Edit mode.
     var showMixDialog by remember { mutableStateOf(false) }
@@ -75,16 +79,22 @@ fun FilamentScreen(
         ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
     val libraryMixes by (mixedFilamentManager?.libraryMixes?.collectAsState()
         ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
-    val displayedMixRecipe = resolveImportedMixRecipeDisplaySummary(
-        source = mixRecipeSource,
-        importedRecipe = importedMixRecipe,
-        mixedFilamentManager = mixedFilamentManager,
-        numPhysicalFilaments = extruderPresets.size.coerceAtLeast(4),
-    )
+    val physicalSlotCount = slotCount.coerceIn(1, 4)
+    val mixesAvailable = slotCount == com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+    val displayedMixRecipe = if (mixesAvailable) {
+        resolveImportedMixRecipeDisplaySummary(
+            source = mixRecipeSource,
+            importedRecipe = importedMixRecipe,
+            mixedFilamentManager = mixedFilamentManager,
+            numPhysicalFilaments = physicalSlotCount,
+        )
+    } else {
+        null
+    }
 
-    if (showMixDialog && mixedFilamentManager != null) {
-        val physicalColours = remember(extruderPresets) {
-            (0..3).map { i ->
+    if (mixesAvailable && showMixDialog && mixedFilamentManager != null) {
+        val physicalColours = remember(extruderPresets, physicalSlotCount) {
+            (0 until physicalSlotCount).map { i ->
                 val hex = extruderPresets.firstOrNull { it.index == i }?.color
                     ?.takeIf { it.isNotBlank() }
                     ?: ExtruderPreset.DEFAULT_COLORS[i]
@@ -93,7 +103,7 @@ fun FilamentScreen(
         }
         CreateMixSlotDialog(
             physicalFilamentColours = physicalColours,
-            physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+            physicalFilamentLabels = (0 until physicalSlotCount).map { "E${it + 1}" },
             editingRow = editingMix,
             onConfirmN = { components, weights, mode, topMixMode, fineTopLines, ironingGlaze ->
                 val edit = editingMix
@@ -147,14 +157,25 @@ fun FilamentScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        try {
-            val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
-                ?: throw Exception("Could not read file")
-            val profiles = parseFilamentJson(json, context)
-            if (profiles.isEmpty()) throw Exception("No valid filament profiles found in file")
-            onImport(profiles)
-        } catch (e: Exception) {
-            importError = e.message ?: "Import failed"
+        importScope.launch {
+            try {
+                val providerName = context.documentDisplayName(uri)
+                val name = providerName ?: if (
+                    context.contentResolver.getType(uri) in setOf("application/zip", "application/octet-stream")
+                ) "profile.orca_filament" else "profile.json"
+                val profiles = context.contentResolver.openInputStream(uri)?.use { input ->
+                    if (name.endsWith(".orca_filament", ignoreCase = true)) {
+                        val container = (context.applicationContext as U1SlicerApplication).container
+                        container.orcaProfileBundleImporter.import(input, name).filaments
+                    } else {
+                        parseFilamentJson(input.bufferedReader().readText(), context)
+                    }
+                } ?: throw Exception("Could not read file")
+                if (profiles.isEmpty()) throw Exception("No valid filament profiles found in file")
+                onImport(profiles)
+            } catch (e: Exception) {
+                importError = e.message ?: "Import failed"
+            }
         }
     }
 
@@ -196,7 +217,12 @@ fun FilamentScreen(
                 actions = {
                     TextButton(
                         onClick = {
-                            importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            importLauncher.launch(arrayOf(
+                                "application/json",
+                                "application/zip",
+                                "application/octet-stream",
+                                "*/*",
+                            ))
                         },
                         modifier = Modifier.padding(end = 4.dp)
                     ) {
@@ -206,7 +232,7 @@ fun FilamentScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("Import JSON")
+                        Text("Import profile")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -261,7 +287,7 @@ fun FilamentScreen(
                 }
             }
 
-            if (mixedFilamentManager != null && displayedMixRecipe != null) {
+            if (mixesAvailable && mixedFilamentManager != null && displayedMixRecipe != null) {
                 item("imported-mix-recipe") {
                     ImportedMixRecipeBanner(
                         recipe = displayedMixRecipe,
@@ -281,7 +307,7 @@ fun FilamentScreen(
             // M3 Phase A: Mix Slots section. Always rendered when the manager is
             // wired, regardless of whether the library has any single-component
             // profiles — users can still create mixes from the 4 physical slots.
-            if (mixedFilamentManager != null) {
+            if (mixesAvailable && mixedFilamentManager != null) {
                 item("mix-slots-header") {
                     Spacer(Modifier.height(4.dp))
                     Row(
@@ -366,7 +392,7 @@ fun FilamentScreen(
                     itemsIndexed(projectMixes, key = { _, r -> "p-${r.id}" }) { _, row ->
                         MixSlotCard(
                             row = row,
-                            physicalColours = (0..3).map { i ->
+                            physicalColours = (0 until physicalSlotCount).map { i ->
                                 val hex = extruderPresets.firstOrNull { it.index == i }?.color
                                     ?.takeIf { it.isNotBlank() }
                                     ?: ExtruderPreset.DEFAULT_COLORS[i]
@@ -403,7 +429,7 @@ fun FilamentScreen(
                     itemsIndexed(libraryOnly, key = { _, r -> "l-${r.id}" }) { _, row ->
                         MixSlotCard(
                             row = row,
-                            physicalColours = (0..3).map { i ->
+                            physicalColours = (0 until physicalSlotCount).map { i ->
                                 val hex = extruderPresets.firstOrNull { it.index == i }?.color
                                     ?.takeIf { it.isNotBlank() }
                                     ?: ExtruderPreset.DEFAULT_COLORS[i]

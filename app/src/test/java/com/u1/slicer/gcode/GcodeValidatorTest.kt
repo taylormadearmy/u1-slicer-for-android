@@ -3,6 +3,9 @@ package com.u1.slicer.gcode
 import org.junit.Assert.*
 import org.junit.Test
 
+private fun GcodeValidator.checkBedBounds(gcode: String): GcodeValidator.BedBoundsResult =
+    checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
+
 /**
  * JVM unit tests for GcodeValidator.
  *
@@ -220,6 +223,87 @@ class GcodeValidatorTest {
     }
 
     @Test
+    fun hasBowdenUnloadSequence_isScopedToSnapmakerDialect() {
+        val gcode = "; Retract(unload)\nG1 E-80 F3000\n"
+
+        assertTrue(GcodeValidator.hasBowdenUnloadSequence(gcode, KlipperSnapmakerDialect))
+        assertFalse(GcodeValidator.hasBowdenUnloadSequence(gcode, KlipperGenericDialect))
+        assertFalse(GcodeValidator.hasBowdenUnloadSequence(gcode, MarlinDialect))
+    }
+
+    @Test
+    fun validateDialect_acceptsValidMarlinBody() {
+        val result = GcodeValidator.validateDialect(
+            """
+            ; EXCLUDE_OBJECT_DEFINE in a comment is harmless
+            M104 S215
+            G28
+            M109 S215
+            """.trimIndent(),
+            MarlinDialect,
+        )
+
+        assertTrue(result.isValid)
+        assertTrue(result.missingRequiredCommandPrefixes.isEmpty())
+        assertTrue(result.presentForbiddenCommandPrefixes.isEmpty())
+        assertFalse(result.hasRejectedBowdenUnloadSequence)
+    }
+
+    @Test
+    fun validateDialect_reportsMissingMarlinTemperatureCommands() {
+        val result = GcodeValidator.validateDialect("G28\nM104 S215\n", MarlinDialect)
+
+        assertFalse(result.isValid)
+        assertEquals(setOf("M109"), result.missingRequiredCommandPrefixes)
+    }
+
+    @Test
+    fun validateDialect_rejectsKlipperCommandsInMarlinBody() {
+        val result = GcodeValidator.validateDialect(
+            """
+            M104 S215
+            M109 S215
+            EXCLUDE_OBJECT_DEFINE NAME=benchy
+            SET_HEATER_TEMPERATURE HEATER=extruder TARGET=215
+            """.trimIndent(),
+            MarlinDialect,
+        )
+
+        assertFalse(result.isValid)
+        assertEquals(
+            setOf("EXCLUDE_OBJECT_", "SET_HEATER_TEMPERATURE"),
+            result.presentForbiddenCommandPrefixes,
+        )
+    }
+
+    @Test
+    fun validateDialect_keepsGenericKlipperRulesPermissive() {
+        val result = GcodeValidator.validateDialect(
+            "EXCLUDE_OBJECT_DEFINE NAME=benchy\nSET_HEATER_TEMPERATURE HEATER=extruder TARGET=215\n",
+            KlipperGenericDialect,
+        )
+
+        assertTrue(result.isValid)
+    }
+
+    @Test
+    fun validateDialect_rejectsBowdenUnloadOnlyForSnapmaker() {
+        val gcode = "; Retract(unload)\nG1 E-80 F3000\n"
+
+        val snapmakerResult = GcodeValidator.validateDialect(gcode, KlipperSnapmakerDialect)
+        val genericResult = GcodeValidator.validateDialect(gcode, KlipperGenericDialect)
+        val marlinResult = GcodeValidator.validateDialect(
+            "M104 S215\nM109 S215\n$gcode",
+            MarlinDialect,
+        )
+
+        assertTrue(snapmakerResult.hasRejectedBowdenUnloadSequence)
+        assertFalse(snapmakerResult.isValid)
+        assertTrue(genericResult.isValid)
+        assertTrue(marlinResult.isValid)
+    }
+
+    @Test
     fun maxRetractionMm_rejectsBowdenToolchangeRetraction() {
         // Regression: OrcaSlicer SEMM defaults caused 94mm retraction during tool changes,
         // jamming the Snapmaker U1's direct-drive extruders. Max safe retraction is ~5mm.
@@ -342,6 +426,25 @@ class GcodeValidatorTest {
     }
 
     @Test
+    fun checkBedBounds_uses180_270And300MillimeterLimits() {
+        for (bedSize in listOf(180.0, 270.0, 300.0)) {
+            val onEdge = GcodeValidator.checkBedBounds(
+                "G1 X$bedSize Y$bedSize\n",
+                bedMaxX = bedSize,
+                bedMaxY = bedSize,
+            )
+            val beyondEdge = GcodeValidator.checkBedBounds(
+                "G1 X${bedSize + 1.0} Y$bedSize\n",
+                bedMaxX = bedSize,
+                bedMaxY = bedSize,
+            )
+
+            assertTrue("$bedSize mm edge should be valid", onEdge.withinBounds)
+            assertFalse("move beyond $bedSize mm should fail", beyondEdge.withinBounds)
+        }
+    }
+
+    @Test
     fun checkBedBounds_skipsCommentLines() {
         val gcode = "; G1 X-999 Y-999 this is a comment\nG1 X135 Y135\n"
         val result = GcodeValidator.checkBedBounds(gcode)
@@ -357,6 +460,47 @@ class GcodeValidatorTest {
         assertEquals(200.0, result.maxX, 0.01)
         assertEquals(20.0, result.minY, 0.01)
         assertEquals(180.0, result.maxY, 0.01)
+    }
+
+    @Test
+    fun checkBedBounds_allowsBoundedOffBedTravelWithoutRelaxingExtrusionBounds() {
+        val travel = GcodeValidator.checkBedBounds(
+            "G1 X242 Y-9 F10200 ; park\n",
+            bedMaxX = 255.0,
+            bedMaxY = 225.0,
+            bedMinX = -5.0,
+            bedMinY = -5.0,
+            nonExtrudingTravelMarginMm = 5.0,
+        )
+        val extrusion = GcodeValidator.checkBedBounds(
+            "G1 X242 Y-9 E1 F500 ; purge\n",
+            bedMaxX = 255.0,
+            bedMaxY = 225.0,
+            bedMinX = -5.0,
+            bedMinY = -5.0,
+            nonExtrudingTravelMarginMm = 5.0,
+        )
+        val explicitPositiveExtrusion = GcodeValidator.checkBedBounds(
+            "G1 X242 Y-9 E+1 F500 ; purge\n",
+            bedMaxX = 255.0,
+            bedMaxY = 225.0,
+            bedMinX = -5.0,
+            bedMinY = -5.0,
+            nonExtrudingTravelMarginMm = 5.0,
+        )
+        val extremeTravel = GcodeValidator.checkBedBounds(
+            "G1 X242 Y-11 F10200 ; unsafe park\n",
+            bedMaxX = 255.0,
+            bedMaxY = 225.0,
+            bedMinX = -5.0,
+            bedMinY = -5.0,
+            nonExtrudingTravelMarginMm = 5.0,
+        )
+
+        assertTrue(travel.withinBounds)
+        assertFalse(extrusion.withinBounds)
+        assertFalse(explicitPositiveExtrusion.withinBounds)
+        assertFalse(extremeTravel.withinBounds)
     }
 
     // ─── extractEstimatedTime ────────────────────────────────────────────────
@@ -387,6 +531,8 @@ class GcodeValidatorTest {
     @Test
     fun summarizeParsedOutput_countsModelAndPrimeTowerExtrusionSeparately() {
         val parsed = ParsedGcode(
+            bedWidth = 270f,
+            bedHeight = 270f,
             layers = listOf(
                 GcodeLayer(
                     index = 0,
@@ -418,6 +564,8 @@ class GcodeValidatorTest {
     @Test
     fun isEffectivelyEmpty_trueWhenOnlyPrimeTowerExtrusionExists() {
         val parsed = ParsedGcode(
+            bedWidth = 270f,
+            bedHeight = 270f,
             layers = listOf(
                 GcodeLayer(
                     index = 0,
@@ -441,6 +589,8 @@ class GcodeValidatorTest {
     @Test
     fun isEffectivelyEmpty_trueWhenOnlySkirtExtrusionExists() {
         val parsed = ParsedGcode(
+            bedWidth = 270f,
+            bedHeight = 270f,
             layers = listOf(
                 GcodeLayer(
                     index = 0,
@@ -467,6 +617,8 @@ class GcodeValidatorTest {
     @Test
     fun summarizeParsedOutput_flagsSuspiciousModelCoordinates() {
         val parsed = ParsedGcode(
+            bedWidth = 270f,
+            bedHeight = 270f,
             layers = listOf(
                 GcodeLayer(
                     index = 0,

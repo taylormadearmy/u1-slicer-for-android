@@ -3,6 +3,9 @@ package com.u1.slicer.slicing
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.NativeLibrary
+import com.u1.slicer.bambu.BambuSanitizer
+import com.u1.slicer.bambu.ProfileEmbedder
+import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SliceConfig
@@ -15,7 +18,9 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 import java.io.File
+import java.util.zip.ZipFile
 
 /**
  * Instrumented E2E slicing integration tests.
@@ -97,6 +102,110 @@ class SlicingIntegrationTest {
         if (!result.success) return Pair(false, result.errorMessage)
         val gcode = if (result.gcodePath.isNotEmpty()) File(result.gcodePath).readText() else ""
         return Pair(true, gcode)
+    }
+
+    private fun slicePreProcessDiagnostics(diagnosticsFile: File): JSONObject {
+        assertTrue("Native diagnostics file should exist", diagnosticsFile.exists())
+        return diagnosticsFile.readLines()
+            .asReversed()
+            .map(::JSONObject)
+            .firstOrNull { it.optString("type") == "slice_pre_process" }
+            ?.optJSONObject("payload")
+            ?: fail("slice_pre_process diagnostics event missing") as Nothing
+    }
+
+    private fun sliceWithProvenance(file: File, config: SliceConfig): Pair<SliceResult, JSONObject> {
+        val diagnosticsDir = requireNotNull(
+            InstrumentationRegistry.getInstrumentation().targetContext.externalCacheDir
+        ) { "External cache directory required for native diagnostics" }
+        val diagnosticsFile = File(
+            diagnosticsDir,
+            "profile-provenance-" + System.nanoTime() + ".jsonl"
+        )
+        lib.configureDiagnostics(diagnosticsFile.absolutePath)
+        assertTrue("Model should load", lib.loadModel(file.absolutePath))
+        val selectedConfig = if (config.machineTarget == "GENERIC") {
+            val profile = File(cacheDir, "selected-provenance-machine.json")
+            val machine = com.u1.slicer.slice.GenericMachineProfile.fromJson(JSONObject().apply {
+                put("name", "Selected provenance machine")
+                put("gcode_flavor", "klipper")
+                put("nozzle_diameter", org.json.JSONArray(List(config.extruderCount) { config.nozzleDiameter.toString() }))
+                put("printable_area", org.json.JSONArray(listOf("0x0", "270x0", "270x270", "0x270")))
+                put("printable_height", "270")
+                put("machine_start_gcode", "G28\n; SELECTED_MACHINE")
+                put("machine_end_gcode", "M104 S0")
+                put("single_extruder_multi_material", "0")
+            }.toString())
+            profile.writeText(ProfileEmbedder(
+                InstrumentationRegistry.getInstrumentation().targetContext,
+            ).serializeConfig(machine.compose()))
+            assertTrue("Selected machine must load", lib.loadProfile(profile.absolutePath))
+            config.copy(machineStartGcode = "G28\n; SELECTED_MACHINE", machineEndGcode = "M104 S0")
+        } else config
+        val result = lib.slice(selectedConfig)
+        assertNotNull("slice() must return a result", result)
+        return result!! to slicePreProcessDiagnostics(diagnosticsFile)
+    }
+
+    // --- A2 Phase 1.5: embedded-profile provenance ---
+
+    @Test
+    fun desktopU1Profile_withPrintStart_genericTarget_skipsProfileKeys() {
+        // This is a desktop-exported U1 project: PRINT_START is present but the
+        // app-authored marker is deliberately absent.
+        val (result, diagnostics) = sliceWithProvenance(
+            asset("colored_3DBenchy (1).3mf"),
+            DEFAULT_CONFIG.copy(machineTarget = "GENERIC")
+        )
+
+        assertTrue("Generic target must still slice: " + result.errorMessage, result.success)
+        assertFalse("Generic target must not claim the Snapmaker profile", diagnostics.optBoolean("isSnapmakerProfile"))
+        assertTrue("Diagnostics must expose appliedProfileKeys", diagnostics.has("appliedProfileKeys"))
+        assertFalse("Generic desktop profile must not apply profile keys", diagnostics.optBoolean("appliedProfileKeys"))
+    }
+
+    @Test
+    fun desktopU1Profile_withPrintStart_snapmakerTarget_appliesProfileKeys() {
+        val (result, diagnostics) = sliceWithProvenance(
+            asset("colored_3DBenchy (1).3mf"),
+            DEFAULT_CONFIG.copy(machineTarget = "SNAPMAKER_U1")
+        )
+
+        assertTrue("Desktop U1 profile must slice: " + result.errorMessage, result.success)
+        assertTrue("Snapmaker target must retain the desktop PRINT_START rescue", diagnostics.optBoolean("isSnapmakerProfile"))
+        assertTrue("Diagnostics must expose appliedProfileKeys", diagnostics.has("appliedProfileKeys"))
+        assertTrue("Desktop U1 profile must apply profile keys", diagnostics.optBoolean("appliedProfileKeys"))
+    }
+
+    @Test
+    fun profileEmbedder_authoredGenericEmbed_cannotOverrideSelectedMachine() {
+        val input = asset("colored_3DBenchy (1).3mf")
+        val info = ThreeMfParser.parse(input)
+        val embedder = ProfileEmbedder(InstrumentationRegistry.getInstrumentation().targetContext)
+        // Remove the old buildConfig marker to prove embed(), rather than its U1
+        // config builder, authors the marker for every app-authored project.
+        val config = embedder.buildConfig(info).apply { remove("snapmaker_authored_profile") }
+        val outputDir = File(cacheDir, "profile-provenance-embed").also { it.mkdirs() }
+        val source = if (info.isBambu) BambuSanitizer.process(input, outputDir) else input
+        val embedded = embedder.embed(source, config, outputDir, info)
+
+        ZipFile(embedded).use { zip ->
+            val entry = zip.getEntry("Metadata/project_settings.config")
+            assertNotNull("Embed must write project settings", entry)
+            val embeddedConfig = zip.getInputStream(entry).bufferedReader().readText()
+            assertEquals("1", JSONObject(embeddedConfig).optString("snapmaker_authored_profile"))
+        }
+
+        val (result, diagnostics) = sliceWithProvenance(
+            embedded,
+            DEFAULT_CONFIG.copy(machineTarget = "GENERIC")
+        )
+        assertTrue("App-authored generic embed must slice: " + result.errorMessage, result.success)
+        assertFalse("Generic app-authored embed must not claim the Snapmaker family", diagnostics.optBoolean("isSnapmakerProfile"))
+        assertFalse("Source app-authored generic embed must not override the selected machine", diagnostics.optBoolean("appliedProfileKeys"))
+        val gcode = File(result.gcodePath).readText()
+        assertTrue("Selected machine's template must execute", gcode.contains("SELECTED_MACHINE"))
+        assertFalse("U1 source macro must not leak into generic output", gcode.contains("SM_PRINT"))
     }
 
     // ─── STL Tests ────────────────────────────────────────────────────────────
@@ -462,7 +571,7 @@ class SlicingIntegrationTest {
         val result = lib.slice(DEFAULT_CONFIG)!!
         assertTrue("Benchy should slice successfully", result.success)
         val gcode = File(result.gcodePath).readText()
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "All X/Y coordinates must be within 0-270mm bed. " +
             "X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}. " +
@@ -483,7 +592,7 @@ class SlicingIntegrationTest {
         val result = lib.slice(DEFAULT_CONFIG)!!
         assertTrue("Tetrahedron should slice successfully", result.success)
         val gcode = File(result.gcodePath).readText()
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "All X/Y must be within 0-270mm. X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}",
             bounds.withinBounds
@@ -503,7 +612,7 @@ class SlicingIntegrationTest {
         val result = lib.slice(config)!!
         assertTrue("3MF should slice successfully", result.success)
         val gcode = File(result.gcodePath).readText()
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "3MF G-code X/Y must be within 0-270mm. X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}",
             bounds.withinBounds
@@ -543,7 +652,7 @@ class SlicingIntegrationTest {
         )
 
         val gcode = File(result.gcodePath).readText()
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "All G-code X/Y moves must stay within the 270×270mm bed. " +
                 "X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}. " +
@@ -1350,7 +1459,12 @@ class SlicingIntegrationTest {
         val c = asset("tetrahedron.stl").copyTo(File(cacheDir, "tetrahedron_c.stl"), overwrite = true)
         val combined = File(cacheDir, "f77_combined.stl")
 
-        val result = com.u1.slicer.model.MultiStlCombiner.combine(listOf(a, b, c), combined)
+        val result = com.u1.slicer.model.MultiStlCombiner.combine(
+            listOf(a, b, c),
+            combined,
+            bedSizeX = 270f,
+            bedSizeY = 270f,
+        )
         assertNotNull("F77: combiner must return a result", result)
         result!!
         assertEquals(3, result.placedParts.size)

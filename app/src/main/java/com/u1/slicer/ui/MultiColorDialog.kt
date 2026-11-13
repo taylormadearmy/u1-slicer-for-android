@@ -64,10 +64,11 @@ fun findClosestExtruder(color: String, presets: List<ExtruderPreset>): ExtruderP
  * @param rawMapping  One slot index per detected model colour.
  * @param colorCount  Number of detected model colours (= rawMapping.size).
  */
-fun ensureMultiSlotMapping(rawMapping: List<Int>, colorCount: Int): List<Int> =
-    when {
+fun ensureMultiSlotMapping(rawMapping: List<Int>, colorCount: Int, slotCount: Int = 4): List<Int> {
+    val slots = slotCount.coerceIn(1, 4)
+    return when {
         colorCount <= 1 -> rawMapping
-        colorCount <= 4 && rawMapping.distinct().size < colorCount ->
+        colorCount <= slots && rawMapping.distinct().size < colorCount ->
             (0 until colorCount).toList()
         // F1 calendar regression: a Bambu file with 5 model colours auto-mapped via
         // findClosestExtruder against a device whose extruder presets only have two
@@ -77,16 +78,18 @@ fun ensureMultiSlotMapping(rawMapping: List<Int>, colorCount: Int): List<Int> =
         // user's match-by-color hits worth preserving) and reassign only the
         // duplicates to the unused physical slots. F1 [0,0,3,3,0] becomes [0,1,3,2,0]
         // — all 4 physical slots used, positions 0/2's hits preserved.
-        colorCount > 4 && rawMapping.distinct().filter { it in 0..3 }.size < 4 ->
-            redistributeDuplicateSlots(rawMapping)
+        colorCount > slots && rawMapping.distinct().filter { it in 0 until slots }.size < slots ->
+            if (slots == 4) redistributeDuplicateSlots(rawMapping, slots)
+            else (0 until colorCount).map { it % slots }
         rawMapping.distinct().size < 2 ->
-            (0 until colorCount).map { it % 2 }  // 0,1,0,1,… across compact slots
+            (0 until colorCount).map { it % slots }
         else -> rawMapping
     }
+}
 
 /**
  * Reassign duplicate slot entries in [rawMapping] to the unused physical slots
- * (0..3). The first occurrence of each existing slot is kept; subsequent
+ * for the active profile. The first occurrence of each existing slot is kept; subsequent
  * occurrences become the next available unused slot in numeric order. When
  * unused slots are exhausted, leftover duplicates stay as-is.
  *
@@ -95,15 +98,15 @@ fun ensureMultiSlotMapping(rawMapping: List<Int>, colorCount: Int): List<Int> =
  * slots — so initial preview/slice uses the full physical palette without
  * discarding any meaningful match-by-color hits the user's presets supplied.
  */
-private fun redistributeDuplicateSlots(rawMapping: List<Int>): List<Int> {
+private fun redistributeDuplicateSlots(rawMapping: List<Int>, slotCount: Int): List<Int> {
     val result = rawMapping.toMutableList()
     val seen = mutableSetOf<Int>()
     val unused = ArrayDeque(
-        (0..3).filter { slot -> rawMapping.none { it == slot } }
+        (0 until slotCount).filter { slot -> rawMapping.none { it == slot } }
     )
     for (i in result.indices) {
         val slot = result[i]
-        if (slot in 0..3 && slot !in seen) {
+        if (slot in 0 until slotCount && slot !in seen) {
             seen.add(slot)
         } else {
             val replacement = unused.removeFirstOrNull() ?: continue

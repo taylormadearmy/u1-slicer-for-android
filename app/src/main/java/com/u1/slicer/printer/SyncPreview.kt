@@ -17,11 +17,13 @@ fun buildSyncPreviewEntries(
     slots: List<FilamentSlot>,
     library: FilamentLibrary?,
     includeAllPrinterSlots: Boolean = false,
+    slotCount: Int = 4,
 ): List<PrinterViewModel.SyncPreviewEntry> {
+    val activeSlotCount = slotCount.coerceIn(1, 4)
     val slotIndices = if (includeAllPrinterSlots) {
         slots.map { it.index }.distinct().sorted()
     } else {
-        (0..3).toList()
+        (0 until activeSlotCount).toList()
     }
     return slotIndices.map { i ->
         val preset = presets.firstOrNull { it.index == i } ?: ExtruderPreset(i)
@@ -54,6 +56,8 @@ fun applySyncPreviewEntries(
     entries: List<PrinterViewModel.SyncPreviewEntry>,
     applyColors: Boolean,
     applyTypes: Boolean,
+    /** Profiles imported from reviewed catalogue matches, keyed by logical slot. */
+    linkedProfileIds: Map<Int, Long> = emptyMap(),
 ): List<ExtruderPreset> {
     val current = presets.associateBy { it.index }.toMutableMap()
     entries.forEach { entry ->
@@ -66,10 +70,14 @@ fun applySyncPreviewEntries(
             displayLabel = entry.label,
         )
         val applyingType = applyTypes && entry.newType != null
+        val linkedProfileId = linkedProfileIds[entry.slotIndex]
         current[entry.slotIndex] = base.copy(
             color = if (applyColors && entry.newColor != null) entry.newColor else base.color,
             materialType = if (applyingType) entry.newType!! else base.materialType,
-            filamentProfileId = if (applyingType) null else base.filamentProfileId,
+            // A deliberately imported catalogue profile is more specific than the
+            // generic printer material. If no profile was chosen, changing the
+            // material invalidates any prior profile link as before.
+            filamentProfileId = linkedProfileId ?: if (applyingType) null else base.filamentProfileId,
         )
     }
     return current.values.sortedBy { it.index }

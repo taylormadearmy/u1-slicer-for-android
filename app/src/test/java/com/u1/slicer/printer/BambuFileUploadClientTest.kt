@@ -13,6 +13,65 @@ import kotlinx.coroutines.runBlocking
 class BambuFileUploadClientTest {
 
     @Test
+    fun `P1S does not retry unrelated TLS failures or failures after data was sent`() {
+        for ((message, bytes) in listOf("certificate error" to 0L, "SESSION_MAY_NOT_BE_CREATED" to 1L)) {
+            val error = BambuFtpsPhaseFailure("data_tls_handshake", 17L, bytes,
+                javax.net.ssl.SSLException(message))
+            var attempts = 0
+            val client = DefaultBambuFileUploadClient(sessionFactory = { _, _ ->
+                attempts++
+                FakeSession(uploadError = error)
+            })
+            val file = File.createTempFile("p1s-no-retry", ".3mf").apply { writeText("1234567890abcdefg") }
+            try {
+                val result = runCatching {
+                    runBlocking { client.upload(h2dConfig().copy(model = BambuModel.P1S), file, "test.3mf") }
+                }
+                assertTrue(result.exceptionOrNull() === error)
+                assertEquals(1, attempts)
+            } finally { file.delete() }
+        }
+    }
+
+    @Test
+    fun `P1S retries reuse failure with fresh encrypted session and fresh context`() {
+        val first = FakeSession(uploadError = BambuFtpsPhaseFailure("data_tls_handshake", 17L, 0L,
+            javax.net.ssl.SSLException("SESSION_MAY_NOT_BE_CREATED")))
+        val retry = FakeSession()
+        val sessions = ArrayDeque<BambuFtpsSessionHandle>().apply { add(first); add(retry) }
+        var contextCount = 0
+        val client = DefaultBambuFileUploadClient(
+            sslSocketFactoryProvider = { contextCount++; DefaultBambuLanClient.trustAllSocketFactory() },
+            sessionFactory = { _, _ -> sessions.removeFirst() },
+        )
+        val file = File.createTempFile("p1s-retry", ".3mf").apply { writeText("1234567890abcdefg") }
+        try {
+            runBlocking { client.upload(h2dConfig().copy(model = BambuModel.P1S), file, "test.3mf") }
+            assertEquals(listOf(BambuFtpsDataMode.PROTECTED), first.uploadModes)
+            assertEquals(listOf(BambuFtpsDataMode.PROTECTED_ALLOW_NEW_SESSION), retry.uploadModes)
+            assertEquals(2, contextCount)
+            assertTrue(sessions.isEmpty())
+        } finally { file.delete() }
+    }
+
+    @Test
+    fun `P1S permits only encrypted fallback for the precise session reuse failure`() {
+        assertEquals(listOf(BambuFtpsDataMode.PROTECTED, BambuFtpsDataMode.PROTECTED_ALLOW_NEW_SESSION),
+            BambuFtpsProtocol.candidateDataModes(BambuModel.P1S))
+        for (model in BambuModel.values().filter { it != BambuModel.P1S }) {
+            assertFalse(BambuFtpsProtocol.candidateDataModes(model).contains(BambuFtpsDataMode.PROTECTED_ALLOW_NEW_SESSION))
+        }
+        fun failure(phase: String, bytes: Long, cause: Exception) =
+            BambuFtpsPhaseFailure(phase, 17L, bytes, cause)
+        val tls = javax.net.ssl.SSLException("SESSION_MAY_NOT_BE_CREATED")
+        assertTrue(BambuFtpsUploadRecovery.isSessionReuseFailure(failure("data_tls_handshake", 0, tls)))
+        assertFalse(BambuFtpsUploadRecovery.isSessionReuseFailure(failure("data_write", 0, tls)))
+        assertFalse(BambuFtpsUploadRecovery.isSessionReuseFailure(failure("data_tls_handshake", 1, tls)))
+        assertFalse(BambuFtpsUploadRecovery.isSessionReuseFailure(failure("data_tls_handshake", 0, javax.net.ssl.SSLException("other"))))
+        assertFalse(BambuFtpsUploadRecovery.isSessionReuseFailure(failure("data_tls_handshake", 0, java.io.IOException("SESSION_MAY_NOT_BE_CREATED"))))
+    }
+
+    @Test
     fun `upload recovers control channel close when remote size matches`() {
         val sessions = ArrayDeque<BambuFtpsSessionHandle>().apply {
             add(FakeSession(uploadError = postTransferFailure(17L)))
@@ -319,7 +378,7 @@ class BambuFileUploadClientTest {
 
         val passiveConnect = uploadBody.indexOf("createPassiveDataSocket(")
         val stor = uploadBody.indexOf("sendCommand(\"STOR \$remoteName\"")
-        val tlsHandshake = uploadBody.indexOf("protectDataSocket(rawDataSocket)")
+        val tlsHandshake = uploadBody.indexOf("protectDataSocket(rawDataSocket, dataMode)")
         assertTrue(passiveConnect >= 0)
         assertTrue("STOR must follow passive TCP connect", stor > passiveConnect)
         assertTrue("Protected data TLS must follow the accepted STOR command", tlsHandshake > stor)

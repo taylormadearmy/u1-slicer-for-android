@@ -13,8 +13,8 @@ import kotlin.math.sin
  * @param objectSizeX object bounding box X in mm
  * @param objectSizeY object bounding box Y in mm
  * @param copyCount desired number of copies (1..maxCopies())
- * @param bedSizeX print bed X dimension (default 270mm for Snapmaker U1)
- * @param bedSizeY print bed Y dimension (default 270mm for Snapmaker U1)
+ * @param bedSizeX print bed X dimension
+ * @param bedSizeY print bed Y dimension
  * @param margin gap between copies in mm (default 5mm)
  */
 object CopyArrangeCalculator {
@@ -23,8 +23,8 @@ object CopyArrangeCalculator {
         objectSizeX: Float,
         objectSizeY: Float,
         copyCount: Int,
-        bedSizeX: Float = 270f,
-        bedSizeY: Float = 270f,
+        bedSizeX: Float,
+        bedSizeY: Float,
         margin: Float = 5f
     ): FloatArray {
         require(objectSizeX > 0f && objectSizeY > 0f) { "Object dimensions must be positive" }
@@ -64,8 +64,8 @@ object CopyArrangeCalculator {
     fun maxCopies(
         objectSizeX: Float,
         objectSizeY: Float,
-        bedSizeX: Float = 270f,
-        bedSizeY: Float = 270f,
+        bedSizeX: Float,
+        bedSizeY: Float,
         margin: Float = 5f
     ): Int {
         if (objectSizeX <= 0f || objectSizeY <= 0f) return 1
@@ -82,8 +82,8 @@ object CopyArrangeCalculator {
         objectSizeX: Float,
         objectSizeY: Float,
         count: Int,
-        bedSizeX: Float = 270f,
-        bedSizeY: Float = 270f,
+        bedSizeX: Float,
+        bedSizeY: Float,
         margin: Float = 5f
     ): String? {
         if (count <= 1) return null
@@ -111,8 +111,8 @@ object CopyArrangeCalculator {
         objectSizeY: Float,
         towerWidth: Float = 60f,
         towerDepth: Float = towerWidth,
-        bedSizeX: Float = 270f,
-        bedSizeY: Float = 270f
+        bedSizeX: Float,
+        bedSizeY: Float,
     ): Pair<Float, Float> {
         val bedCenter = bedSizeX / 2f
         // Margin from bed edge: prime_tower_brim_width (3mm) + skirt_distance (6mm)
@@ -187,8 +187,8 @@ object CopyArrangeCalculator {
         objectBoxes: FloatArray,
         towerWidth: Float = 60f,
         towerDepth: Float = towerWidth,
-        bedSizeX: Float = 270f,
-        bedSizeY: Float = 270f,
+        bedSizeX: Float,
+        bedSizeY: Float,
     ): Pair<Float, Float> {
         val objectCount = minOf(objectPositions.size / 2, objectBoxes.size / 3)
         if (objectCount == 0) return computeWipeTowerPosition(floatArrayOf(), 0f, 0f, towerWidth, towerDepth, bedSizeX, bedSizeY)
@@ -359,7 +359,8 @@ object CopyArrangeCalculator {
      *
      * @param boxes flat [sizeX0,sizeY0,sizeZ0, sizeX1,...] bounding box array from
      *   `NativeLibrary.getObjectBoundingBoxes()`.
-     * @param bedSize bed edge length (default 270mm for Snapmaker U1).
+     * @param bedSizeX bed X dimension.
+     * @param bedSizeY bed Y dimension.
      * @param margin gap between objects in mm (default 5mm).
      */
     /**
@@ -375,13 +376,13 @@ object CopyArrangeCalculator {
     fun placeAdditionalObject(
         currentPositions: FloatArray,
         boxes: FloatArray,
-        bedSize: Float = 270f,
-        bedSizeY: Float = bedSize,
+        bedSizeX: Float,
+        bedSizeY: Float,
         margin: Float = 5f,
     ): FloatArray {
         val objectCount = boxes.size / 3
         if (objectCount <= 1) return currentPositions.copyOf().takeIf { it.size >= 2 }
-            ?: floatArrayOf(maxOf(0f, (bedSize - boxes[0]) / 2f), maxOf(0f, (bedSizeY - boxes[1]) / 2f))
+            ?: floatArrayOf(maxOf(0f, (bedSizeX - boxes[0]) / 2f), maxOf(0f, (bedSizeY - boxes[1]) / 2f))
         val existingCount = currentPositions.size / 2
         val newIdx = objectCount - 1
         val newSizeX = boxes[newIdx * 3]
@@ -400,7 +401,7 @@ object CopyArrangeCalculator {
 
         // Try to the right of all existing objects
         val tryX = maxRight + margin
-        if (tryX + newSizeX <= bedSize) {
+        if (tryX + newSizeX <= bedSizeX) {
             result[newIdx * 2] = tryX
             result[newIdx * 2 + 1] = alignY
             return result
@@ -413,7 +414,7 @@ object CopyArrangeCalculator {
             val bottom = result[i * 2 + 1] + boxes[i * 3 + 1]
             if (bottom > maxBottom) { maxBottom = bottom; leftX = result[i * 2] }
         }
-        result[newIdx * 2] = leftX.coerceIn(margin, maxOf(margin, bedSize - newSizeX - margin))
+        result[newIdx * 2] = leftX.coerceIn(margin, maxOf(margin, bedSizeX - newSizeX - margin))
         result[newIdx * 2 + 1] = (maxBottom + margin).coerceAtMost(
             maxOf(margin, bedSizeY - newSizeY - margin),
         )
@@ -422,8 +423,8 @@ object CopyArrangeCalculator {
 
     fun buildMultiObjectPositions(
         boxes: FloatArray,
-        bedSize: Float = 270f,
-        bedSizeY: Float = bedSize,
+        bedSizeX: Float,
+        bedSizeY: Float,
         margin: Float = 5f,
     ): FloatArray {
         val count = boxes.size / 3
@@ -435,12 +436,12 @@ object CopyArrangeCalculator {
         for (i in 0 until count) {
             val sizeX = boxes[i * 3]
             val sizeY = boxes[i * 3 + 1]
-            if (i > 0 && curX + sizeX > bedSize - margin) {
+            if (i > 0 && curX + sizeX > bedSizeX - margin) {
                 curX = margin
                 curY += rowMaxY + margin
                 rowMaxY = 0f
             }
-            positions[i * 2] = curX.coerceAtMost(maxOf(margin, bedSize - sizeX - margin))
+            positions[i * 2] = curX.coerceAtMost(maxOf(margin, bedSizeX - sizeX - margin))
             positions[i * 2 + 1] = curY.coerceAtMost(maxOf(margin, bedSizeY - sizeY - margin))
             curX += sizeX + margin
             if (sizeY > rowMaxY) rowMaxY = sizeY
@@ -470,15 +471,16 @@ object CopyArrangeCalculator {
      *   post-rotation, so translation-only keeps each object's rotation).
      * @param reservedRect [minX,minY,maxX,maxY] keep-out, or null when no tower is active.
      * @param incoming flat [x0,y0,...] current positions, used for overflow fallback.
-     * @param bedSize bed edge length (default 270mm for Snapmaker U1).
+     * @param bedSizeX bed X dimension.
+     * @param bedSizeY bed Y dimension.
      * @param margin gap between objects and from the bed edge in mm (default 5mm).
      */
     fun autoArrange(
         boxes: FloatArray,
         reservedRect: FloatArray?,
         incoming: FloatArray,
-        bedSize: Float = 270f,
-        bedSizeY: Float = bedSize,
+        bedSizeX: Float,
+        bedSizeY: Float,
         margin: Float = 5f,
     ): ArrangeResult {
         val n = boxes.size / 3
@@ -491,12 +493,12 @@ object CopyArrangeCalculator {
             positions[i * 2 + 1] = incoming.getOrElse(i * 2 + 1) { margin }
         }
 
-        val maxEdgeX = bedSize - margin
+        val maxEdgeX = bedSizeX - margin
         val maxEdgeY = bedSizeY - margin
         // Next-fit-decreasing shelf packer: objects are placed left-to-right on the current shelf
         // and wrap to a new shelf when the row overflows. Earlier shelves are never backfilled —
         // non-optimal but keeps keep-out skip logic simple and placement fully predictable.
-        val maxIters = (maxOf(bedSize, bedSizeY) / maxOf(margin, 1f)).toInt() * 3 + 16 // generous worst-case bound: a few wraps + reserved-skips per object; the guard can never spin
+        val maxIters = (maxOf(bedSizeX, bedSizeY) / maxOf(margin, 1f)).toInt() * 3 + 16 // generous worst-case bound: a few wraps + reserved-skips per object; the guard can never spin
         // Largest-area-first for tighter packing; stable on ties via index.
         val order = (0 until n).sortedWith(
             compareByDescending<Int> { boxes[it * 3] * boxes[it * 3 + 1] }.thenBy { it }
@@ -511,7 +513,7 @@ object CopyArrangeCalculator {
             val sx = boxes[idx * 3]
             val sy = boxes[idx * 3 + 1]
             // Physically too large to ever fit on the bed.
-            if (sx > bedSize - 2 * margin || sy > bedSizeY - 2 * margin) { overflow++; continue }
+            if (sx > bedSizeX - 2 * margin || sy > bedSizeY - 2 * margin) { overflow++; continue }
 
             var placed = false
             var guard = 0

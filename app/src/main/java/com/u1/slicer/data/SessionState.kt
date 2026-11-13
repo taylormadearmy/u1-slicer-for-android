@@ -38,11 +38,16 @@ data class SessionState(
     val perVolumeExtruders: Map<String, Int> = emptyMap(), // key = "objIdx:volIdx", value = 1-indexed slot
     val splitObjectOperations: List<Int> = emptyList(),    // replay order: load-time-indexed obj indices that were split
     val splitVolumeOperations: List<String> = emptyList(), // replay order: "objIdx:volIdx" entries
+    // Ordered structural history. Keeps split/copy/delete index semantics stable.
+    val modelOperations: List<ModelOperation> = emptyList(),
     // ---- M3-A (schema v3) ----
     val projectMixes: List<MixedFilamentRow> = emptyList(),
     // ---- v3 optional extension: tool space of the active/restored G-code ----
     val gcodeToolSpace: String? = null,
     val sliceTargetId: String? = null,
+    /** F101 recipe; raw profile points intentionally remain native/model-owned. */
+    val adaptiveLayerHeight: AdaptiveLayerHeightState = AdaptiveLayerHeightState(),
+    val canonicalColourRemaps: List<CanonicalColourRemap> = emptyList(),
 ) {
     data class AdditionalFile(val path: String, val plateIdx: Int)
 
@@ -74,9 +79,12 @@ data class SessionState(
             perVolumeExtruders == other.perVolumeExtruders &&
             splitObjectOperations == other.splitObjectOperations &&
             splitVolumeOperations == other.splitVolumeOperations &&
+            modelOperations == other.modelOperations &&
             projectMixes == other.projectMixes &&
             gcodeToolSpace == other.gcodeToolSpace &&
-            sliceTargetId == other.sliceTargetId
+            sliceTargetId == other.sliceTargetId &&
+            adaptiveLayerHeight == other.adaptiveLayerHeight &&
+            canonicalColourRemaps == other.canonicalColourRemaps
     }
 
     override fun hashCode(): Int {
@@ -102,14 +110,17 @@ data class SessionState(
         result = 31 * result + perVolumeExtruders.hashCode()
         result = 31 * result + splitObjectOperations.hashCode()
         result = 31 * result + splitVolumeOperations.hashCode()
+        result = 31 * result + modelOperations.hashCode()
         result = 31 * result + projectMixes.hashCode()
         result = 31 * result + (gcodeToolSpace?.hashCode() ?: 0)
         result = 31 * result + (sliceTargetId?.hashCode() ?: 0)
+        result = 31 * result + adaptiveLayerHeight.hashCode()
+        result = 31 * result + canonicalColourRemaps.hashCode()
         return result
     }
 
     companion object {
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 5
 
         fun toJson(state: SessionState): String {
             val obj = JSONObject()
@@ -153,6 +164,19 @@ data class SessionState(
             state.sliceJobId?.let { obj.put("sliceJobId", it) }
             state.gcodeToolSpace?.let { obj.put("gcodeToolSpace", it) }
             state.sliceTargetId?.let { obj.put("sliceTargetId", it) }
+            obj.put("adaptiveLayerHeight", JSONObject().apply {
+                put("mode", state.adaptiveLayerHeight.mode.name)
+                put("preset", state.adaptiveLayerHeight.preset.name)
+            })
+            if (state.canonicalColourRemaps.isNotEmpty()) obj.put("canonicalColourRemaps", JSONArray().apply {
+                state.canonicalColourRemaps.forEach { remap -> put(JSONObject().apply {
+                    put("fileIndex", remap.fileIndex)
+                    when (val destination = remap.destination) {
+                        is CanonicalColourDestination.PhysicalSlot -> { put("kind", "physical"); put("slot", destination.slot) }
+                        is CanonicalColourDestination.Mix -> { put("kind", "mix"); put("mixId", destination.mixId) }
+                    }
+                }) }
+            })
             obj.put("wasSliceComplete", state.wasSliceComplete)
             obj.put("savedAtEpochMs", state.savedAtEpochMs)
             obj.put("appVersionCode", state.appVersionCode)
@@ -189,6 +213,9 @@ data class SessionState(
                 state.splitVolumeOperations.forEach { arr.put(it) }
                 obj.put("splitVolumeOperations", arr)
             }
+            if (state.modelOperations.isNotEmpty()) {
+                obj.put("modelOperations", JSONArray(ModelOperation.toJsonArray(state.modelOperations)))
+            }
             // ---- M3-A: project mixes ----
             val mixesArray = JSONArray()
             for (m in state.projectMixes) {
@@ -217,7 +244,7 @@ data class SessionState(
             return try {
                 val obj = JSONObject(json)
                 val version = if (obj.has("version")) obj.getInt("version") else return null
-                if (version != SCHEMA_VERSION) return null
+                if (version !in 3..SCHEMA_VERSION) return null
                 val modelName = if (obj.has("modelName")) obj.getString("modelName") else return null
                 val rawInputPath = if (obj.has("rawInputPath")) obj.getString("rawInputPath") else return null
                 val scaleObj = obj.getJSONObject("modelScale")
@@ -279,6 +306,27 @@ data class SessionState(
                     val arr = obj.getJSONArray("splitVolumeOperations")
                     (0 until arr.length()).map { arr.getString(it) }
                 } else emptyList()
+                val modelOperations = if (obj.has("modelOperations")) {
+                    ModelOperation.fromJsonArray(obj.getJSONArray("modelOperations").toString()) ?: return null
+                } else emptyList()
+                val adaptiveLayerHeight = obj.optJSONObject("adaptiveLayerHeight")?.let { adaptive ->
+                    val mode = runCatching { AdaptiveLayerHeightState.Mode.valueOf(adaptive.getString("mode")) }
+                        .getOrElse { return null }
+                    val preset = runCatching { AdaptiveLayerHeightState.Preset.valueOf(adaptive.getString("preset")) }
+                        .getOrElse { return null }
+                    AdaptiveLayerHeightState(mode, preset)
+                } ?: AdaptiveLayerHeightState()
+                val canonicalColourRemaps = obj.optJSONArray("canonicalColourRemaps")?.let { remaps ->
+                    (0 until remaps.length()).map { index ->
+                        val item = remaps.getJSONObject(index)
+                        val destination = when (item.getString("kind")) {
+                            "physical" -> CanonicalColourDestination.PhysicalSlot(item.getInt("slot"))
+                            "mix" -> CanonicalColourDestination.Mix(item.getLong("mixId"))
+                            else -> return null
+                        }
+                        CanonicalColourRemap(item.getInt("fileIndex"), destination)
+                    }
+                } ?: emptyList()
                 // ---- M3-A: project mixes ----
                 val mixesArray = obj.optJSONArray("projectMixes")
                 val projectMixes: List<MixedFilamentRow> = if (mixesArray == null) emptyList() else
@@ -343,7 +391,10 @@ data class SessionState(
                     perVolumeExtruders = perVolumeExtruders,
                     splitObjectOperations = splitObjectOperations,
                     splitVolumeOperations = splitVolumeOperations,
+                    modelOperations = modelOperations,
                     projectMixes = projectMixes,
+                    adaptiveLayerHeight = adaptiveLayerHeight,
+                    canonicalColourRemaps = canonicalColourRemaps,
                 )
             } catch (e: JSONException) {
                 null

@@ -1,0 +1,38 @@
+Task 7.2 device-targeting incident
+Date: 2026-09-15
+
+Authorized device boundary
+NF12209000455 only. The task required ANDROID_SERIAL to be set and every adb command to use explicit -s NF12209000455.
+
+Exact elevated command
+.\gradlew.bat installDebug --no-daemon
+
+Environment in that elevated tool call
+ANDROID_SERIAL was not set in the command. The immediately preceding non-elevated command had set `$env:ANDROID_SERIAL='NF12209000455'`, but the elevated tool call was a separate process and did not include that assignment. Gradle therefore selected another connected target.
+
+Unauthorized target logged by Gradle
+Model label: AFTR - 9
+Serial/address: 127.0.0.1:15556
+
+Exact relevant Gradle output
+> Task :app:installDebug
+Installing APK 'app-debug.apk' on 'AFTR - 9-127.0.0.1:15556' for :app:debug
+Unable to install D:\projects\u1-slicer-for-android\.claude\worktrees\multi-printer\app\build\outputs\apk\debug\app-debug.apk
+com.android.ddmlib.InstallException: INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113
+> Task :app:installDebug FAILED
+Execution failed for task ':app:installDebug'.
+> java.util.concurrent.ExecutionException: com.android.builder.testing.api.DeviceException: com.android.ddmlib.InstallException: INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113
+BUILD FAILED in 51s
+40 actionable tasks: 2 executed, 38 up-to-date
+
+Outcome
+The unauthorized install attempt violated the explicit target boundary. The package manager rejected the APK before installation because the APK had no matching ABI. Gradle reported installDebug FAILED and BUILD FAILED. This output proves that the APK was not installed on 127.0.0.1:15556 by this attempt.
+
+Source-count correction
+The instrumented source inventory is 461 real `@Test` annotations across 73 Kotlin files. The exact anchored command is:
+
+rg -n '^\s*@Test\b' app/src/androidTest
+
+An unanchored search returns 462 matches because `app/src/androidTest/java/com/u1/slicer/bambu/snapshot/BambuParserDifferentialTest.kt:16` contains prose in a KDoc comment: `* One @Test per fixture in app/src/androidTest/assets/.` That comment is not a test annotation. The 461 figure comes from the anchored source scan, not from runner discovery.
+
+No device command was run while preparing this incident record.

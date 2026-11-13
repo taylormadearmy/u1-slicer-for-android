@@ -17,6 +17,22 @@ import java.nio.file.Files
  */
 class PrintTimeRemapTest {
 
+    @Test
+    fun `single slot clamps every canonical mapping to zero`() {
+        assertEquals(
+            listOf(0, 0, 0),
+            resolveCanonicalExportMapping(3, listOf(2, 1, 9), selectedExtruder = 4, slotCount = 1),
+        )
+    }
+
+    @Test
+    fun `two slots use active range for fallback mapping`() {
+        assertEquals(
+            listOf(0, 1, 0, 1),
+            resolveCanonicalExportMapping(4, null, selectedExtruder = 0, slotCount = 2),
+        )
+    }
+
     private lateinit var tmpDir: File
 
     @Before

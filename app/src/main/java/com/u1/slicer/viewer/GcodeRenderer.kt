@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import com.u1.slicer.gcode.MoveType
 import com.u1.slicer.gcode.ParsedGcode
+import com.u1.slicer.machine.MachineFamily
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
@@ -34,7 +35,15 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var segmentShader: ShaderProgram? = null
     private var toolpathShader: ShaderProgram? = null
     private val bed = BedDrawable(context)
-    @Volatile var pendingBedSizeMm: Pair<Float, Float>? = null
+    private var bedSizeXmm = 270f
+    private var bedSizeYmm = 270f
+    private var bedProfile = BedRenderProfile(
+        sizeXmm = 270f,
+        sizeYmm = 270f,
+        bedStlAsset = "bed/u1_bed.stl",
+        machineFamily = MachineFamily.SNAPMAKER,
+    )
+    @Volatile var pendingBedProfile: BedRenderProfile? = null
 
     // Segment template: 24 vertex IDs for 8 triangles (created once)
     private var templateVAO = 0
@@ -174,10 +183,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (preserveRestoredCameraOnSurfaceInit) {
             preserveRestoredCameraOnSurfaceInit = false
         } else {
-            camera.setTarget(135.0, 135.0, 0.0)
-            camera.distance = 500.0
-            camera.elevation = 62.0
-            camera.azimuth = -90.0
+            resetCameraToBed()
         }
     }
 
@@ -211,9 +217,15 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        pendingBedSizeMm?.let { (width, depth) ->
-            pendingBedSizeMm = null
-            bed.setBedSizeMm(width, depth)
+        pendingBedProfile?.let { profile ->
+            pendingBedProfile = null
+            if (profile != bedProfile) {
+                bedProfile = profile
+                bedSizeXmm = profile.sizeXmm
+                bedSizeYmm = profile.sizeYmm
+                bed.setBedProfile(profile)
+                resetCameraToBed()
+            }
         }
         pendingExtruderColors?.let { colors ->
             setExtruderColors(colors)
@@ -267,14 +279,22 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             }
         }
         if (minX == Float.MAX_VALUE) {
-            camera.setTarget(135.0, 135.0, 0.0)
-            camera.distance = 500.0
+            resetCameraToBed()
         } else {
             val pad = 20f
             camera.setTarget(((minX + maxX) / 2f).toDouble(), ((minY + maxY) / 2f).toDouble(), 0.0)
             val dist = maxOf((maxX - minX + 2 * pad).toDouble(), (maxY - minY + 2 * pad).toDouble()) * 2.0
             camera.distance = dist.coerceAtLeast(100.0)
         }
+        camera.elevation = 62.0
+        camera.azimuth = -90.0
+        camera.panX = 0.0
+        camera.panY = 0.0
+    }
+
+    private fun resetCameraToBed() {
+        camera.setTarget(bedSizeXmm / 2.0, bedSizeYmm / 2.0, 0.0)
+        camera.distance = maxOf(350.0, maxOf(bedSizeXmm, bedSizeYmm) * 1.85)
         camera.elevation = 62.0
         camera.azimuth = -90.0
         camera.panX = 0.0

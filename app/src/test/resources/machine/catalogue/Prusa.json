@@ -1,0 +1,24 @@
+{
+  "name": "Prusa",
+  "version": "02.03.01.10",
+  "machine_model_list": [
+    {
+      "name": "Prusa CORE One",
+      "sub_path": "machine/Prusa CORE One.json"
+    },
+    {
+      "name": "Prusa CORE One HF",
+      "sub_path": "machine/Prusa CORE One HF.json"
+    }
+  ],
+  "machine_list": [
+    {
+      "name": "Prusa CORE One 0.4 nozzle",
+      "sub_path": "machine/Prusa CORE One 0.4 nozzle.json"
+    },
+    {
+      "name": "Prusa CORE One HF 0.4 nozzle",
+      "sub_path": "machine/Prusa CORE One HF 0.4 nozzle.json"
+    }
+  ]
+}

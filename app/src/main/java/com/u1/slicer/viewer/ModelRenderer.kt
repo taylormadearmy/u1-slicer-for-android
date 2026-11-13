@@ -11,6 +11,7 @@ import android.opengl.GLUtils
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.Looper
+import com.u1.slicer.machine.MachineFamily
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
@@ -30,6 +31,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var modelShader: ShaderProgram? = null
     private var gridShader: ShaderProgram? = null
     private var textureShader: ShaderProgram? = null
+    private val bed = BedDrawable(context)
     private var modelVAOs = IntArray(0)
     private var modelVBOs = IntArray(0)
     private var colorVBOs = IntArray(0)
@@ -48,8 +50,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var bedSizeXmm = 270f
     private var bedSizeYmm = 270f
 
+    private var machineFamily = MachineFamily.SNAPMAKER
+    private var bedStlAsset: String? = "bed/u1_bed.stl"
+
     @Volatile
-    var pendingBedSizeMm: Pair<Float, Float>? = null
+    var pendingBedProfile: BedRenderProfile? = null
 
     // Model color (orange) — used when no per-instance colors are set
     private val modelColorDefault = floatArrayOf(0.91f, 0.48f, 0f, 1f)
@@ -158,14 +163,14 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glEnable(GLES30.GL_CULL_FACE)
 
         modelShader = ShaderProgram(context, "shaders/model.vert", "shaders/model.frag")
-        gridShader = ShaderProgram(context, "shaders/grid.vert", "shaders/grid.frag")
         textureShader = ShaderProgram(context, "shaders/texture.vert", "shaders/texture.frag")
 
         useVertexColorLoc = modelShader!!.getUniformLocation("u_UseVertexColor")
 
-        setupBedMesh()
-        setupGrid()
-        setupLogoTexture()
+        bed.setup(context)
+        if (machineFamily == MachineFamily.SNAPMAKER) {
+            setupLogoTexture()
+        }
         setupBox()
 
         meshData?.let {
@@ -207,14 +212,19 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     var pendingCameraState: CameraViewState? = null
 
     override fun onDrawFrame(gl: GL10?) = synchronized(meshOwnershipLock) {
-        pendingBedSizeMm?.let { (requestedWidth, requestedDepth) ->
-            pendingBedSizeMm = null
-            if (requestedWidth != bedSizeXmm || requestedDepth != bedSizeYmm) {
-                bedSizeXmm = requestedWidth
-                bedSizeYmm = requestedDepth
-                setupBedMesh()
-                setupGrid()
-                setupLogoTexture()
+        pendingBedProfile?.let { profile ->
+            pendingBedProfile = null
+            if (profile.sizeXmm != bedSizeXmm || profile.sizeYmm != bedSizeYmm ||
+                profile.machineFamily != machineFamily || profile.bedStlAsset != bedStlAsset
+            ) {
+                bedSizeXmm = profile.sizeXmm
+                bedSizeYmm = profile.sizeYmm
+                machineFamily = profile.machineFamily
+                bedStlAsset = profile.bedStlAsset
+                bed.setBedProfile(profile)
+                if (machineFamily == MachineFamily.SNAPMAKER) {
+                    setupLogoTexture()
+                }
                 resetCameraToDefaultView()
             }
         }
@@ -345,7 +355,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 
-        drawGrid()
+        bed.draw(camera)
+        if (machineFamily == MachineFamily.SNAPMAKER) {
+            drawLogo(camera)
+        }
 
         // Draw model instances
         meshData?.let { mesh ->
@@ -512,8 +525,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbo)
 
         val batchBytes = batch.triangleCount * 3 * MeshData.BYTES_PER_VERTEX
-        batch.geometry.position(0)
-        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, batchBytes, batch.geometry, GLES30.GL_DYNAMIC_DRAW)
+        val geometry = batch.geometry.duplicate().apply { clear() }
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, batchBytes, geometry, GLES30.GL_DYNAMIC_DRAW)
 
         GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 0)
         GLES30.glEnableVertexAttribArray(0)
@@ -529,7 +542,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         
         for (i in mesh.batches.indices) {
             val batch = mesh.batches[i]
-            val cb = batch.colorBuffer ?: continue
+            val cb = batch.colorBuffer?.duplicate()?.apply { clear() } ?: continue
             
             GLES30.glBindVertexArray(modelVAOs[i])
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, colorVBOs[i])
@@ -1114,6 +1127,26 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 20, 12)
         GLES30.glEnableVertexAttribArray(1)
         GLES30.glBindVertexArray(0)
+    }
+
+    private fun drawLogo(camera: Camera) {
+        val texShader = textureShader ?: return
+        camera.computeMVP()
+        texShader.use()
+        GLES30.glUniformMatrix4fv(texShader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
+        GLES30.glUniform1i(texShader.getUniformLocation("u_Texture"), 0)
+        GLES30.glUniform1f(texShader.getUniformLocation("u_Alpha"), 0.18f)
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        GLES30.glEnable(GLES30.GL_POLYGON_OFFSET_FILL)
+        GLES30.glPolygonOffset(1f, 1f)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, logoTexture)
+        GLES30.glBindVertexArray(logoVAO)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_FAN, 0, 4)
+        GLES30.glBindVertexArray(0)
+        GLES30.glDisable(GLES30.GL_POLYGON_OFFSET_FILL)
+        GLES30.glDisable(GLES30.GL_BLEND)
     }
 
     private fun setupGrid() {

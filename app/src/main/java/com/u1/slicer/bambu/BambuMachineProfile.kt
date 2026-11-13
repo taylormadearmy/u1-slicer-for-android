@@ -142,5 +142,13 @@ internal val BAMBU_MACHINE_PROFILES: Map<SlicerTarget, BambuMachineProfile> = ma
     ),
 )
 
-internal fun bambuMachineProfileFor(target: SlicerTarget): BambuMachineProfile? =
-    BAMBU_MACHINE_PROFILES[target]
+internal fun bambuMachineProfileFor(target: SlicerTarget, nozzleDiameter: Float = 0.4f): BambuMachineProfile? {
+    val profile = BAMBU_MACHINE_PROFILES[target] ?: return null
+    require(nozzleDiameter in com.u1.slicer.data.BambuConfig.SUPPORTED_NOZZLE_DIAMETERS) {
+        "Unsupported Bambu nozzle diameter: $nozzleDiameter"
+    }
+    return profile.copy(
+        nozzleDiameters = List(profile.nozzleDiameters.size) { nozzleDiameter },
+        printerSettingsId = profile.printerSettingsId.replace("0.4 nozzle", "$nozzleDiameter nozzle"),
+    )
+}

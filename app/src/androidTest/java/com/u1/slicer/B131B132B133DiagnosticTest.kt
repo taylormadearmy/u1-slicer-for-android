@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
 import org.junit.Ignore
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -25,6 +26,7 @@ import java.io.File
  */
 @RunWith(AndroidJUnit4::class)
 class B131B132B133DiagnosticTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     companion object { private const val TAG = "B131B132B133" }
 

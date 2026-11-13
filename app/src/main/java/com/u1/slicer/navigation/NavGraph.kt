@@ -15,6 +15,7 @@ import androidx.navigation.compose.composable
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.U1SlicerApplication
 import com.u1.slicer.bambu.resolveTargetedSliceConfig
+import com.u1.slicer.machine.resolveMachineSliceConfig
 import com.u1.slicer.printer.PrinterViewModel
 import com.u1.slicer.ui.AiPaintResultScreen
 import com.u1.slicer.ui.CreateMixSlotDialog
@@ -67,6 +68,7 @@ fun U1NavGraph(
         composable(Routes.FILAMENTS) {
             val filaments by viewModel.filaments.collectAsState(initial = emptyList())
             val extruderPresets by viewModel.extruderPresets.collectAsState()
+            val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
             val importedMixRecipe by viewModel.importedMixRecipeState.collectAsState()
             val mixRecipeSource by viewModel.mixRecipeSource.collectAsState()
             FilamentScreen(
@@ -85,6 +87,7 @@ fun U1NavGraph(
                 // Filaments screen can render mix rows and open the dialog.
                 mixedFilamentManager = viewModel.mixedFilamentManager,
                 extruderPresets = extruderPresets,
+                slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                 importedMixRecipe = importedMixRecipe,
                 mixRecipeSource = mixRecipeSource,
                 onCreateEditableMixCopy = { viewModel.createEditableImportedMixCopy() },
@@ -109,7 +112,12 @@ fun U1NavGraph(
         composable(Routes.GCODE_VIEWER_3D) {
             val sliceConfig by viewModel.config.collectAsState()
             val sliceTarget by viewModel.effectiveSliceTarget.collectAsState()
-            val targetMachineConfig = resolveTargetedSliceConfig(sliceTarget, sliceConfig)
+            val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
+            val targetMachineConfig = if (sliceTarget == com.u1.slicer.slice.SlicerTarget.SnapmakerU1) {
+                resolveMachineSliceConfig(activeMachineProfile, sliceConfig)
+            } else {
+                resolveTargetedSliceConfig(sliceTarget, sliceConfig)
+            }
             val parsedGcode by viewModel.parsedGcode.collectAsState()
             val extruderColors by viewModel.activeExtruderColors.collectAsState()
             val colorMapping by viewModel.colorMapping.collectAsState()
@@ -135,6 +143,9 @@ fun U1NavGraph(
                     extruderColors = extruderColors,
                     bedSizeXmm = targetMachineConfig.bedSizeX,
                     bedSizeYmm = targetMachineConfig.bedSizeY,
+                    bedStlAsset = activeMachineProfile.bedStlAsset,
+                    machineFamily = activeMachineProfile.family,
+                    slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                     colorMapping = gcodeColorMapping,
                     slicerLayerCount = slicerLayerCount,
                     // Bug 1 class sibling fix (post-v2.0.0-validation):
@@ -159,13 +170,20 @@ fun U1NavGraph(
         composable(Routes.MODEL_VIEWER) {
             val sliceConfig by viewModel.config.collectAsState()
             val sliceTarget by viewModel.effectiveSliceTarget.collectAsState()
-            val targetMachineConfig = resolveTargetedSliceConfig(sliceTarget, sliceConfig)
+            val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
+            val targetMachineConfig = if (sliceTarget == com.u1.slicer.slice.SlicerTarget.SnapmakerU1) {
+                resolveMachineSliceConfig(activeMachineProfile, sliceConfig)
+            } else {
+                resolveTargetedSliceConfig(sliceTarget, sliceConfig)
+            }
             val modelPath = viewModel.currentModelPath
             if (modelPath != null) {
                 ModelViewerScreen(
                     modelFilePath = modelPath,
                     bedSizeXmm = targetMachineConfig.bedSizeX,
                     bedSizeYmm = targetMachineConfig.bedSizeY,
+                    bedStlAsset = activeMachineProfile.bedStlAsset,
+                    machineFamily = activeMachineProfile.family,
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -183,30 +201,29 @@ fun U1NavGraph(
             val container = (navController.context.applicationContext as U1SlicerApplication).container
             val aiVm = container.aiPaintViewModel
             val uiState by aiVm.uiState.collectAsState()
+            val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
             // M3-Phase-B/F1: wire the slot ceiling so mix slots (ids ≥ numPhysical)
             // are accepted by the three paint guards in AiPaintViewModel. SideEffect
             // runs synchronously each recomposition, keeping the lambda fresh whenever
             // the active mix set changes.
-            // C-1: the Smart Paint surface is ALWAYS a fixed 4-physical-slot space
-            // (SegmentationCascade.TARGET_SLOTS). Do NOT derive numPhysical from
-            // slicerConfig.extruderCount — a freshly loaded single-colour STL has
-            // extruderCount = 1, which would collapse the picker/palette to 1 chip,
-            // reject E2/E3/E4 reassignment, and place mix virtual ids at 1+k (colliding
-            // with physical slots in the always-4-physical painted file).
-            val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+            val numPhysical = activeMachineProfile.extruderCount.coerceIn(1, 4)
+            val mixesAvailable = numPhysical == com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
             SideEffect {
                 aiVm.slotCeiling = {
-                    numPhysical + viewModel.mixedFilamentManager.activeMixCount(numPhysical)
+                    if (numPhysical == com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS) {
+                        numPhysical + viewModel.mixedFilamentManager.activeMixCount(numPhysical)
+                    } else {
+                        numPhysical
+                    }
                 }
             }
             // fix37: build the full 4-slot palette from the user's extruder presets directly.
             // viewModel.activeExtruderColors is filtered by `usedSlots` (which slots the loaded
-            // model actually uses) so on a single-colour plate it leaves the other 3 slots
-            // blank — making the Smart Paint picker show grey for slots the user can still
-            // pick. The presets always have all 4, regardless of model.
+            // model actually uses) so on a single-colour plate it leaves other profile slots
+            // blank. The presets carry the full active-profile palette.
             val extruderPresets by viewModel.extruderPresets.collectAsState()
-            val filamentColours = remember(extruderPresets) {
-                (0..3).map { i ->
+            val filamentColours = remember(extruderPresets, numPhysical) {
+                (0 until numPhysical).map { i ->
                     extruderPresets.firstOrNull { it.index == i }?.color
                         ?.takeIf { it.isNotBlank() }
                         ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
@@ -219,11 +236,15 @@ fun U1NavGraph(
             // so the provider lambda can capture it.
             SideEffect {
                 aiVm.mixDisplayColoursProvider = {
-                    viewModel.mixedFilamentManager.activeOrder(numPhysical).map { row ->
-                        com.u1.slicer.aipaint.FilamentMixPredictor.predict(
-                            row.components.map { filamentColours.getOrNull(it - 1) ?: "#888888" },
-                            row.weights
-                        )
+                    if (mixesAvailable) {
+                        viewModel.mixedFilamentManager.activeOrder(numPhysical).map { row ->
+                            com.u1.slicer.aipaint.FilamentMixPredictor.predict(
+                                row.components.map { filamentColours.getOrNull(it - 1) ?: "#888888" },
+                                row.weights
+                            )
+                        }
+                    } else {
+                        emptyList()
                     }
                 }
             }
@@ -247,9 +268,9 @@ fun U1NavGraph(
             var createMixOpen by remember { mutableStateOf(false) }
             var editMixRow by remember { mutableStateOf<com.u1.slicer.data.MixedFilamentRow?>(null) }
 
-            if (createMixOpen || editMixRow != null) {
-                val physicalColours = remember(extruderPresets) {
-                    (0..3).map { i ->
+            if (mixesAvailable && (createMixOpen || editMixRow != null)) {
+                val physicalColours = remember(extruderPresets, numPhysical) {
+                    (0 until numPhysical).map { i ->
                         val hex = extruderPresets.firstOrNull { it.index == i }?.color
                             ?.takeIf { it.isNotBlank() }
                             ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
@@ -261,7 +282,7 @@ fun U1NavGraph(
                 }
                 CreateMixSlotDialog(
                     physicalFilamentColours = physicalColours,
-                    physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+                    physicalFilamentLabels = (0 until numPhysical).map { "E${it + 1}" },
                     editingRow = editMixRow,
                     onConfirmN = { components, weights, mode, topMixMode, fineTopLines, ironingGlaze ->
                         val editing = editMixRow
@@ -283,9 +304,13 @@ fun U1NavGraph(
 
             AiPaintResultScreen(
                 uiState = uiState,
+                bedSizeXmm = activeMachineProfile.bedSizeX,
+                bedSizeYmm = activeMachineProfile.bedSizeY,
+                bedStlAsset = activeMachineProfile.bedStlAsset,
+                machineFamily = activeMachineProfile.family,
                 filamentColours = filamentColours,
-                projectMixes = projectMixes,
-                libraryMixes = libraryMixes,
+                projectMixes = if (mixesAvailable) projectMixes else emptyList(),
+                libraryMixes = if (mixesAvailable) libraryMixes else emptyList(),
                 numPhysical = numPhysical,
                 canonicalCount = canonicalCount,
                 onUsePainting = {
@@ -328,7 +353,7 @@ fun U1NavGraph(
                 onPickLibraryFilament = { slot, entry -> viewModel.applyLibraryPick(slot, entry) },
                 onImportLibraryProfile = { slot, entry -> viewModel.importLibraryProfileForSlot(slot, entry) },
                 onRetryLibrary = { viewModel.retryLibraryLoad() },
-                onCreateMix = { createMixOpen = true },
+                onCreateMix = if (mixesAvailable) ({ createMixOpen = true }) else null,
                 onEditMix = { row -> editMixRow = row },
             )
         }

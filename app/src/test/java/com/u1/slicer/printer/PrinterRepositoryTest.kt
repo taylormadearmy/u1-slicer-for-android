@@ -4,12 +4,49 @@ import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
+import com.u1.slicer.network.FilamentSlot
+import com.u1.slicer.network.PrinterStatus
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runTest
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PrinterRepositoryTest {
+    @Test fun `generated filenames are accepted by generic printer transports`() {
+        for (source in listOf(".hidden.stl", "x".repeat(300) + ".stl", "....stl")) {
+            val name = PrinterRepository.buildPrinterUploadFilename(source, nowMillis = 42)
+            OctoPrintTransport.requireRemoteName(name)
+            com.u1.slicer.printer.elegoo.ElegooCc1Protocol.validateFilename(name)
+            assertTrue(name.length <= 255)
+        }
+    }
+
+
+    @Test
+    fun uploadOnly_neverRequestsStartEvenWhenTransportSupportsAtomicStart() = runTest {
+        val transport = RecordingUploadTransport(supportsStartOnUpload = true)
+        val gcode = File.createTempFile("upload-only", ".gcode").apply {
+            writeText("G28")
+        }
+        try {
+            val result = PrinterRepository.uploadOnlyWithTransport(
+                transport = transport,
+                gcodeFile = gcode,
+                uploadName = "safe.gcode",
+            )
+
+            assertEquals(TransportCommandResult.Success, result)
+            assertEquals("safe.gcode", transport.remoteName)
+            assertFalse(transport.startAfterUpload)
+        } finally {
+            gcode.delete()
+        }
+    }
 
     @Test
     fun buildPrinterUploadFilename_appendsUniqueSuffix() {
@@ -142,5 +179,38 @@ class PrinterRepositoryTest {
         assertTrue(PrinterRepository.shouldRecreateTransport(moonraker, moonrakerUrlChanged))
         assertTrue(PrinterRepository.shouldRecreateTransport(moonraker, bambu))
         assertTrue(PrinterRepository.shouldRecreateTransport(bambu, bambuIpChanged))
+    }
+
+    @Test
+    fun shouldRecreateTransport_detects_host_and_credential_changes() {
+        val current = Printer("octo", "Octo", hostType = HostType.OCTOPRINT, moonrakerUrl = "http://octo", apiKey = "a")
+        assertTrue(PrinterRepository.shouldRecreateTransport(current, current.copy(hostType = HostType.PRUSALINK)))
+        assertTrue(PrinterRepository.shouldRecreateTransport(current, current.copy(apiKey = "b")))
+        assertTrue(PrinterRepository.shouldRecreateTransport(current, current.copy(username = "u")))
+        assertTrue(PrinterRepository.shouldRecreateTransport(current, current.copy(password = "p")))
+    }
+
+    private class RecordingUploadTransport(supportsStartOnUpload: Boolean) : PrinterTransport {
+        override val capabilities = PrinterTransportCapabilities(
+            supportsUpload = true,
+            supportsStartOnUpload = supportsStartOnUpload,
+        )
+        override val status: Flow<PrinterStatus> = MutableStateFlow(PrinterStatus("idle", 0f))
+        override val filamentSlots: Flow<List<FilamentSlot>> = MutableStateFlow(emptyList())
+        override val cameraState: Flow<CameraState> = MutableStateFlow(CameraState.Disabled)
+        var remoteName: String? = null
+        var startAfterUpload: Boolean = true
+
+        override suspend fun testConnection(): String? = null
+
+        override suspend fun uploadJob(
+            file: File,
+            remoteName: String,
+            startAfterUpload: Boolean,
+        ): TransportCommandResult {
+            this.remoteName = remoteName
+            this.startAfterUpload = startAfterUpload
+            return TransportCommandResult.Success
+        }
     }
 }

@@ -41,6 +41,7 @@ import com.u1.slicer.data.LibraryState
 import com.u1.slicer.data.Printer
 import com.u1.slicer.printer.CameraState
 import com.u1.slicer.printer.PrinterViewModel
+import com.u1.slicer.printer.WebcamSource
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
@@ -74,6 +75,8 @@ fun PrinterScreen(
     viewModel: PrinterViewModel,
     filaments: List<FilamentProfile> = emptyList(),
     excludeObjects: List<ExcludeObjectInfo> = emptyList(),
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     onNavigateSettings: () -> Unit = {},
     onNavigatePrepare: () -> Unit = {},
     onNavigatePreview: () -> Unit = {},
@@ -84,7 +87,7 @@ fun PrinterScreen(
     val sendingState by viewModel.sendingState.collectAsState()
     val syncState by viewModel.syncState.collectAsState()
     val extruderPresets by viewModel.extruderPresets.collectAsState()
-    val webcamCandidates by viewModel.webcamCandidates.collectAsState()
+    val webcamSelection by viewModel.webcamSelection.collectAsState()
     val remoteScreenAvailable by viewModel.remoteScreenAvailable.collectAsState()
     val context = LocalContext.current
     val skippedObjects by viewModel.skippedObjects.collectAsState()
@@ -94,8 +97,16 @@ fun PrinterScreen(
     val activePrinterId by viewModel.activePrinterId.collectAsState()
     val activePrinter by viewModel.activePrinter.collectAsState()
     val capabilities by viewModel.capabilities.collectAsState()
+    val controlVisibility = remember(capabilities, status.isConnected, status.isIdle) {
+        com.u1.slicer.ui.printer.resolvePrinterScreenControlVisibility(
+            capabilities = capabilities,
+            isConnected = status.isConnected,
+            isIdle = status.isIdle,
+        )
+    }
     val printerFilamentSlots by viewModel.printerFilamentSlots.collectAsState()
     val cameraState by viewModel.cameraState.collectAsState()
+    val selectedWebcam = webcamSelection.selected
     val displayPresets = remember(activePrinter?.kind, printerFilamentSlots, extruderPresets) {
         if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
             buildBambuSlotPresets(printerFilamentSlots, extruderPresets)
@@ -125,9 +136,13 @@ fun PrinterScreen(
     var cameraFrame by remember { mutableStateOf<Bitmap?>(null) }
     var showFullscreen by remember { mutableStateOf(false) }
     var candidateIndex by remember { mutableStateOf(0) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(webcamCandidates) {
+    LaunchedEffect(selectedWebcam?.uid, selectedWebcam?.snapshotUrls) {
         candidateIndex = 0
+        cameraFrame = null
+        cameraError = null
+        val webcamCandidates = selectedWebcam?.snapshotUrls.orEmpty()
         if (webcamCandidates.isEmpty()) return@LaunchedEffect
         val http = OkHttpClient.Builder()
             .connectTimeout(3, TimeUnit.SECONDS)
@@ -147,11 +162,17 @@ fun PrinterScreen(
                 }
                 if (bytes != null) {
                     val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bmp != null) cameraFrame = bmp
+                    if (bmp != null) {
+                        cameraFrame = bmp
+                        cameraError = null
+                    }
                     else if (candidateIndex < webcamCandidates.size - 1) candidateIndex++
+                    else cameraError = "Camera unavailable"
                 } else if (candidateIndex < webcamCandidates.size - 1) candidateIndex++
+                else cameraError = "Camera unavailable"
             } catch (_: Exception) {
                 if (candidateIndex < webcamCandidates.size - 1) candidateIndex++
+                else cameraError = "Camera unavailable"
             }
             delay(500)
         }
@@ -167,7 +188,7 @@ fun PrinterScreen(
                 cameraFrame = null
             }
             is CameraState.Disabled, is CameraState.Connecting, is CameraState.Error -> {
-                if (webcamCandidates.isEmpty()) cameraFrame = null
+                if (selectedWebcam == null) cameraFrame = null
             }
         }
     }
@@ -181,6 +202,8 @@ fun PrinterScreen(
         SkipObjectsSheet(
             objects = excludeObjects,
             skippedObjects = skippedObjects,
+            bedSizeXmm = bedSizeXmm,
+            bedSizeYmm = bedSizeYmm,
             onSkip = { name -> viewModel.skipObject(name) },
             onDismiss = { showSkipSheet = false }
         )
@@ -191,10 +214,10 @@ fun PrinterScreen(
         val preview = syncState as PrinterViewModel.SyncState.Preview
         FilamentSyncDialog(
             entries = preview.entries,
-            onConfirm = { applyColors, applyTypes ->
+            onConfirm = { applyColors, applyTypes, importMatchedProfiles ->
                 viewModel.applySyncResult(
                     preview,
-                    applyColors, applyTypes
+                    applyColors, applyTypes, importMatchedProfiles,
                 )
             },
             onDismiss = { viewModel.dismissSync() }
@@ -207,7 +230,7 @@ fun PrinterScreen(
                 title = { Text("Printer", fontWeight = FontWeight.Bold) },
                 actions = {
                     val isLightOn by viewModel.isLightOn.collectAsState()
-                    if (status.isConnected && capabilities.supportsLightControl) {
+                    if (controlVisibility.showLightControl) {
                         IconButton(onClick = { viewModel.toggleLight() }) {
                             Icon(
                                 Icons.Default.Lightbulb,
@@ -390,12 +413,29 @@ fun PrinterScreen(
             }
 
             // ── Camera feed ─────────────────────────────────────────────────
-            if (status.isConnected && capabilities.supportsCamera) {
+            if (controlVisibility.showCamera) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF0D0D1A)),
                     shape = RoundedCornerShape(16.dp)
                 ) {
+                    Column {
+                        if (webcamSelection.sources.size > 1) {
+                            CameraSourcePicker(
+                                sources = webcamSelection.sources,
+                                selectedUid = selectedWebcam?.uid,
+                                onSelect = viewModel::selectWebcam,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
+                        if (webcamSelection.preferredSourceUnavailable && selectedWebcam != null) {
+                            Text(
+                                "Saved camera unavailable. Showing ${selectedWebcam.label}.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                        }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -444,13 +484,11 @@ fun PrinterScreen(
                                 }
                             }
                         } else {
-                            val cameraMessage = when (val state = cameraState) {
+                            val cameraMessage = cameraError ?: when (val state = cameraState) {
                                 is CameraState.Error -> state.message
-                                is CameraState.Streaming, is CameraState.Connecting ->
-                                    "Connecting to camera\u2026"
+                                is CameraState.Streaming, is CameraState.Connecting -> "Connecting to camera\u2026"
                                 is CameraState.Rtsp -> "Connecting to camera\u2026"
-                                is CameraState.Disabled ->
-                                    if (webcamCandidates.isEmpty()) "No camera found" else "Connecting to camera\u2026"
+                                is CameraState.Disabled -> if (selectedWebcam == null) "No compatible camera found" else "Connecting to camera\u2026"
                             }
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -467,6 +505,7 @@ fun PrinterScreen(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }
@@ -652,7 +691,7 @@ fun PrinterScreen(
                 }
 
                 // ── Temperatures ────────────────────────────────────────────
-                if (capabilities.supportsHeaterControl) Card(
+                if (controlVisibility.showHeaterControl) Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     shape = RoundedCornerShape(16.dp)
@@ -724,7 +763,7 @@ fun PrinterScreen(
                 // Tighter gate than "!isPrinting && !isPaused": `isIdle` excludes
                 // error/disconnected, where freeform G-code would either be
                 // rejected by Klipper or surprise the user.
-                if (capabilities.supportsCustomGcode && status.isConnected && status.isIdle) {
+                if (controlVisibility.showConsole) {
                     var customGcode by remember { mutableStateOf("") }
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -1318,11 +1357,14 @@ private fun ExtruderSlotEditDialog(
 @Composable
 private fun FilamentSyncDialog(
     entries: List<PrinterViewModel.SyncPreviewEntry>,
-    onConfirm: (applyColors: Boolean, applyTypes: Boolean) -> Unit,
+    onConfirm: (applyColors: Boolean, applyTypes: Boolean, importMatchedProfiles: Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     var applyColors by remember { mutableStateOf(true) }
     var applyTypes by remember { mutableStateOf(true) }
+    var importMatchedProfiles by remember(entries) {
+        mutableStateOf(entries.any { it.matchedSlug != null })
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -1353,13 +1395,23 @@ private fun FilamentSyncDialog(
                     Spacer(Modifier.width(4.dp))
                     Text("Update app material types")
                 }
+                if (entries.any { it.matchedSlug != null }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = importMatchedProfiles,
+                            onCheckedChange = { importMatchedProfiles = it },
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Import and use matched filament profiles")
+                    }
+                }
 
                 Spacer(Modifier.height(12.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = { onConfirm(applyColors, applyTypes) },
-                        enabled = applyColors || applyTypes) { Text("Update app") }
+                    Button(onClick = { onConfirm(applyColors, applyTypes, importMatchedProfiles) },
+                        enabled = applyColors || applyTypes || importMatchedProfiles) { Text("Update app") }
                 }
             }
         }
@@ -1527,6 +1579,8 @@ internal fun resolveStatusBadge(printerState: String, justSent: Boolean): String
 private fun SkipObjectsSheet(
     objects: List<ExcludeObjectInfo>,
     skippedObjects: Set<String>,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     onSkip: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1544,6 +1598,8 @@ private fun SkipObjectsSheet(
             ExcludeObjectBedCanvas(
                 objects = objects,
                 skippedObjects = skippedObjects,
+                bedSizeXmm = bedSizeXmm,
+                bedSizeYmm = bedSizeYmm,
                 onSkip = onSkip,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1588,32 +1644,34 @@ private fun SkipObjectsSheet(
 private fun ExcludeObjectBedCanvas(
     objects: List<ExcludeObjectInfo>,
     skippedObjects: Set<String>,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     onSkip: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val bedMm = 270f
     val density = LocalDensity.current
 
-    BoxWithConstraints(modifier = modifier.aspectRatio(1f)) {
-        val scalePx = with(density) { maxWidth.toPx() } / bedMm
+    BoxWithConstraints(modifier = modifier.aspectRatio(bedSizeXmm / bedSizeYmm)) {
+        val scaleX = with(density) { maxWidth.toPx() } / bedSizeXmm
+        val scaleY = with(density) { maxHeight.toPx() } / bedSizeYmm
 
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(objects, skippedObjects, scalePx) {
+                .pointerInput(objects, skippedObjects, scaleX, scaleY) {
                     val minTapRadiusPx = with(density) { 24.dp.toPx() }
                     detectTapGestures { tap ->
                         for (obj in objects) {
                             if (obj.name in skippedObjects) continue
                             val hit = if (obj.polygon.isNotEmpty()) {
                                 val pts = obj.polygon.map { (x, y) ->
-                                    Offset(x * scalePx, (bedMm - y) * scalePx)
+                                    Offset(x * scaleX, (bedSizeYmm - y) * scaleY)
                                 }
                                 pointInPolygon(tap, pts)
                             } else {
                                 val c = Offset(
-                                    obj.center.first * scalePx,
-                                    (bedMm - obj.center.second) * scalePx
+                                    obj.center.first * scaleX,
+                                    (bedSizeYmm - obj.center.second) * scaleY
                                 )
                                 (tap - c).getDistance() <= minTapRadiusPx
                             }
@@ -1636,7 +1694,7 @@ private fun ExcludeObjectBedCanvas(
                 if (obj.polygon.isNotEmpty()) {
                     val path = Path().apply {
                         val pts = obj.polygon.map { (x, y) ->
-                            Offset(x * scalePx, (bedMm - y) * scalePx)
+                            Offset(x * scaleX, (bedSizeYmm - y) * scaleY)
                         }
                         moveTo(pts[0].x, pts[0].y)
                         pts.drop(1).forEach { lineTo(it.x, it.y) }
@@ -1646,8 +1704,8 @@ private fun ExcludeObjectBedCanvas(
                     drawPath(path, strokeColor, style = Stroke(width = 2.dp.toPx()))
                 } else {
                     val c = Offset(
-                        obj.center.first * scalePx,
-                        (bedMm - obj.center.second) * scalePx
+                        obj.center.first * scaleX,
+                        (bedSizeYmm - obj.center.second) * scaleY
                     )
                     drawCircle(
                         strokeColor,
@@ -1656,6 +1714,46 @@ private fun ExcludeObjectBedCanvas(
                         alpha = if (skipped) 0.4f else 1f
                     )
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CameraSourcePicker(
+    sources: List<WebcamSource>,
+    selectedUid: String?,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = sources.firstOrNull { it.uid == selectedUid } ?: return
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded },
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        OutlinedTextField(
+            value = selected.label,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Camera") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            sources.forEach { source ->
+                DropdownMenuItem(
+                    text = { Text(source.label) },
+                    onClick = {
+                        expanded = false
+                        onSelect(source.uid)
+                    },
+                )
             }
         }
     }

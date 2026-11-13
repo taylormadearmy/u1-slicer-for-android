@@ -42,7 +42,7 @@ fun HighlightSlotPicker(
     modifier: Modifier = Modifier,
     numPhysical: Int = physicalColours.size,
     mixes: List<MixedFilamentRow> = emptyList(),
-    onCreateMix: () -> Unit = {},
+    onCreateMix: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -103,16 +103,17 @@ fun HighlightSlotPicker(
                 }
             }
         }
-        // "+" create-mix chip.
-        Box(
-            Modifier
-                .size(40.dp)
-                .clip(MaterialTheme.shapes.small)
-                .border(1.5.dp, Color.White.copy(alpha = 0.7f), MaterialTheme.shapes.small)
-                .clickable { onCreateMix() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("+", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        onCreateMix?.let { onCreateMix ->
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .border(1.5.dp, Color.White.copy(alpha = 0.7f), MaterialTheme.shapes.small)
+                    .clickable { onCreateMix() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("+", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            }
         }
         IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
             Icon(

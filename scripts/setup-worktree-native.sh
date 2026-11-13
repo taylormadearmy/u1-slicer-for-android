@@ -204,7 +204,7 @@ else
     -B"$BUILD_DIR" \
     -GNinja \
     -DSLICER_BACKEND=orca \
-    -DANDROID_STL=c++_shared
+    -DANDROID_STL=c++_static
   say "Configured ✓"
 fi
 

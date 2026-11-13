@@ -23,8 +23,12 @@ data class ExtruderPreset(
     }
 }
 
-fun defaultExtruderPresets(): List<ExtruderPreset> =
-    (0..3).map { ExtruderPreset(it, color = ExtruderPreset.DEFAULT_COLORS[it]) }
+private fun supportedExtruderCount(count: Int): Int = count.coerceIn(1, 4)
+
+fun defaultExtruderPresets(count: Int = 4): List<ExtruderPreset> =
+    (0 until supportedExtruderCount(count)).map { index ->
+        ExtruderPreset(index, color = ExtruderPreset.DEFAULT_COLORS[index])
+    }
 
 fun serializeExtruderPresets(presets: List<ExtruderPreset>): String {
     val arr = JSONArray()
@@ -39,8 +43,9 @@ fun serializeExtruderPresets(presets: List<ExtruderPreset>): String {
     return arr.toString()
 }
 
-fun parseExtruderPresets(json: String): List<ExtruderPreset> {
-    if (json.isBlank()) return defaultExtruderPresets()
+fun parseExtruderPresets(json: String, count: Int = 4): List<ExtruderPreset> {
+    val slotCount = supportedExtruderCount(count)
+    if (json.isBlank()) return defaultExtruderPresets(slotCount)
     return try {
         val arr = JSONArray(json)
         (0 until arr.length()).map { i ->
@@ -51,14 +56,14 @@ fun parseExtruderPresets(json: String): List<ExtruderPreset> {
                 materialType = obj.optString("materialType", "PLA"),
                 filamentProfileId = if (obj.has("filamentProfileId")) obj.getLong("filamentProfileId") else null
             )
-        }.also { list ->
-            // Ensure all 4 slots are present, filling defaults for missing ones
+        }.filter { it.index in 0 until slotCount }.let { list ->
+            // Fill only the physical slots supported by the active machine profile.
             val indices = list.map { it.index }.toSet()
             val full = list.toMutableList()
-            (0..3).forEach { i -> if (i !in indices) full.add(ExtruderPreset(i)) }
-            return full.sortedBy { it.index }.take(4)
+            (0 until slotCount).forEach { i -> if (i !in indices) full.add(ExtruderPreset(i)) }
+            return full.sortedBy { it.index }.take(slotCount)
         }
     } catch (_: Exception) {
-        defaultExtruderPresets()
+        defaultExtruderPresets(slotCount)
     }
 }

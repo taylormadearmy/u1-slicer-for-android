@@ -217,11 +217,13 @@ data class MeshData(
                     .order(java.nio.ByteOrder.nativeOrder())
                     .asFloatBuffer()
             }
-            val cb = batch.colorBuffer!!
+            // The UI and GL renderers share these buffers, but must not share cursors.
+            val cb = batch.colorBuffer!!.duplicate()
             cb.position(0)
             
-            indicesBuffer.position(0)
-            indicesBuffer.get(indices, 0, triCount)
+            val indexView = indicesBuffer.duplicate()
+            indexView.position(0)
+            indexView.get(indices, 0, triCount)
             
             for (localTri in 0 until triCount) {
                 val tri = globalTriIndex + localTri
@@ -268,7 +270,7 @@ data class MeshData(
                     .order(java.nio.ByteOrder.nativeOrder())
                     .asFloatBuffer()
             }
-            val cb = batch.colorBuffer!!
+            val cb = batch.colorBuffer!!.duplicate()
             cb.position(0)
             
             for (localTri in 0 until triCount) {

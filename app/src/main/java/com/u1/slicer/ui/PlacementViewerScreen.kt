@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.sp
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.WipeTowerDepthEstimator
 
-private const val BED_MM = 270f
 private val OBJECT_COLORS = listOf(
     Color(0xFF2196F3), Color(0xFF4CAF50), Color(0xFFFF9800),
     Color(0xFF9C27B0), Color(0xFFE91E63), Color(0xFF00BCD4)
@@ -35,13 +34,15 @@ private val OBJECT_COLORS = listOf(
 private val WIPE_TOWER_COLOR = Color(0xFFFFC107)
 
 /**
- * Pre-slice placement viewer: top-down 270x270 bed with draggable object copies
+ * Pre-slice placement viewer: top-down bed with draggable object copies
  * and an optional draggable wipe tower. User taps Apply to confirm positions.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlacementViewerScreen(
     modelInfo: ModelInfo,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     copyCount: Int,
     wipeTowerEnabled: Boolean,
     wipeTowerWidthMm: Float,
@@ -119,7 +120,12 @@ fun PlacementViewerScreen(
                 contentAlignment = Alignment.Center
             ) {
                 SimplifiedPlacementBed(
-                    modifier = Modifier.size(minOf(maxWidth, maxHeight)),
+                    modifier = Modifier.size(
+                        width = minOf(maxWidth, maxHeight * (bedSizeXmm / bedSizeYmm)),
+                        height = minOf(maxHeight, maxWidth * (bedSizeYmm / bedSizeXmm))
+                    ),
+                    bedSizeXmm = bedSizeXmm,
+                    bedSizeYmm = bedSizeYmm,
                     modelSizeX = modelInfo.sizeX,
                     modelSizeY = modelInfo.sizeY,
                     towerDepthMm = WipeTowerDepthEstimator.estimateDepth(modelInfo.sizeZ),
@@ -151,7 +157,7 @@ fun PlacementViewerScreen(
                 LegendDot(OBJECT_COLORS[0], "Object \u00d7$copyCount")
                 if (wipeTowerEnabled) LegendDot(WIPE_TOWER_COLOR, "Wipe Tower")
                 Spacer(Modifier.weight(1f))
-                Text("270\u00d7270 mm", style = MaterialTheme.typography.labelSmall,
+                Text(formatBedFootprint(bedSizeXmm, bedSizeYmm), style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
@@ -170,6 +176,8 @@ fun PlacementViewerScreen(
 @Composable
 fun SimplifiedPlacementBed(
     modifier: Modifier = Modifier,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     modelSizeX: Float,
     modelSizeY: Float,
     towerDepthMm: Float,
@@ -193,34 +201,37 @@ fun SimplifiedPlacementBed(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        val canvasSize = minOf(maxWidth, maxHeight)
+        val bedAspect = bedSizeXmm / bedSizeYmm
+        val bedWidth = minOf(maxWidth, maxHeight * bedAspect)
+        val bedHeight = minOf(maxHeight, maxWidth / bedAspect)
         // towerDepthMm is passed in directly (estimated from model height by caller)
 
-        Box(modifier = Modifier.size(canvasSize), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(bedWidth, bedHeight), contentAlignment = Alignment.Center) {
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(copyCount, wipeTowerEnabled, modelSizeX, modelSizeY, wipeTowerWidthMm, towerX, towerY) {
-                        val ppm = size.width.toFloat() / BED_MM
-                        val tW = wipeTowerWidthMm * ppm
-                        val tH = towerDepthMm * ppm
-                        val objW = modelSizeX * ppm
-                        val objH = modelSizeY * ppm
+                    .pointerInput(copyCount, wipeTowerEnabled, bedSizeXmm, bedSizeYmm, modelSizeX, modelSizeY, wipeTowerWidthMm, towerX, towerY) {
+                        val pxPerMmX = size.width.toFloat() / bedSizeXmm
+                        val pxPerMmY = size.height.toFloat() / bedSizeYmm
+                        val tW = wipeTowerWidthMm * pxPerMmX
+                        val tH = towerDepthMm * pxPerMmY
+                        val objW = modelSizeX * pxPerMmX
+                        val objH = modelSizeY * pxPerMmY
 
                         detectDragGestures(
                             onDragStart = { offset ->
                                 onDraggingIdxChange(-1)
                                 if (wipeTowerEnabled) {
-                                    val tx = towerX * ppm
-                                    val ty = towerY * ppm
+                                    val tx = towerX * pxPerMmX
+                                    val ty = towerY * pxPerMmY
                                     if (offset.x in tx..(tx + tW) && offset.y in ty..(ty + tH)) {
                                         onDraggingIdxChange(copyCount)
                                         return@detectDragGestures
                                     }
                                 }
                                 for (i in 0 until copyCount) {
-                                    val ox = objectX.getOrElse(i) { 0f } * ppm
-                                    val oy = objectY.getOrElse(i) { 0f } * ppm
+                                    val ox = objectX.getOrElse(i) { 0f } * pxPerMmX
+                                    val oy = objectY.getOrElse(i) { 0f } * pxPerMmY
                                     if (offset.x in ox..(ox + objW) && offset.y in oy..(oy + objH)) {
                                         onDraggingIdxChange(i)
                                         break
@@ -229,22 +240,21 @@ fun SimplifiedPlacementBed(
                             },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                val ppmDrag = size.width.toFloat() / BED_MM
-                                val dx = dragAmount.x / ppmDrag
-                                val dy = dragAmount.y / ppmDrag
+                                val dx = dragAmount.x / pxPerMmX
+                                val dy = dragAmount.y / pxPerMmY
                                 when {
                                     draggingIdx == copyCount && wipeTowerEnabled -> {
                                         onTowerMove(
-                                            (towerX + dx).coerceIn(0f, BED_MM - wipeTowerWidthMm),
-                                            (towerY + dy).coerceIn(0f, BED_MM - towerDepthMm)
+                                            (towerX + dx).coerceIn(0f, maxOf(0f, bedSizeXmm - wipeTowerWidthMm)),
+                                            (towerY + dy).coerceIn(0f, maxOf(0f, bedSizeYmm - towerDepthMm))
                                         )
                                     }
                                     draggingIdx in 0 until copyCount -> {
                                         val i = draggingIdx
                                         onObjectMove(
                                             i,
-                                            (objectX.getOrElse(i) { 0f } + dx).coerceIn(0f, maxOf(0f, BED_MM - modelSizeX)),
-                                            (objectY.getOrElse(i) { 0f } + dy).coerceIn(0f, maxOf(0f, BED_MM - modelSizeY))
+                                            (objectX.getOrElse(i) { 0f } + dx).coerceIn(0f, maxOf(0f, bedSizeXmm - modelSizeX)),
+                                            (objectY.getOrElse(i) { 0f } + dy).coerceIn(0f, maxOf(0f, bedSizeYmm - modelSizeY))
                                         )
                                     }
                                 }
@@ -253,16 +263,17 @@ fun SimplifiedPlacementBed(
                         )
                     }
             ) {
-                val ppm = size.width / BED_MM
+                val pxPerMmX = size.width / bedSizeXmm
+                val pxPerMmY = size.height / bedSizeYmm
                 drawRect(Color(0xFF1A1A1A), size = size)
-                drawBedGrid(ppm)
+                drawBedGrid(pxPerMmX, pxPerMmY, bedSizeXmm, bedSizeYmm)
                 drawRect(Color(0xFF555555), size = size, style = Stroke(2f))
 
-                val objWpx = modelSizeX * ppm
-                val objHpx = modelSizeY * ppm
+                val objWpx = modelSizeX * pxPerMmX
+                val objHpx = modelSizeY * pxPerMmY
                 for (i in 0 until copyCount) {
-                    val ox = objectX.getOrElse(i) { 0f } * ppm
-                    val oy = objectY.getOrElse(i) { 0f } * ppm
+                    val ox = objectX.getOrElse(i) { 0f } * pxPerMmX
+                    val oy = objectY.getOrElse(i) { 0f } * pxPerMmY
                     val color = OBJECT_COLORS[i % OBJECT_COLORS.size]
                     val active = draggingIdx == i
                     drawRect(
@@ -279,10 +290,10 @@ fun SimplifiedPlacementBed(
                 }
 
                 if (wipeTowerEnabled) {
-                    val tW = wipeTowerWidthMm * ppm
-                    val tH = towerDepthMm * ppm
-                    val tx = towerX * ppm
-                    val ty = towerY * ppm
+                    val tW = wipeTowerWidthMm * pxPerMmX
+                    val tH = towerDepthMm * pxPerMmY
+                    val tx = towerX * pxPerMmX
+                    val ty = towerY * pxPerMmY
                     val active = draggingIdx == copyCount
                     drawRect(
                         WIPE_TOWER_COLOR.copy(alpha = if (active) 0.9f else 0.7f),
@@ -341,15 +352,25 @@ fun SimplifiedPlacementBed(
     }
 }
 
-private fun DrawScope.drawBedGrid(pxPerMm: Float) {
+private fun DrawScope.drawBedGrid(
+    pxPerMmX: Float,
+    pxPerMmY: Float,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+) {
     var mm = 10f
-    while (mm < BED_MM) {
+    while (mm < bedSizeXmm || mm < bedSizeYmm) {
         val major = mm % 50f == 0f
         val lineColor = if (major) Color(0xFF2D2D2D) else Color(0xFF232323)
         val strokeW = if (major) 1f else 0.5f
-        val x = mm * pxPerMm; val y = mm * pxPerMm
-        drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), strokeW)
-        drawLine(lineColor, Offset(0f, y), Offset(size.width, y), strokeW)
+        if (mm < bedSizeXmm) {
+            val x = mm * pxPerMmX
+            drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), strokeW)
+        }
+        if (mm < bedSizeYmm) {
+            val y = mm * pxPerMmY
+            drawLine(lineColor, Offset(0f, y), Offset(size.width, y), strokeW)
+        }
         mm += 10f
     }
 }
