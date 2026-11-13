@@ -37,6 +37,7 @@ import com.u1.slicer.data.defaultHostType
 import com.u1.slicer.data.defaultMachineKind
 import com.u1.slicer.data.defaultExtruderPresets
 import com.u1.slicer.slice.GenericMachineProfile
+import com.u1.slicer.slice.CosmosMachineProfile
 import com.u1.slicer.printer.normalizePrintHostUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -55,13 +56,14 @@ fun PrinterEditDialog(
     experimentalPrinterSupportEnabled: Boolean = bambuEnabled,
     initialHostType: HostType = existing?.hostType
         ?: defaultHostType(initialKind),
+    initialMachineProfile: GenericMachineProfile? = null,
 ) {
     var nickname by remember { mutableStateOf(existing?.nickname.orEmpty()) }
     var u1Nozzles by remember { mutableStateOf(existing?.u1Nozzles ?: U1NozzleConfiguration()) }
     var kind by remember { mutableStateOf(existing?.kind ?: initialKind) }
     var hostType by remember { mutableStateOf(initialHostType) }
-    var machine by remember { mutableStateOf(existing?.machine ?: defaultMachineKind(initialKind)) }
-    var profile by remember { mutableStateOf(existing?.machineProfile) }
+    var machine by remember { mutableStateOf(existing?.machine ?: if (initialMachineProfile != null) MachineKind.GENERIC_KLIPPER else defaultMachineKind(initialKind)) }
+    var profile by remember { mutableStateOf(existing?.machineProfile ?: initialMachineProfile) }
     var url by remember { mutableStateOf(existing?.host?.url ?: existing?.moonrakerUrl.orEmpty()) }
     var apiKey by remember { mutableStateOf(existing?.host?.apiKey ?: existing?.apiKey.orEmpty()) }
     var username by remember { mutableStateOf(existing?.username.orEmpty()) }
@@ -70,6 +72,7 @@ fun PrinterEditDialog(
     var accessCode by remember { mutableStateOf(existing?.bambu?.accessCode.orEmpty()) }
     var serial by remember { mutableStateOf(existing?.bambu?.serial.orEmpty()) }
     var model by remember { mutableStateOf(existing?.bambu?.model ?: BambuModel.P1S) }
+    var bambuNozzleDiameter by remember { mutableStateOf(existing?.bambu?.nozzleDiameter ?: 0.4f) }
     var result by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -108,8 +111,9 @@ fun PrinterEditDialog(
         apiKey = if (kind == PrinterKind.MOONRAKER) apiKey.trim().takeIf { it.isNotBlank() } else existing?.apiKey,
         username = username.trim().takeIf { it.isNotBlank() },
         password = password.takeIf { it.isNotBlank() },
-        moonrakerUrl = if (kind == PrinterKind.MOONRAKER) normalizePrintHostUrl(url, hostType) else "",
-        bambu = if (kind == PrinterKind.BAMBU_LAN) BambuConfig(ip.trim(), accessCode.trim(), serial.trim().uppercase(java.util.Locale.ROOT), model) else null,
+        moonrakerUrl = if (kind == PrinterKind.MOONRAKER) normalizePrintHostUrl(
+            if (machine == MachineKind.GENERIC_KLIPPER && hostType == HostType.MOONRAKER && profile == CosmosMachineProfile.profile) cosmosPrinterUrl(url) else url, hostType) else "",
+        bambu = if (kind == PrinterKind.BAMBU_LAN) BambuConfig(ip.trim(), accessCode.trim(), serial.trim().uppercase(java.util.Locale.ROOT), model, bambuNozzleDiameter) else null,
         machine = machine,
         machineProfile = profile.takeIf { machine == MachineKind.GENERIC_KLIPPER || machine == MachineKind.GENERIC_MARLIN },
         machineProfileId = existing?.machineProfileId.takeIf {
@@ -183,11 +187,24 @@ fun PrinterEditDialog(
                 if (machine == MachineKind.GENERIC_KLIPPER || machine == MachineKind.GENERIC_MARLIN) {
                     Text(profile?.name ?: "Import a resolved Orca machine JSON profile, or a JSON array containing the profile and its parents. Supported profiles use Klipper or Marlin with up to four independent nozzles.", style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) { Text("Import machine profile") }
+                    if (kind == PrinterKind.MOONRAKER && allowExperimentalChoices && profile != CosmosMachineProfile.profile) {
+                        TextButton(onClick = {
+                            profile = CosmosMachineProfile.profile
+                            machine = MachineKind.GENERIC_KLIPPER
+                            hostType = HostType.MOONRAKER
+                            result = null
+                        }) { Text("Use COSMOS profile for CC1") }
+                    }
+                    if (profile == CosmosMachineProfile.profile) {
+                        Text("For CC1 with COSMOS 26.07+ and a 0.4 mm nozzle, without AFC. Uses Moonraker, normally http://printer-ip:80. Reslice older jobs after changing firmware profiles.", style = MaterialTheme.typography.bodySmall)
+                    }
                     Text("Start and end templates may call macros that must exist on your printer. Check the profile before starting a print.", style = MaterialTheme.typography.bodySmall)
                 }
-                if (kind == PrinterKind.ELEGOO_CC1) Text("Centauri Carbon 1 support is beta and has not been validated on hardware. Carbon 2 is not supported.", style = MaterialTheme.typography.bodySmall)
+                if (kind == PrinterKind.ELEGOO_CC1) Text("For stock CC1 firmware. For COSMOS, add a COSMOS printer using Moonraker instead. Support is beta and has not been validated on hardware. Carbon 2 is not supported.", style = MaterialTheme.typography.bodySmall)
                 if (kind == PrinterKind.BAMBU_LAN) {
                     PrinterChoice("Bambu model", model, BambuModel.entries, { it.name.replace('_', ' ') }) { model = it; result = null }
+                    PrinterChoice("Nozzle diameter", bambuNozzleDiameter, BambuConfig.SUPPORTED_NOZZLE_DIAMETERS, { "$it mm" }) { bambuNozzleDiameter = it; result = null }
+                    if (model == BambuModel.H2D) Text("Use the same nozzle diameter on both hotends.", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(ip, { ip = it; result = null }, label = { Text("Printer IP") }, singleLine = true)
                     OutlinedTextField(accessCode, { accessCode = it; result = null }, label = { Text("Access code") }, singleLine = true)
                     OutlinedTextField(serial, { serial = it; result = null }, label = { Text("Serial") }, singleLine = true)

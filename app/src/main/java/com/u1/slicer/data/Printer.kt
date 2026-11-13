@@ -51,13 +51,23 @@ data class BambuConfig(
     val accessCode: String,
     val serial: String,
     val model: BambuModel,
+    val nozzleDiameter: Float = 0.4f,
 ) {
+    init {
+        require(nozzleDiameter in SUPPORTED_NOZZLE_DIAMETERS) {
+            "Bambu nozzle diameter must be 0.2, 0.4, 0.6, or 0.8 mm"
+        }
+    }
+
     companion object {
+        val SUPPORTED_NOZZLE_DIAMETERS = listOf(0.2f, 0.4f, 0.6f, 0.8f)
+
         fun toJsonObject(cfg: BambuConfig): JSONObject = JSONObject().apply {
             put("ip", cfg.ip)
             put("accessCode", cfg.accessCode)
             put("serial", cfg.serial)
             put("model", cfg.model.name)
+            put("nozzleDiameter", cfg.nozzleDiameter.toDouble())
         }
 
         fun fromJsonObject(obj: JSONObject): BambuConfig = BambuConfig(
@@ -65,6 +75,7 @@ data class BambuConfig(
             accessCode = obj.getString("accessCode"),
             serial = obj.getString("serial"),
             model = BambuModel.valueOf(obj.getString("model")),
+            nozzleDiameter = obj.optDouble("nozzleDiameter", 0.4).toFloat(),
         )
     }
 }

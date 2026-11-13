@@ -3,6 +3,8 @@ package com.u1.slicer.ui.printer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -51,7 +53,7 @@ import com.u1.slicer.ui.documentDisplayName
 import java.io.InputStream
 import kotlinx.coroutines.launch
 
-private enum class AddPrinterFlow { CHOOSE, U1, BAMBU, CC1, CATALOGUE }
+private enum class AddPrinterFlow { CHOOSE, U1, BAMBU, CC1, COSMOS, CATALOGUE }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,6 +98,7 @@ fun PrintersSettingsCard(
             AddPrinterChoice.SNAPMAKER_U1 -> addFlow = AddPrinterFlow.U1
             AddPrinterChoice.BAMBU_LAN -> addFlow = AddPrinterFlow.BAMBU
             AddPrinterChoice.ELEGOO_CC1 -> addFlow = AddPrinterFlow.CC1
+            AddPrinterChoice.COSMOS_CC1 -> addFlow = AddPrinterFlow.COSMOS
             AddPrinterChoice.ORCA_CATALOGUE -> addFlow = AddPrinterFlow.CATALOGUE
             AddPrinterChoice.ORCA_IMPORT -> {
                 addFlow = null
@@ -174,7 +177,7 @@ fun PrintersSettingsCard(
             onDismissRequest = { addFlow = null },
             title = { Text("Add printer") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     AddPrinterChoiceButton(
                         title = "Snapmaker U1",
                         supportingText = "Recommended for this app",
@@ -223,8 +226,13 @@ fun PrintersSettingsCard(
                                     )
                                     AddPrinterChoice.ELEGOO_CC1 -> AddPrinterChoiceButton(
                                         title = "Elegoo Centauri Carbon 1 (beta)",
-                                        supportingText = "Experimental CC1 connection and built-in machine profile",
+                                        supportingText = "Stock firmware; experimental Elegoo connection",
                                         onClick = { launchAddChoice(AddPrinterChoice.ELEGOO_CC1) },
+                                    )
+                                    AddPrinterChoice.COSMOS_CC1 -> AddPrinterChoiceButton(
+                                        title = "Centauri Carbon 1 — COSMOS firmware",
+                                        supportingText = "COSMOS 26.07+, 0.4 mm nozzle, Moonraker; no AFC",
+                                        onClick = { launchAddChoice(AddPrinterChoice.COSMOS_CC1) },
                                     )
                                     AddPrinterChoice.ORCA_CATALOGUE -> AddPrinterChoiceButton(
                                         title = "Other printer from Orca catalogue",
@@ -248,7 +256,7 @@ fun PrintersSettingsCard(
             },
         )
     }
-    if (addFlow == AddPrinterFlow.U1 || addFlow == AddPrinterFlow.BAMBU || addFlow == AddPrinterFlow.CC1) {
+    if (addFlow == AddPrinterFlow.U1 || addFlow == AddPrinterFlow.BAMBU || addFlow == AddPrinterFlow.CC1 || addFlow == AddPrinterFlow.COSMOS) {
         val initialKind = when (addFlow) {
             AddPrinterFlow.BAMBU -> PrinterKind.BAMBU_LAN
             AddPrinterFlow.CC1 -> PrinterKind.ELEGOO_CC1
@@ -259,6 +267,7 @@ fun PrintersSettingsCard(
             onSave = onAdd,
             onTest = onTestConnection,
             initialKind = initialKind,
+            initialMachineProfile = if (addFlow == AddPrinterFlow.COSMOS) com.u1.slicer.slice.CosmosMachineProfile.profile else null,
             bambuEnabled = experimentalPrinterSupportEnabled,
             onDismiss = { addFlow = null },
         )

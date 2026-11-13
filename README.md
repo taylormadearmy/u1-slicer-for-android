@@ -6,7 +6,7 @@ Native Android slicer for the **Snapmaker U1** and supported rectangular-bed FDM
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v5.0.4` (`versionCode 504`)
+Current release: `v5.0.5` (`versionCode 505`)
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -18,6 +18,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 
 - **Multi-printer profiles (v5.0.1)**: browse the eligible subset of a pinned `taylormadearmy/OrcaSlicer` v2.2.4 source catalogue containing 326 models across 56 usable vendors, or import an `.orca_printer` bundle. Eligibility checks require rectangular FDM geometry, 1 to 4 physical slots, and Klipper or Marlin G-code. Upload uses Moonraker, OctoPrint, or PrusaLink when the selected transport supports it.
 - **Elegoo Centauri Carbon 1 beta**: its experimental add route uses the dedicated Elegoo transport and bundled machine profile. Carbon 2 is not supported. Physical CC1 compatibility remains unverified.
+- **Experimental CC1 with COSMOS firmware**: a separate Add Printer option selects the bundled COSMOS 26.07+ profile and Moonraker, with HTTP port 80 as its default. This preset is for a 0.4 mm nozzle without AFC/CANVAS. Existing generic printers can select **Use COSMOS profile for CC1** in Edit. Reslice old jobs after changing the firmware profile; stock CC1 commands are incompatible with COSMOS. Physical compatibility remains unverified.
 
 - **STL and 3MF slicing** — single-color, multi-color (up to 4 extruders), and paint-based (SEMM)
 - **Bambu support (early beta, opt-in)** — native slicing, monitoring, camera, upload and print flows for A1 Mini, A1, P1P, P1S, X1C, X1E and H2D; imported safe process/filament settings are preserved while target-owned machine and protocol fields are replaced
@@ -28,6 +29,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 - **Moonraker connectivity** — send G-code directly to your printer; remote screen support for paxx12 extended firmware
 - **Slicer overrides** — per-job control over layer height, infill, support, shell layers, surface patterns, speeds, wipe tower, and more
 - **U1 nozzle sizes** — configure each installed toolhead as 0.2, 0.4, 0.6 or 0.8 mm using Edit nozzles on Prepare, or Settings → Printers → Edit. Nozzle-specific layer and line-width defaults follow the heads used by the job. All used heads, including supports and ColorMix components, must have the same size; unused heads can differ. Saved G-code retains nozzle requirements and incompatible export mappings require reslicing.
+- **Bambu nozzle sizes** — select 0.2, 0.4, 0.6 or 0.8 mm in Settings → Printers → Edit. Slicing defaults and exported project metadata follow the selected size. Imported process settings must fit the nozzle; incompatible layer heights or line widths require a compatible process or explicit override. H2D currently requires the same diameter on both hotends. Additional nozzle sizes have not been physically validated.
 - **MakerWorld integration** — share models from Bambu Handy to slice locally
 - **Filament library** — manage profiles with temps, retraction, flow ratio, max volumetric speed, fan curves, pressure advance, and 10+ other OrcaSlicer per-filament settings. Imports Bambu Studio filament profile JSONs and resolves the `inherits` chain against bundled BBL / generic parents (v2.8.0)
 - **Process profile import** — Settings → Process Profiles imports OrcaSlicer `.orca_process` / `.json` files; the active profile's keys layer between bundled Snapmaker defaults and Prepare-screen overrides at slice time (v2.8.0)
@@ -110,11 +112,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 2294 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 520 independent device tests (ARM64 required)
+./gradlew testDebugUnitTest              # 2318 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 530 independent device tests (ARM64 required)
 ```
 
-**2825 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2294 JVM tests and 531 device tests. The default device run includes 520 tests; another 11 require upgrade or mock-host fixtures.
+**2859 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2318 JVM tests and 541 device tests. The default device run includes 530 tests; another 11 require upgrade or mock-host fixtures.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

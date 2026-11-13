@@ -21,13 +21,16 @@ import com.u1.slicer.machine.ProfileCache
 import com.u1.slicer.machine.VendorCatalogClient
 import com.u1.slicer.machine.resolveMachineSliceConfig
 import com.u1.slicer.printer.DefaultPrinterTransportFactory
+import com.u1.slicer.printer.OctoPrintTransport
 import com.u1.slicer.printer.PrinterRepository
 import com.u1.slicer.printer.TransportCommandResult
 import java.io.File
+import java.net.Proxy
 import java.net.URLDecoder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -86,7 +89,12 @@ class PrinterWizardToSliceTest {
     @Test
     fun ender3V3Se_wizardSaveSliceAndUploadOnly_persistsPrinterWithoutStartingPrint() = runBlocking {
         val cache = ProfileCache(File(testRoot, "profiles"))
-        val client = VendorCatalogClient(profilesBaseUrl = server.url("/"))
+        // The emulator has a global HTTP proxy at 10.0.2.2:8080. Bypass it for
+        // the in-process MockWebServer so catalogue requests reach this fixture.
+        val client = VendorCatalogClient(
+            httpClient = OkHttpClient.Builder().proxy(Proxy.NO_PROXY).build(),
+            profilesBaseUrl = server.url("/"),
+        )
         val lookup = CachedOrcaProfileLookup(cache, client)
         val repository = MachineProfileRepository(
             assets = { path -> targetContext.assets.open(path).bufferedReader().use { it.readText() } },
@@ -122,9 +130,23 @@ class PrinterWizardToSliceTest {
         )
 
         wizard.selectVendor("Creality")
-        val enderModel = wizard.state.value.models.single { it.name == "Creality Ender-3 V3 SE" }
+        val wizardState = wizard.state.value
+        val models = wizardState.models
+        if (models.isEmpty()) {
+            error(
+                "Creality catalogue fetch failed: ${wizardState.errorMessage}; " +
+                    "requests=${recordedRequests.map { it.path }}",
+            )
+        }
+        val enderModel = models.singleOrNull { it.name == "Creality Ender-3 V3 SE" }
+            ?: error("Ender-3 V3 SE missing from fetched models: ${models.map { it.name }}")
         wizard.selectModel(enderModel)
-        val variant = wizard.state.value.variants.single { it.profile.printerVariant == "0.4" }
+        val variants = wizard.state.value.variants
+        val variant = variants.singleOrNull { it.profile.printerVariant == "0.4" }
+            ?: error(
+                "Ender-3 V3 SE 0.4 missing from resolved variants: " +
+                    variants.map { it.profile.printerVariant to it.profile.id },
+            )
         wizard.selectVariant(variant)
         wizard.confirm(
             nickname = "Workshop Ender",
@@ -155,7 +177,15 @@ class PrinterWizardToSliceTest {
         val printerRepository = PrinterRepository(
             targetContext.applicationContext,
             printersRepository,
-            DefaultPrinterTransportFactory(),
+            DefaultPrinterTransportFactory(
+                octoPrintTransportFactory = { printer ->
+                    OctoPrintTransport(
+                        printer.moonrakerUrl,
+                        printer.apiKey,
+                        OkHttpClient.Builder().proxy(Proxy.NO_PROXY).build(),
+                    )
+                },
+            ),
         )
         val expectedUrl = server.url("/").toString().trimEnd('/')
         val deadline = System.currentTimeMillis() + 30_000L

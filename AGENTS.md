@@ -25,11 +25,11 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal build
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest                        # 2294 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 520 independent device tests, uses Orchestrator
+./gradlew testDebugUnitTest                        # 2318 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 530 independent device tests, uses Orchestrator
 ```
 
-**2825 total tests:** 2294 JVM tests and 531 device tests. The default device run includes 520 independent tests. The remaining 11 require the upgrade or mock-host drivers named by `@RequiresExternalFixture`. Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
+**2859 total tests:** 2318 JVM tests and 541 device tests. The default device run includes 530 independent tests. The remaining 11 require the upgrade or mock-host drivers named by `@RequiresExternalFixture`. Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
 
 **Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs. Pass the serial via `ANDROID_SERIAL=<id>` env var. Never deploy automated tests to personal or non-phone devices (the NF22E1 listed in local notes is off-limits).
 
@@ -151,7 +151,7 @@ Never reuse or update a published release — always use a new tag.
 - The catalogue is pinned to `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Its source index contains 326 models across 56 usable vendors. The wizard shows the eligible subset after rectangular-FDM, physical-slot, and firmware checks.
 - The generic path supports rectangular FDM machines with 1 to 4 physical slots and either Klipper or Marlin G-code. Network upload uses Moonraker, OctoPrint, or PrusaLink when the profile and transport expose the required capability.
 - Bambu support remains a dedicated opt-in path. Do not route Bambu machines through the generic `MachineProfile` path until the planned convergence work lands.
-- Elegoo Centauri Carbon 1 has a dedicated experimental add route and transport, not Moonraker. Carbon 2 is unsupported. Mock protocol tests do not establish physical CC1 compatibility.
+- Stock-firmware Elegoo Centauri Carbon 1 has a dedicated experimental add route and transport. CC1 with COSMOS 26.07+ uses its separate generic Klipper profile and Moonraker route (bundled preset: 0.4 mm, no AFC). Do not automatically switch existing stock profiles. Carbon 2 is unsupported. Offline and mock tests do not establish physical CC1 compatibility.
 - `snapmaker_authored_profile` marks app-authored embedded profiles. Native code applies `profile_keys[]` for marked profiles. The `PRINT_START` check remains only as a scoped fallback for legacy Snapmaker files, and `ProfileKeyCoverageTest` guards every key written by `applyConfigToPrusa()`.
 
 ---

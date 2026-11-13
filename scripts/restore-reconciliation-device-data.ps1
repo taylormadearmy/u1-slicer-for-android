@@ -52,8 +52,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot capture restored sandbox.' }
 & tar -xf $restoredTar -C $actualDir
 if ($LASTEXITCODE -ne 0) { throw 'Cannot extract restored sandbox.' }
 function File-Manifest([string]$Root) {
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
     @(Get-ChildItem -LiteralPath $Root -File -Recurse | ForEach-Object {
-        $relative = [IO.Path]::GetRelativePath($Root, $_.FullName)
+        $relative = $_.FullName.Substring($rootPath.Length + 1)
         "$relative`t$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
     } | Sort-Object)
 }

@@ -181,7 +181,9 @@ class B95Plate9PaintStateTest {
 
             // Slice through the production path.
             viewModel.startSlicing()
-            val sliceDeadline = System.currentTimeMillis() + 300_000L
+            // This 73 MB plate can exceed five minutes while generating infill
+            // under ARM64 translation on the x86_64 emulator.
+            val sliceDeadline = System.currentTimeMillis() + 900_000L
             while (System.currentTimeMillis() < sliceDeadline) {
                 val s = viewModel.state.value
                 if (s is com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete) break

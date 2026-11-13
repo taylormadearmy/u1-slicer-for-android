@@ -22,7 +22,7 @@ class ExperimentalPrinterAddPolicyTest {
 
     @Test
     fun `turning experimental support off hides third party routes again`() {
-        assertEquals(5, visibleAddPrinterChoices(experimentalEnabled = true).size)
+        assertEquals(6, visibleAddPrinterChoices(experimentalEnabled = true).size)
         assertEquals(
             listOf(AddPrinterChoice.SNAPMAKER_U1),
             visibleAddPrinterChoices(experimentalEnabled = false),

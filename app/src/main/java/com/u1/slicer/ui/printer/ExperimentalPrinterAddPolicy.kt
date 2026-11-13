@@ -4,6 +4,7 @@ internal enum class AddPrinterChoice {
     SNAPMAKER_U1,
     BAMBU_LAN,
     ELEGOO_CC1,
+    COSMOS_CC1,
     ORCA_CATALOGUE,
     ORCA_IMPORT,
 }

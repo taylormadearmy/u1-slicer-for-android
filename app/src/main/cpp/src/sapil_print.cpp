@@ -194,8 +194,10 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     dpc.set_key_value("printable_area", new Slic3r::ConfigOptionPoints({{0, 0}, {bed_x, 0}, {bed_x, bed_y}, {0, bed_y}}));
     dpc.set_key_value("printable_height", new Slic3r::ConfigOptionFloat(bed_z));
     dpc.set_key_value("printer_model", new Slic3r::ConfigOptionString(model));
+    const std::string nozzle_size = Slic3r::ConfigOptionFloat(config.nozzle_diameter).serialize();
+    settings.replace(settings.find("0.4 nozzle"), 3, nozzle_size);
     dpc.set_key_value("printer_settings_id", new Slic3r::ConfigOptionString(settings));
-    dpc.set_key_value("printer_variant", new Slic3r::ConfigOptionString("0.4"));
+    dpc.set_key_value("printer_variant", new Slic3r::ConfigOptionString(nozzle_size));
     dpc.set_key_value("gcode_flavor", new Slic3r::ConfigOptionEnum<Slic3r::GCodeFlavor>(Slic3r::gcfMarlinLegacy));
     if (front_left_exclusion) {
         dpc.set_key_value("bed_exclude_area", new Slic3r::ConfigOptionPoints({{0, 0}, {18, 0}, {18, 28}, {0, 28}}));
@@ -208,8 +210,8 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     // the app's U1 defaults. Imported projects skip this block and retain the
     // whitelisted source process/filament settings applied by the caller.
     if (!has_embedded_profile) {
-        dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(0.20));
-        dpc.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(0.20));
+        dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(config.nozzle_diameter == 0.4f ? 0.20 : config.nozzle_diameter / 2.0));
+        dpc.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(config.nozzle_diameter == 0.4f ? 0.20 : config.nozzle_diameter / 2.0));
         dpc.set_key_value("elefant_foot_compensation", new Slic3r::ConfigOptionFloat(0.15));
         dpc.set_key_value("wall_loops", new Slic3r::ConfigOptionInt(2));
         dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(15.0));
@@ -233,6 +235,10 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     }
 
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.nozzle_diameter)));
+    if (config.nozzle_diameter != 0.4f) {
+        dpc.set_key_value("min_layer_height", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.nozzle_diameter * 0.2)));
+        dpc.set_key_value("max_layer_height", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.nozzle_diameter * 0.8)));
+    }
     dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.filament_diameter)));
     dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
     dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(!h2d));

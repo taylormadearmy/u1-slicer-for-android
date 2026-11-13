@@ -44,10 +44,11 @@ internal object BambuImportedConfigComposer {
         sourceConfig: Map<String, Any>? = null,
         targetAdaptationOverrides: Map<String, Any> = emptyMap(),
         explicitOverrides: Map<String, Any> = emptyMap(),
+        nozzleDiameter: Float = 0.4f,
     ): Result {
         require(target in BAMBU_MACHINE_PROFILES) { "Unsupported Bambu target: $target" }
 
-        val defaults = targetDefaults(target)
+        val defaults = targetDefaults(target, nozzleDiameter)
         val values = defaults.toMutableMap()
         val provenance = defaults.mapValuesTo(linkedMapOf()) { (_, value) ->
             Provenance(targetReplacement = value, finalValue = value, disposition = Disposition.TARGET_DEFAULT)
@@ -131,6 +132,7 @@ internal object BambuImportedConfigComposer {
                 disposition = Disposition.FIRMWARE_SAFETY,
             )
         }
+        if (nozzleDiameter != 0.4f) com.u1.slicer.machine.NozzleProcessPolicy.validate(values, nozzleDiameter)
         return Result(values, provenance)
     }
 
@@ -154,13 +156,13 @@ internal object BambuImportedConfigComposer {
         )
     }
 
-    private fun targetDefaults(target: SlicerTarget): Map<String, Any> {
-        val machine = BAMBU_MACHINE_PROFILES.getValue(target)
+    private fun targetDefaults(target: SlicerTarget, nozzleDiameter: Float): Map<String, Any> {
+        val machine = requireNotNull(bambuMachineProfileFor(target, nozzleDiameter))
         return linkedMapOf(
             "printer_model" to machine.printerModel,
             "printer_model_id" to machine.printerModelId,
             "printer_settings_id" to machine.printerSettingsId,
-            "printer_variant" to "0.4",
+            "printer_variant" to nozzleDiameter.toString(),
             "printable_area" to rectangle(machine.bedSizeX, machine.bedSizeY),
             "printable_height" to number(machine.maxPrintHeight),
             "nozzle_diameter" to machine.nozzleDiameters.joinToString(","),
@@ -194,6 +196,12 @@ internal object BambuImportedConfigComposer {
             "machine_end_gcode" to targetMachineGcode(target).second,
             "change_filament_gcode" to targetMachineGcode(target).third,
         ).apply {
+            if (nozzleDiameter != 0.4f) {
+                putAll(com.u1.slicer.machine.NozzleProcessPolicy.defaults(nozzleDiameter))
+                put("print_settings_id", defaultProcessSettingsId(target).replace("0.20mm", java.lang.String.format(java.util.Locale.ROOT, "%.2fmm", nozzleDiameter / 2)))
+                put("min_layer_height", List(machine.nozzleDiameters.size) { (nozzleDiameter * 0.2f).toString() })
+                put("max_layer_height", List(machine.nozzleDiameters.size) { (nozzleDiameter * 0.8f).toString() })
+            }
             if (machine.nozzleTypes.isNotEmpty()) put("nozzle_type", machine.nozzleTypes)
             if (machine.nozzleVolumes.isNotEmpty()) put("nozzle_volume", machine.nozzleVolumes)
             if (machine.printerExtruderIds.isNotEmpty()) put("printer_extruder_id", machine.printerExtruderIds)

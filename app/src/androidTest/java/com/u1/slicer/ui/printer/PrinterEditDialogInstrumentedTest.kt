@@ -27,6 +27,58 @@ import org.junit.runner.RunWith
 class PrinterEditDialogInstrumentedTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun bambuNozzleSelectionSavesWithExperimentalGateOff() {
+        val existing = Printer("bambu", "P1S", kind = PrinterKind.BAMBU_LAN,
+            bambu = com.u1.slicer.data.BambuConfig("192.0.2.5", "test", "TEST", com.u1.slicer.data.BambuModel.P1S))
+        var saved: Printer? = null
+        compose.setContent { MaterialTheme {
+            PrinterEditDialog(existing, onSave = { saved = it }, onTest = { error("No printer should be contacted") }, onDismiss = {})
+        } }
+        compose.onNodeWithText("0.4 mm").performScrollTo().performClick()
+        compose.onNodeWithText("0.6 mm").performClick()
+        compose.onNodeWithText("Save").performClick()
+        compose.runOnIdle {
+            assertEquals(existing.copy(bambu = existing.bambu!!.copy(nozzleDiameter = 0.6f)), saved)
+        }
+    }
+
+    @Test fun cosmosAddRouteSavesMoonrakerWithItsFirmwareSnapshotAndWebPort() {
+        var saved: Printer? = null
+        compose.setContent {
+            MaterialTheme {
+                PrintersSettingsCard(emptyList(), null, onAdd = { saved = it }, onEdit = {}, onDelete = {},
+                    onTestConnection = { error("No physical printer should be contacted") }, experimentalPrinterSupportEnabled = true)
+            }
+        }
+        compose.onNodeWithText("Add").performClick()
+        compose.onNodeWithText("Centauri Carbon 1 — COSMOS firmware").performScrollTo().performClick()
+        compose.onNodeWithText("Printer URL").performScrollTo().performTextInput("192.0.2.5")
+        compose.onNodeWithText("Save").performClick()
+        compose.runOnIdle {
+            assertEquals(PrinterKind.MOONRAKER, saved?.kind)
+            assertEquals(com.u1.slicer.data.HostType.MOONRAKER, saved?.hostType)
+            assertEquals(MachineKind.GENERIC_KLIPPER, saved?.machine)
+            assertEquals("http://192.0.2.5:80", saved?.moonrakerUrl)
+            assertEquals(com.u1.slicer.slice.CosmosMachineProfile.profile, saved?.machineProfile)
+        }
+    }
+
+    @Test fun existingGenericPrinterCanExplicitlyChooseCosmosWithExperimentalGateOff() {
+        val existing = Printer("generic", "Workshop", moonrakerUrl = "http://192.0.2.5:80",
+            machineProfile = com.u1.slicer.slice.GenericMachineProfile.centauriCarbon(), machineProfileId = "old-profile")
+        var saved: Printer? = null
+        compose.setContent { MaterialTheme {
+            PrinterEditDialog(existing, onSave = { saved = it }, onTest = { error("No printer should be contacted") }, onDismiss = {})
+        } }
+        compose.onNodeWithText("Use COSMOS profile for CC1").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performClick()
+        compose.runOnIdle {
+            assertEquals(com.u1.slicer.slice.CosmosMachineProfile.profile, saved?.machineProfile)
+            org.junit.Assert.assertNull(saved?.machineProfileId)
+            assertEquals(existing.id, saved?.id)
+        }
+    }
+
     @Test fun changingGenericMachineToU1ClearsThePreviousProfileBinding() {
         val snapshot = com.u1.slicer.slice.GenericMachineProfile.fromJson(
             org.json.JSONObject(com.u1.slicer.slice.GenericMachineProfile.centauriCarbon().resolvedJson)

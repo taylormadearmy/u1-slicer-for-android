@@ -5073,7 +5073,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 AdaptiveLayerHeightState.Mode.ADAPTIVE -> state.preset.let { preset ->
                     native.nativeSetAdaptiveLayerHeight(preset.quality, preset.smoothingRadius, preset.keepMinimum,
-                        if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) u1DiameterForSlice() else 0f)
+                        adaptiveNozzleDiameter())
                 }
             }
         }
@@ -5082,6 +5082,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _sliceStale.value = true
         markSessionDirty()
         return state.mode != AdaptiveLayerHeightState.Mode.ADAPTIVE || range != null
+    }
+
+    private fun adaptiveNozzleDiameter(): Float = when (effectiveSliceTarget.value.family) {
+        SliceTargetFamily.SNAPMAKER -> u1DiameterForSlice()
+        SliceTargetFamily.BAMBU -> activePrinterForSlicing.value?.bambu?.nozzleDiameter ?: 0.4f
+        SliceTargetFamily.GENERIC -> 0f
     }
 
     private fun reapplyAdaptiveLayerHeightForSlice(): Boolean {
@@ -5093,7 +5099,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         val preset = state.preset
         val range = native.nativeSetAdaptiveLayerHeight(preset.quality, preset.smoothingRadius, preset.keepMinimum,
-                        if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) u1DiameterForSlice() else 0f)
+                        adaptiveNozzleDiameter())
         _adaptiveLayerHeightRange.value = range
         return range != null
     }
@@ -5409,7 +5415,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val buildConfigT0 = System.currentTimeMillis()
         val sliceTarget = effectiveSliceTarget.value
         val bambuComposeResult = if (sliceTarget.family == SliceTargetFamily.BAMBU) {
-            val targeted = resolveTargetedSliceConfig(sliceTarget, cfg)
+            val bambuDiameter = activePrinterForSlicing.value?.bambu?.nozzleDiameter ?: 0.4f
+            val targeted = resolveTargetedSliceConfig(sliceTarget, cfg.copy(nozzleDiameter = bambuDiameter))
             // Do not leak the active U1/process profile or automatically selected
             // slot-library values into Bambu precedence layer 4. Only controls
             // the user explicitly changed on Prepare are overrides; otherwise an
@@ -5428,6 +5435,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     "wipe_tower_width" to targeted.wipeTowerWidth.toString(),
                 ),
                 explicitOverrides = explicitBambuOverrides,
+                nozzleDiameter = bambuDiameter,
             )
         } else {
             null
@@ -5943,6 +5951,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _importedMixRecipeState, mixedFilamentManager.projectMixes, mixedFilamentManager.libraryMixes,
     )) {
         runCatching {
+            if (effectiveSliceTarget.value.family == SliceTargetFamily.BAMBU) {
+                return@runCatching slicingOverrides.value.resolveInto(
+                    com.u1.slicer.bambu.BambuNozzlePolicy.baseConfig(_config.value, activePrinterForSlicing.value?.bambu?.nozzleDiameter ?: 0.4f),
+                )
+            }
             if (effectiveSliceTarget.value != SlicerTarget.SnapmakerU1) return@runCatching _config.value
             val diameter = u1DiameterForSlice()
             val base = U1NozzlePolicy.baseConfig(_config.value, diameter)
@@ -6486,7 +6499,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // USE_FILE passthrough: base values from _config.value are used as-is.
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
-                val u1Base = u1NozzleDiameter?.let { U1NozzlePolicy.baseConfig(_config.value, it) } ?: _config.value
+                val u1Base = when {
+                    u1NozzleDiameter != null -> U1NozzlePolicy.baseConfig(_config.value, u1NozzleDiameter)
+                    target.family == SliceTargetFamily.BAMBU -> com.u1.slicer.bambu.BambuNozzlePolicy.baseConfig(_config.value, printerForSlice?.bambu?.nozzleDiameter ?: 0.4f)
+                    else -> _config.value
+                }
                 val resolvedSliceConfig = resolveActiveMachineSliceConfig(target, machineForSlice, ov.resolveInto(u1Base), genericMachineForSlice).let { cfg ->
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
@@ -6735,6 +6752,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 check(activePrinterForSlicing.value == printerForSlice) { "Printer configuration changed during slice preparation. Slice again for the selected printer." }
+                if (target.family == SliceTargetFamily.BAMBU && targetAwareSliceConfig.nozzleDiameter != 0.4f) {
+                    val diameter = targetAwareSliceConfig.nozzleDiameter
+                    com.u1.slicer.machine.NozzleProcessPolicy.validate(mapOf(
+                        "layer_height" to targetAwareSliceConfig.layerHeight,
+                        "initial_layer_print_height" to targetAwareSliceConfig.firstLayerHeight,
+                    ), diameter)
+                    val variableLayers = native.nativeGetVariableLayerHeightRange()
+                    require(variableLayers == null || variableLayers[1] <= diameter * 0.8f + 0.00001f) {
+                        "Variable layer heights exceed the limit for the $diameter mm nozzle. Regenerate them with a compatible nozzle profile."
+                    }
+                }
                 if (u1NozzleDiameter != null) {
                     U1NozzlePolicy.validate(mapOf(
                         "layer_height" to targetAwareSliceConfig.layerHeight,
@@ -6846,6 +6874,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
                         val ntPatched = fixNozzleTemperatureHeader(result.gcodePath, ntTemps)
+                        if (target == SlicerTarget.SnapmakerU1) {
+                            com.u1.slicer.gcode.U1TopCover.apply(File(result.gcodePath), ftTypes)
+                        }
                         Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
                         Log.i("SlicerVM", "B110 nozzle_temperature patch: $ntPatched (temps=$ntTemps)")
                     }
@@ -6991,6 +7022,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 workingDir = context.cacheDir,
                                 plateId = recoveryPlateId.takeIf { it > 0 } ?: 1,
                                 filamentColours = artifactFilamentColours,
+                                bambuNozzleDiameter = targetAwareSliceConfig.nozzleDiameter,
                                 filamentTypes = targetAwareSliceConfig.filamentTypes
                                     .toList()
                                     .ifEmpty { listOf(targetAwareSliceConfig.filamentType) },
@@ -7123,6 +7155,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 workingDir = context.cacheDir,
                                 plateId = recoveryPlateId.takeIf { it > 0 } ?: 1,
                                 filamentColours = artifactFilamentColours,
+                                bambuNozzleDiameter = targetAwareSliceConfig.nozzleDiameter,
                                 filamentTypes = targetAwareSliceConfig.filamentTypes
                                     .toList()
                                     .ifEmpty { listOf(targetAwareSliceConfig.filamentType) },
