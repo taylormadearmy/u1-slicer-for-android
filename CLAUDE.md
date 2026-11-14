@@ -46,7 +46,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```
 4. **Build the release APK**:
    ```bash
-   ./gradlew assembleRelease --no-daemon
+   ./gradlew clean assembleRelease --no-daemon
    ```
 5. **Rename the APK** with the app name and version number:
    ```bash
