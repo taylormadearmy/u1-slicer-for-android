@@ -19,6 +19,12 @@ import kotlin.text.Charsets
  */
 object ThreeMfParser {
     private const val TAG = "ThreeMfParser"
+    /**
+     * Intentional source-file envelope for legacy Bambu virtual-plate layouts. Bambu beds are
+     * at most 256 mm; the historical 270 mm threshold includes metadata tolerance. This is not
+     * the active target printer's bed size.
+     */
+    private const val DEFAULT_BAMBU_SOURCE_BED_SIZE = 270f
     private const val NS_CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
     private const val MAX_SAFE_SINGLE_COMPONENT_BYTES = 256L * 1024L * 1024L
     private const val MAX_SAFE_TOTAL_COMPONENT_BYTES = 384L * 1024L * 1024L
@@ -104,20 +110,18 @@ object ThreeMfParser {
                 // 2. Virtual-plate item positions (old Bambu format, e.g. Dragon Scale /
                 //    Shashibo): no plate JSONs, but printable items are laid out in a large
                 //    virtual space with ~420 mm X-pitch and ~384 mm Y-pitch between plates.
-                //    Any printable item with TX > 270 or TY outside [0, 270] is off the U1
-                //    bed and therefore belongs to a different plate.
+                //    Any printable item outside the legacy Bambu source-bed envelope belongs
+                //    to a different plate. Target-printer geometry must not affect this test.
                 //
                 // Using build item count alone was wrong: multi-color single-plate models
                 // (e.g. Benchy with a printable="0" reference item) also have > 1 build items.
                 val plateJsonCount = entryNames.count { name ->
                     name.matches(Regex("Metadata/plate_\\d+\\.json"))
                 }
-                val hasVirtualPlateItems = buildItems.any { item ->
-                    if (!item.printable) return@any false
-                    val tx = if (item.transform.size > 9) item.transform[9] else 0f
-                    val ty = if (item.transform.size > 10) item.transform[10] else 0f
-                    tx > 270f || ty < 0f || ty > 270f
-                }
+                val hasVirtualPlateItems = hasVirtualPlateItems(
+                    buildItems,
+                    sourceBedSize = DEFAULT_BAMBU_SOURCE_BED_SIZE,
+                )
                 val isMultiPlate = plateJsonCount > 1 || hasVirtualPlateItems
                 val componentModels = if (!skipPaintDetection) {
                     zip.entries().toList().filter { e ->
@@ -647,6 +651,16 @@ object ThreeMfParser {
         val printable: Boolean,
         val transform: FloatArray
     )
+
+    internal fun hasVirtualPlateItems(
+        buildItems: List<BuildItem>,
+        sourceBedSize: Float = DEFAULT_BAMBU_SOURCE_BED_SIZE,
+    ): Boolean = buildItems.any { item ->
+        if (!item.printable) return@any false
+        val tx = item.transform.getOrElse(9) { 0f }
+        val ty = item.transform.getOrElse(10) { 0f }
+        tx > sourceBedSize || ty < 0f || ty > sourceBedSize
+    }
 
     internal data class MainModelMetadata(
         val objects: List<ThreeMfObject>,

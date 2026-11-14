@@ -31,6 +31,12 @@ import java.util.zip.ZipOutputStream
 object BambuSanitizer {
     private const val TAG = "BambuSanitizer"
     private const val MAX_IN_MEMORY_MAIN_MODEL_BYTES = 64L * 1024L * 1024L
+    /**
+     * Intentional source-file envelope for Bambu virtual-plate metadata. Bambu beds are at
+     * most 256 mm; 270 mm preserves the legacy tolerance. Never replace this with target
+     * printer geometry.
+     */
+    private const val DEFAULT_BAMBU_SOURCE_BED_SIZE = 270f
 
     // Files to drop entirely
     private val DROP_FILES = setOf(
@@ -999,7 +1005,10 @@ $componentRefs    </components>
      * Bambu newer files use JSON; older use INI. JSON files are passed through (PrusaSlicer ignores
      * them anyway); INI files get the full sanitization pass.
      */
-    private fun sanitizeProjectSettings(content: String): String {
+    private fun sanitizeProjectSettings(
+        content: String,
+        sourceBedSize: Float = DEFAULT_BAMBU_SOURCE_BED_SIZE,
+    ): String {
         // Newer BambuStudio stores project_settings.config as JSON — PrusaSlicer doesn't read it,
         // so pass it through unchanged rather than mangling it with the INI parser.
         if (content.trimStart().startsWith("{")) {
@@ -1026,7 +1035,7 @@ $componentRefs    </components>
         stripBambuGcode(config)
 
         // 5. Clamp wipe tower position
-        sanitizeWipeTowerPosition(config)
+        sanitizeWipeTowerPosition(config, sourceBedSize)
 
         return serializeIniConfig(config)
     }
@@ -1065,9 +1074,12 @@ $componentRefs    </components>
     /**
      * Sanitize model_settings.config XML:
      * - Clear stale plater_name values
-     * - Clamp packed transforms (>370mm) to bed center
+     * - Clamp packed Bambu source transforms to the source-bed center
      */
-    internal fun sanitizeModelSettings(content: ByteArray): ByteArray {
+    internal fun sanitizeModelSettings(
+        content: ByteArray,
+        sourceBedSize: Float = DEFAULT_BAMBU_SOURCE_BED_SIZE,
+    ): ByteArray {
         var text = String(content)
 
         // Clear plater_name to prevent OrcaSlicer/PrusaSlicer segfaults
@@ -1077,8 +1089,8 @@ $componentRefs    </components>
         )
 
         // Clamp assemble_item transforms that are packed (Bambu multi-plate)
-        val bedCenter = 135f // 270mm / 2
-        val packedThreshold = bedCenter * 2 + 100 // 370mm
+        val sourceBedCenter = sourceBedSize / 2f
+        val packedThreshold = sourceBedSize + 100f
         text = text.replace(
             Regex("""(<assemble_item[^>]*\btransform=")([\d\s.eE+-]+)(")""")
         ) { match ->
@@ -1092,8 +1104,8 @@ $componentRefs    </components>
                 val ty = vals[10]
                 if (kotlin.math.abs(tx) > packedThreshold || kotlin.math.abs(ty) > packedThreshold) {
                     val newVals = vals.toMutableList()
-                    newVals[9] = bedCenter
-                    newVals[10] = bedCenter
+                    newVals[9] = sourceBedCenter
+                    newVals[10] = sourceBedCenter
                     newVals[11] = 0f
                     prefix + newVals.joinToString(" ") { "%.6f".format(it) } + suffix
                 } else {
@@ -1153,12 +1165,21 @@ $componentRefs    </components>
 
     // ---- Multi-plate detection (used by process()) ----
 
+    internal fun isVirtualPlatePosition(
+        tx: Float,
+        ty: Float,
+        sourceBedSize: Float = DEFAULT_BAMBU_SOURCE_BED_SIZE,
+    ): Boolean = tx > sourceBedSize || ty < -10f || ty > sourceBedSize
+
     /**
      * Detect whether the model XML represents a multi-plate file by inspecting
-     * <build> items for virtual-position transforms (TX>270 or TY<-10 or TY>270)
+     * <build> items outside the Bambu source-bed envelope (with its -10 mm Y tolerance)
      * or p:object_id plate markers.
      */
-    private fun detectMultiPlateFromBuild(modelContent: ByteArray): Boolean {
+    private fun detectMultiPlateFromBuild(
+        modelContent: ByteArray,
+        sourceBedSize: Float = DEFAULT_BAMBU_SOURCE_BED_SIZE,
+    ): Boolean {
         return try {
             val factory = XmlPullParserFactory.newInstance()
             factory.isNamespaceAware = false
@@ -1184,7 +1205,7 @@ $componentRefs    </components>
                                     .orEmpty()
                                 val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
                                 val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
-                                if (tx > 270f || ty < -10f || ty > 270f) {
+                                if (isVirtualPlatePosition(tx, ty, sourceBedSize)) {
                                     return true
                                 }
                             }
@@ -1383,18 +1404,19 @@ $componentRefs    </components>
     }
 
     /**
-     * Clamp wipe tower position to stay within 270mm bed.
+     * Clamp a Bambu project's wipe tower to its source-bed envelope. This parameter describes
+     * source-file conventions, not the active target printer.
      */
-    private fun sanitizeWipeTowerPosition(
+    internal fun sanitizeWipeTowerPosition(
         config: MutableMap<String, Any>,
-        bedSize: Float = 270f,
+        sourceBedSize: Float = DEFAULT_BAMBU_SOURCE_BED_SIZE,
         extraMargin: Float = 6f
     ) {
         val towerWidth = getNumeric(config, "prime_tower_width", 35f)
         val towerBrim = maxOf(0f, getNumeric(config, "prime_tower_brim_width", 3f))
         val halfSpan = maxOf(12f, towerWidth / 2f + towerBrim + extraMargin)
         val minPos = halfSpan
-        val maxPos = maxOf(minPos, bedSize - halfSpan)
+        val maxPos = maxOf(minPos, sourceBedSize - halfSpan)
 
         clampScalarPosition(config, "wipe_tower_x", minPos, maxPos)
         clampScalarPosition(config, "wipe_tower_y", minPos, maxPos)
@@ -2010,7 +2032,8 @@ $componentRefs    </components>
      * Fallback (newer Bambu format without p:object_id): select the N-th build item
      * by XML order (targetPlateId is 1-based) and re-centre its XY to the bed centre.
      * Newer BambuStudio exports lay out all plates in a large virtual space so each
-     * item's absolute XY is outside the 270 mm bed.  Re-centring to (135, 135) lets
+     * item's absolute XY is outside the Bambu source-bed envelope. Re-centring it to
+     * that source bed's centre lets
      * setModelInstances compute the correct centered placement afterwards.
      *
      * @param hasPlateJsons  true = newer format (each plate is independently loadable,
@@ -2019,7 +2042,8 @@ $componentRefs    </components>
      */
     internal fun filterModelToPlate(xml: String, targetPlateId: Int,
                                    hasPlateJsons: Boolean = true,
-                                   plateObjectIds: Set<String>? = null): String {
+                                   plateObjectIds: Set<String>? = null,
+                                   sourceBedSize: Float = DEFAULT_BAMBU_SOURCE_BED_SIZE): String {
         val targetPlateIndex = targetPlateId - 1  // p:object_id is 0-based
 
         val buildRegex  = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
@@ -2046,8 +2070,8 @@ $componentRefs    </components>
                     return@replace m.value
                 }
                 // Re-centre items as a group: shift all by a uniform offset so their
-                // collective bounding-box centre lands at (135, 135), preserving layout.
-                val recentered = recenterGroupIfVirtual(targetItems)
+                // collective bounding-box centre lands at the source-bed centre.
+                val recentered = recenterGroupIfVirtual(targetItems, sourceBedSize)
                 Log.i(TAG, "filterModelToPlate: plate $targetPlateId — config-based, kept ${targetItems.size}/${allItems.size} items (objectIds=$plateObjectIds)")
                 val newBody = "\n" + recentered.joinToString("\n") { "    $it" } + "\n  "
                 return@replace "$open$newBody$close"
@@ -2064,7 +2088,7 @@ $componentRefs    </components>
                     Log.w(TAG, "filterModelToPlate: no items for plate $targetPlateId — keeping all")
                     return@replace m.value
                 }
-                val recentered = recenterGroupIfVirtual(targetItems)
+                val recentered = recenterGroupIfVirtual(targetItems, sourceBedSize)
                 Log.i(TAG, "filterModelToPlate: plate $targetPlateId — p:object_id, kept ${targetItems.size}/${allItems.size} items")
                 val newBody = "\n" + recentered.joinToString("\n") { "    $it" } + "\n  "
                 return@replace "$open$newBody$close"
@@ -2077,14 +2101,14 @@ $componentRefs    </components>
                     ?.trim()?.split(Regex("\\s+")) ?: emptyList()
                 val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
                 val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
-                tx > 270f || ty < -10f || ty > 270f
+                isVirtualPlatePosition(tx, ty, sourceBedSize)
             }
 
             if (allItems.size <= 1 || (!hasPlateJsons && !hasVirtualPositions)) return@replace m.value
 
             if (hasVirtualPositions) {
                 val idx = targetPlateIndex.coerceIn(0, allItems.size - 1)
-                val selected = recenterItemXY(allItems[idx])
+                val selected = recenterItemXY(allItems[idx], sourceBedSize)
                 Log.i(TAG, "filterModelToPlate: plate $targetPlateId — position-based (virtual), selected item ${idx + 1}/${allItems.size}")
                 val newBody = "\n    $selected\n  "
                 "$open$newBody$close"
@@ -2129,13 +2153,13 @@ $componentRefs    </components>
 
     /**
      * Re-centres a group of items as a unit when any of them are at virtual positions
-     * (outside the 270 mm bed). Applies a single uniform XY shift to ALL items so their
-     * collective bounding-box centre lands at (135, 135), preserving relative positions.
+     * (outside the Bambu source bed). Applies a single uniform XY shift to ALL items so their
+     * collective bounding-box centre lands at the source-bed centre, preserving layout.
      *
      * This replaces per-item recentering (which collapsed every item to the same point).
      * For a single item the result is identical to recenterItemXY.
      */
-    private fun recenterGroupIfVirtual(items: List<String>): List<String> {
+    private fun recenterGroupIfVirtual(items: List<String>, sourceBedSize: Float): List<String> {
         if (items.isEmpty()) return items
         val transformRegex = Regex("""transform="([^"]+)"""")
 
@@ -2146,12 +2170,13 @@ $componentRefs    </components>
                 (parts?.getOrNull(10)?.toFloatOrNull() ?: 0f)
         }
 
-        if (positions.none { (tx, ty) -> tx > 270f || ty < -10f || ty > 270f }) return items
+        if (positions.none { (tx, ty) -> isVirtualPlatePosition(tx, ty, sourceBedSize) }) return items
 
         val minX = positions.minOf { it.first };  val maxX = positions.maxOf { it.first }
         val minY = positions.minOf { it.second }; val maxY = positions.maxOf { it.second }
-        val offsetX = 135f - (minX + maxX) / 2f
-        val offsetY = 135f - (minY + maxY) / 2f
+        val sourceBedCenter = sourceBedSize / 2f
+        val offsetX = sourceBedCenter - (minX + maxX) / 2f
+        val offsetY = sourceBedCenter - (minY + maxY) / 2f
 
         return items.map { item ->
             transformRegex.replace(item) { match ->
@@ -2173,18 +2198,19 @@ $componentRefs    </components>
         "%.4f".format(v).trimEnd('0').trimEnd('.').ifEmpty { "0" }
 
     /**
-     * Resets the XY translation in a build item's `transform` attribute to bed centre (135, 135),
+     * Resets XY translation in a build item's `transform` to the Bambu source-bed centre,
      * preserving the rotation matrix and Z translation.
      * 3MF row-major 3×4 format: `m00 … m22 tx ty tz` — indices 9, 10, 11.
      */
-    private fun recenterItemXY(item: String): String {
+    private fun recenterItemXY(item: String, sourceBedSize: Float): String {
         val transformRegex = Regex("""transform="([^"]+)"""")
         return transformRegex.replace(item) { match ->
             val parts = match.groupValues[1].trim().split(Regex("\\s+"))
             if (parts.size >= 12) {
                 val newParts = parts.toMutableList()
-                newParts[9]  = "135"
-                newParts[10] = "135"
+                val sourceBedCenter = formatCoord(sourceBedSize / 2f)
+                newParts[9]  = sourceBedCenter
+                newParts[10] = sourceBedCenter
                 // parts[11] = tz preserved (holds the Z offset placing the mesh on the bed)
                 """transform="${newParts.joinToString(" ")}""""
             } else {

@@ -2,25 +2,42 @@ package com.u1.slicer.viewer
 
 import android.content.Context
 import android.opengl.GLES30
+import com.u1.slicer.machine.MachineFamily
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+
+data class BedRenderProfile(
+    val sizeXmm: Float,
+    val sizeYmm: Float,
+    val bedStlAsset: String?,
+    val machineFamily: MachineFamily,
+)
 
 /**
  * Shared bed rendering: U1 bed fill mesh, minor grid (10mm), major grid (50mm), border.
  * Instantiated by both ModelRenderer and GcodeRenderer so camera/gesture fixes
  * automatically apply to both viewers.
  */
-class BedDrawable(private val context: Context) {
+class BedDrawable(
+    private val context: Context,
+    initialBedStlAsset: String? = LEGACY_U1_BED_STL_ASSET,
+) {
 
     private var bedSizeXmm = 270f
     private var bedSizeYmm = 270f
+    private var bedStlAsset: String? = initialBedStlAsset
 
-    fun setBedSizeMm(sizeXmm: Float, sizeYmm: Float = sizeXmm) {
-        if (sizeXmm == bedSizeXmm && sizeYmm == bedSizeYmm) return
+    fun setBedProfile(sizeXmm: Float, sizeYmm: Float, bedStlAsset: String?) {
+        if (sizeXmm == bedSizeXmm && sizeYmm == bedSizeYmm && bedStlAsset == this.bedStlAsset) return
         bedSizeXmm = sizeXmm
         bedSizeYmm = sizeYmm
+        this.bedStlAsset = bedStlAsset
         setupBedMesh(context)
         setupGrid()
+    }
+
+    fun setBedProfile(profile: BedRenderProfile) {
+        setBedProfile(profile.sizeXmm, profile.sizeYmm, profile.bedStlAsset)
     }
 
     private var gridShader: ShaderProgram? = null
@@ -78,31 +95,48 @@ class BedDrawable(private val context: Context) {
     }
 
     private fun setupBedMesh(context: Context) {
-        val bytes = try {
-            context.assets.open("bed/u1_bed.stl").readBytes()
-        } catch (_: Exception) { return }
+        val asset = bedStlAsset
+        if (asset == null) {
+            uploadBedFill(rectangleVertices(bedSizeXmm, bedSizeYmm))
+            return
+        }
 
-        if (bytes.size < 84) return
+        val bytes = runCatching { context.assets.open(asset).use { it.readBytes() } }.getOrNull()
+        if (bytes == null || bytes.size < 84) {
+            uploadBedFill(rectangleVertices(bedSizeXmm, bedSizeYmm))
+            return
+        }
         val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         buf.position(80)
         val triCount = buf.int
+        if (triCount < 0 || 84L + triCount.toLong() * 50L > bytes.size) {
+            uploadBedFill(rectangleVertices(bedSizeXmm, bedSizeYmm))
+            return
+        }
 
-        val verts = mutableListOf<Float>()
+        val verts = FloatArray(triCount * 9)
+        var index = 0
         repeat(triCount) {
             buf.position(buf.position() + 12) // skip normal
             repeat(3) {
                 val x = (buf.float + 135f) * (bedSizeXmm / 270f)
                 val y = (buf.float + 135f) * (bedSizeYmm / 270f)
                 buf.float // Z — flatten to 0
-                verts.add(x); verts.add(y); verts.add(0f)
+                verts[index++] = x
+                verts[index++] = y
+                verts[index++] = 0f
             }
             buf.position(buf.position() + 2) // attribute
         }
 
+        uploadBedFill(verts)
+    }
+
+    private fun uploadBedFill(verts: FloatArray) {
         bedFillVertexCount = verts.size / 3
         val fbuf = ByteBuffer.allocateDirect(verts.size * 4)
             .order(ByteOrder.nativeOrder()).asFloatBuffer()
-        fbuf.put(verts.toFloatArray()); fbuf.flip()
+        fbuf.put(verts); fbuf.flip()
 
         val vaos = IntArray(1); GLES30.glGenVertexArrays(1, vaos, 0); bedFillVAO = vaos[0]
         val vbos = IntArray(1); GLES30.glGenBuffers(1, vbos, 0)
@@ -155,5 +189,18 @@ class BedDrawable(private val context: Context) {
         GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, 12, 0)
         GLES30.glEnableVertexAttribArray(0)
         GLES30.glBindVertexArray(0)
+    }
+
+    companion object {
+        private const val LEGACY_U1_BED_STL_ASSET = "bed/u1_bed.stl"
+
+        internal fun rectangleVertices(width: Float, height: Float): FloatArray = floatArrayOf(
+            0f, 0f, 0f,
+            width, 0f, 0f,
+            width, height, 0f,
+            0f, 0f, 0f,
+            width, height, 0f,
+            0f, height, 0f,
+        )
     }
 }

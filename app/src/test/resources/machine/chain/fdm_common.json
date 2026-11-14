@@ -1,0 +1,9 @@
+{
+  "type": "machine",
+  "name": "fdm_common",
+  "vendor": "Generic",
+  "printer_model": "Common",
+  "machine_start_gcode": "COMMON_START",
+  "instantiation": "true",
+  "from": "system"
+}

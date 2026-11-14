@@ -139,11 +139,11 @@ try {
     }
 
     if (-not $SkipE2E) {
-        Write-State -Phase "e2e" -Step "starting" -Detail "Running Smoke-7 manual batch" -Command "scripts\run-batch-manual-e2e.ps1 -Device $Device -StartAt $E2EStartAt -EndAt $E2EEndAt"
+        Write-State -Phase "e2e" -Step "starting" -Detail "Running Smoke-7 manual batch and printer wizard upload scenario" -Command "scripts\run-batch-manual-e2e.ps1 -Device $Device -StartAt $E2EStartAt -EndAt $E2EEndAt -IncludePrinterWizardUpload"
         Write-Host ""
         Write-Host "=== Smoke-7 E2E batch ($E2EStartAt..$E2EEndAt) ==="
-        Invoke-Checked { & .\scripts\run-batch-manual-e2e.ps1 -Device $Device -StartAt $E2EStartAt -EndAt $E2EEndAt } "Smoke-7 E2E batch"
-        Write-State -Phase "e2e" -Step "completed" -Detail "Smoke-7 E2E batch passed"
+        Invoke-Checked { & .\scripts\run-batch-manual-e2e.ps1 -Device $Device -StartAt $E2EStartAt -EndAt $E2EEndAt -IncludePrinterWizardUpload } "Smoke-7 E2E batch"
+        Write-State -Phase "e2e" -Step "completed" -Detail "Smoke-7 E2E batch and printer wizard upload scenario passed"
     }
 
     Write-State -Phase "completed" -Step "done" -Detail "Selected confidence phases passed"

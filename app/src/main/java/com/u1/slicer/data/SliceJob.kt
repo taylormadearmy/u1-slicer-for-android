@@ -64,6 +64,9 @@ data class SliceJob(
      * null is treated as canonical for backwards compatibility.
      */
     val gcodeToolSpace: String? = null,
+    /** Exact machine identity for safe history resend. Null denotes a pre-v9 legacy job. */
+    val sliceTarget: String? = null,
+    val machineProfileFingerprint: String? = null,
 )
 
 /**

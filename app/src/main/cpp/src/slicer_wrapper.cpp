@@ -419,9 +419,10 @@ Java_com_u1_slicer_NativeLibrary_nativeSplitObject(JNIEnv* env, jobject, jint ob
 }
 
 JNIEXPORT jint JNICALL
-Java_com_u1_slicer_NativeLibrary_nativeSplitVolume(JNIEnv*, jobject, jint objIdx, jint volIdx) {
+Java_com_u1_slicer_NativeLibrary_nativeSplitVolume(JNIEnv*, jobject, jint objIdx, jint volIdx,
+                                                    jint configuredExtruders) {
     if (!g_engine) return -1;
-    return g_engine->splitVolume(objIdx, volIdx);
+    return g_engine->splitVolume(objIdx, volIdx, configuredExtruders);
 }
 
 // B132c follow-up (v2.10.4): per-object duplicate. Returns the new object's
@@ -431,6 +432,37 @@ Java_com_u1_slicer_NativeLibrary_nativeDuplicateObject(JNIEnv*, jobject, jint ob
     if (!g_engine) return -1;
     auto res = g_engine->duplicateObject(static_cast<int>(objIdx));
     return res.has_value() ? *res : -1;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeSetAdaptiveLayerHeight(
+        JNIEnv* env, jobject, jfloat quality, jint smoothing_radius, jboolean keep_min, jfloat nozzle_diameter) {
+    if (!g_engine || smoothing_radius < 0) return nullptr;
+    const auto range = g_engine->setAdaptiveLayerHeight(quality, static_cast<unsigned int>(smoothing_radius), keep_min == JNI_TRUE, nozzle_diameter);
+    if (range.empty()) return nullptr;
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(range.size()));
+    env->SetFloatArrayRegion(result, 0, static_cast<jsize>(range.size()), range.data());
+    return result;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeClearVariableLayerHeights(JNIEnv*, jobject) {
+    return (g_engine && g_engine->clearVariableLayerHeights()) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetVariableLayerHeightRange(JNIEnv* env, jobject) {
+    if (!g_engine) return nullptr;
+    const auto range = g_engine->getVariableLayerHeightRange();
+    if (range.empty()) return nullptr;
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(range.size()));
+    env->SetFloatArrayRegion(result, 0, static_cast<jsize>(range.size()), range.data());
+    return result;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeDeleteObject(JNIEnv*, jobject, jint objIdx) {
+    return (g_engine && g_engine->deleteObject(static_cast<int>(objIdx))) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jdoubleArray JNICALL

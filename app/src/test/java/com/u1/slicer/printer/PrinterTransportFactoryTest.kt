@@ -4,13 +4,52 @@ import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
 import com.u1.slicer.network.MoonrakerClient
+import com.u1.slicer.machine.MachineFamily
+import com.u1.slicer.machine.MachineProfile
+import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PrinterTransportFactoryTest {
+    @Test fun factoryPreservesReleasedCc1AdapterWithoutEnablingStartOnUpload() {
+        val printer = Printer("cc1", "CC1", PrinterKind.ELEGOO_CC1,
+            host = com.u1.slicer.data.PrintHostConfig("192.0.2.2"))
+        val transport = DefaultPrinterTransportFactory().create(printer)
+        assertTrue(transport is com.u1.slicer.printer.elegoo.ElegooCc1Transport)
+        assertTrue(transport.capabilities.supportsUpload)
+        org.junit.Assert.assertFalse(transport.capabilities.supportsStartOnUpload)
+    }
+
+    @Test fun factoryReadsReleasedOctoHostAddressAndKey() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200).setBody("""{"server":"1.10.0"}"""))
+            val printer = Printer("octo", "Octo", PrinterKind.OCTOPRINT,
+                host = com.u1.slicer.data.PrintHostConfig(server.url("/octo/").toString(), "old-key"))
+            val transport = DefaultPrinterTransportFactory().create(printer)
+            assertNull(transport.testConnection())
+            val request = server.takeRequest()
+            assertEquals("/octo/api/version", request.path)
+            assertEquals("old-key", request.getHeader("X-Api-Key"))
+        }
+    }
+
+    @Test
+    fun `factory dispatches OctoPrint and PrusaLink by host type`() {
+        val octo = object : PrinterTransport by OctoPrintTransport("http://octo", apiKey = null) {}
+        val prusa = object : PrinterTransport by PrusaLinkTransport("http://prusa") {}
+        val factory = DefaultPrinterTransportFactory(
+            octoPrintTransportFactory = { octo },
+            prusaLinkTransportFactory = { prusa },
+        )
+        assertTrue(factory.create(Printer("o", "Octo", hostType = HostType.OCTOPRINT)) === octo)
+        assertTrue(factory.create(Printer("p", "Prusa", hostType = HostType.PRUSALINK)) === prusa)
+    }
 
     @Test
     fun `factory creates moonraker transport for moonraker printer`() {
@@ -28,6 +67,53 @@ class PrinterTransportFactoryTest {
 
         assertTrue(transport is MoonrakerTransport)
         assertTrue(client.baseUrl.contains(":7125"))
+    }
+
+    @Test
+    fun `factory binds selected machine heater limits to Moonraker transport`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        server.start()
+        try {
+            val profile = requireNotNull(
+                MachineProfile.fromResolvedOrcaJson(
+                    """{
+                      "type":"machine",
+                      "name":"Limited",
+                      "gcode_flavor":"klipper",
+                      "nozzle_diameter":["0.4"],
+                      "printable_height":"200",
+                      "machine_start_gcode":"G28",
+                      "machine_end_gcode":"M84",
+                      "printable_area":["0x0","180x0","180x180","0x180"],
+                      "nozzle_max_temperature":"275",
+                      "bed_temperature_limit":"95"
+                    }""",
+                    MachineFamily.GENERIC,
+                )
+            )
+            val factory = DefaultPrinterTransportFactory(
+                moonrakerClientFactory = { MoonrakerClient() },
+                machineProfileFactory = { profile },
+            )
+            val transport = factory.create(
+                Printer(
+                    id = "limited",
+                    nickname = "Limited",
+                    moonrakerUrl = server.url("/").toString(),
+                )
+            )
+
+            assertEquals(
+                TransportCommandResult.Success,
+                transport.setHeaterTemperature("extruder", 999),
+            )
+            val request = server.takeRequest()
+            assertEquals("/printer/gcode/script", request.path)
+            assertTrue(request.body.readUtf8().contains("TARGET=275"))
+        } finally {
+            server.shutdown()
+        }
     }
 
     @Test

@@ -18,12 +18,16 @@ object GcodeParser {
      * @param colorSegmentsByPausePrint When true, assigns extruder indices 0–3 by counting
      *   `; PAUSE_PRINT` markers (layer-change manual swaps) instead of `T` commands.
      *   Used for Hueforge-style models sliced as single-filament G-code.
+     * @param bedWidth active machine bed width in millimetres
+     * @param bedHeight active machine bed height in millimetres
      * @param maxMoves Maximum number of moves to store.  Files exceeding this are
      *   stride-sampled so moves are distributed evenly across all layers.
      */
     @JvmOverloads
     fun parse(
         file: File,
+        bedWidth: Float,
+        bedHeight: Float,
         colorSegmentsByPausePrint: Boolean = false,
         maxMoves: Int = DEFAULT_MAX_MOVES
     ): ParsedGcode {
@@ -324,6 +328,8 @@ object GcodeParser {
 
         return ParsedGcode(
             layers = layers,
+            bedWidth = bedWidth,
+            bedHeight = bedHeight,
             perExtruderFilamentMm = finalPerExtruderMm,
             wipeTowerFilamentMm = wipeTowerE,
             _totalMoves = totalMovesCount,

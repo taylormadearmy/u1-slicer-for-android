@@ -94,6 +94,7 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
     config.bottom_solid_layers = getInt("bottomSolidLayers");
     config.fill_density = getFloat("fillDensity");
     config.fill_pattern = getString("fillPattern");
+    config.ironing_type = getString("ironingType");
 
     config.print_speed = getFloat("printSpeed");
     config.travel_speed = getFloat("travelSpeed");
@@ -240,6 +241,7 @@ jobject configToJava(JNIEnv* env, const SliceConfig& config) {
     setInt("bottomSolidLayers", config.bottom_solid_layers);
     setFloat("fillDensity", config.fill_density);
     setString("fillPattern", config.fill_pattern);
+    setString("ironingType", config.ironing_type);
     setFloat("printSpeed", config.print_speed);
     setFloat("travelSpeed", config.travel_speed);
     setFloat("firstLayerSpeed", config.first_layer_speed);

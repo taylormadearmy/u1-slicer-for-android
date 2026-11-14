@@ -1,0 +1,7 @@
+{
+  "type": "machine",
+  "name": "u1_child",
+  "inherits": "fdm_u1_base",
+  "machine_start_gcode": "CHILD_START",
+  "child_only": "present"
+}

@@ -3,6 +3,7 @@ package com.u1.slicer.viewer
 import android.content.Context
 import android.view.MotionEvent
 import com.u1.slicer.gcode.ParsedGcode
+import com.u1.slicer.machine.MachineFamily
 
 class GcodeViewerView(context: Context) : BaseGLViewerView(context) {
 
@@ -20,8 +21,13 @@ class GcodeViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
-    fun setBedSizeMm(sizeXmm: Float, sizeYmm: Float = sizeXmm) {
-        renderer.pendingBedSizeMm = sizeXmm to sizeYmm
+    fun setBedProfile(
+        sizeXmm: Float,
+        sizeYmm: Float,
+        bedStlAsset: String?,
+        machineFamily: MachineFamily,
+    ) {
+        renderer.pendingBedProfile = BedRenderProfile(sizeXmm, sizeYmm, bedStlAsset, machineFamily)
         requestRender()
     }
 

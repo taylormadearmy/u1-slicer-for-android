@@ -57,7 +57,7 @@ object GcodeSegmentPacker {
      * Pack parsed G-code into arrays ready for GPU texture upload.
      *
      * Consecutive EXTRUDE moves form **chains** sharing vertices at endpoints.
-     * Chains break at travel moves and layer boundaries. At each shared vertex,
+     * Chains break at travel moves, disconnected endpoints, and layer boundaries. At each shared vertex,
      * the turning angle between segments is computed for beveled cap geometry.
      * Chain start/end vertices get angle = 0 (pointy caps).
      *
@@ -123,6 +123,13 @@ object GcodeSegmentPacker {
 
                 val dirX = dx / len
                 val dirY = dy / len
+
+                // Stride sampling can omit intervening extrusion and travel moves.
+                // Only reuse a vertex when the retained endpoints actually meet.
+                if (chainOpen && (pos[(vc - 1) * 3] != move.x0 || pos[(vc - 1) * 3 + 1] != move.y0)) {
+                    hwa[(vc - 1) * 3 + 2] = 0f
+                    chainOpen = false
+                }
 
                 if (!chainOpen) {
                     // Start vertex (pointy cap: angle = 0)

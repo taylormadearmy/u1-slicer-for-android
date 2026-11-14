@@ -43,6 +43,8 @@ private val plateColors = listOf(
 @Composable
 fun PlateSelectDialog(
     plates: List<ThreeMfPlate>,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     onSelect: (Int) -> Unit,
     onDismiss: () -> Unit,
     info: ThreeMfInfo? = null
@@ -157,6 +159,8 @@ fun PlateSelectDialog(
                                 allPlates = plates,
                                 objects = info?.objects ?: emptyList(),
                                 highlightColor = color,
+                                bedSizeXmm = bedSizeXmm,
+                                bedSizeYmm = bedSizeYmm,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(100.dp)
@@ -181,6 +185,8 @@ private fun PlateThumbnail(
     allPlates: List<ThreeMfPlate>,
     @Suppress("UNUSED_PARAMETER") objects: List<ThreeMfObject>,
     highlightColor: Color,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     modifier: Modifier = Modifier
 ) {
     // Show extracted PNG thumbnail if available (Bambu 3MF plates)
@@ -200,50 +206,48 @@ private fun PlateThumbnail(
     }
 
     Canvas(modifier = modifier) {
-        val bedW = 270f
-        val bedH = 270f
         val padding = 8f
 
-        val availW = size.width - padding * 2
-        val availH = size.height - padding * 2
-        val scale = minOf(availW / bedW, availH / bedH)
+        val availW = (size.width - padding * 2).coerceAtLeast(0f)
+        val availH = (size.height - padding * 2).coerceAtLeast(0f)
+        val scale = minOf(availW / bedSizeXmm, availH / bedSizeYmm)
 
-        val offsetX = padding + (availW - bedW * scale) / 2
-        val offsetY = padding + (availH - bedH * scale) / 2
+        val offsetX = padding + (availW - bedSizeXmm * scale) / 2
+        val offsetY = padding + (availH - bedSizeYmm * scale) / 2
 
         // Bed background — lighter for better contrast
         drawRect(
             color = Color(0xFF1E1E2E),
             topLeft = Offset(offsetX, offsetY),
-            size = Size(bedW * scale, bedH * scale)
+            size = Size(bedSizeXmm * scale, bedSizeYmm * scale)
         )
 
         // Bed border
         drawRect(
             color = Color(0xFF555577),
             topLeft = Offset(offsetX, offsetY),
-            size = Size(bedW * scale, bedH * scale),
+            size = Size(bedSizeXmm * scale, bedSizeYmm * scale),
             style = Stroke(width = 1.5f)
         )
 
         // Grid lines every 50mm
         val gridStep = 50f * scale
         var gx = gridStep
-        while (gx < bedW * scale) {
+        while (gx < bedSizeXmm * scale) {
             drawLine(
                 Color(0xFF2A2A40),
                 Offset(offsetX + gx, offsetY),
-                Offset(offsetX + gx, offsetY + bedH * scale),
+                Offset(offsetX + gx, offsetY + bedSizeYmm * scale),
                 strokeWidth = 0.5f
             )
             gx += gridStep
         }
         var gy = gridStep
-        while (gy < bedH * scale) {
+        while (gy < bedSizeYmm * scale) {
             drawLine(
                 Color(0xFF2A2A40),
                 Offset(offsetX, offsetY + gy),
-                Offset(offsetX + bedW * scale, offsetY + gy),
+                Offset(offsetX + bedSizeXmm * scale, offsetY + gy),
                 strokeWidth = 0.5f
             )
             gy += gridStep
@@ -253,7 +257,7 @@ private fun PlateThumbnail(
         for (otherPlate in allPlates) {
             if (otherPlate.plateId == plate.plateId) continue
             drawPlateObject(
-                offsetX, offsetY, scale, bedH,
+                offsetX, offsetY, scale, bedSizeYmm,
                 otherPlate.translationX, otherPlate.translationY,
                 Color(0xFF333355), 0.3f
             )
@@ -261,7 +265,7 @@ private fun PlateThumbnail(
 
         // Draw this plate's object(s) highlighted
         drawPlateObject(
-            offsetX, offsetY, scale, bedH,
+            offsetX, offsetY, scale, bedSizeYmm,
             plate.translationX, plate.translationY,
             highlightColor, 0.8f
         )
@@ -357,7 +361,7 @@ private fun FilamentIndicatorChips(
 }
 
 private fun DrawScope.drawPlateObject(
-    offsetX: Float, offsetY: Float, scale: Float, bedH: Float,
+    offsetX: Float, offsetY: Float, scale: Float, bedSizeYmm: Float,
     tx: Float, ty: Float,
     color: Color, alpha: Float
 ) {
@@ -365,7 +369,7 @@ private fun DrawScope.drawPlateObject(
     val objSize = 50f * scale
     // Transform: tx,ty are in mm from bed origin. Y is flipped for Canvas (0 at top)
     val cx = offsetX + tx * scale
-    val cy = offsetY + (bedH - ty) * scale
+    val cy = offsetY + (bedSizeYmm - ty) * scale
 
     val left = cx - objSize / 2
     val top = cy - objSize / 2

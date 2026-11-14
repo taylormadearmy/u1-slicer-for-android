@@ -146,6 +146,30 @@ class BambuSingleNozzleNativeConfigTest {
         }
     }
 
+    @Test fun fineNozzleProducesCompatibleGeometryAndIdentity() = verifyNozzleDiameter(0.2f)
+
+    @Test fun mediumNozzleProducesCompatibleGeometryAndIdentity() = verifyNozzleDiameter(0.6f)
+
+    @Test fun largeNozzleProducesCompatibleGeometryAndIdentity() = verifyNozzleDiameter(0.8f)
+
+    private fun verifyNozzleDiameter(diameter: Float) {
+        for (target in listOf(SlicerTarget.BambuP1S, SlicerTarget.BambuH2D)) {
+            native.clearModel()
+            assertTrue(native.loadModel(model.absolutePath))
+            val base = com.u1.slicer.bambu.BambuNozzlePolicy.baseConfig(SliceConfig(extruderCount = 1), diameter)
+            val result = native.slice(resolveTargetedSliceConfig(target, base))
+            assertNotNull(result)
+            assertTrue("${target.name}: ${result!!.errorMessage}", result.success)
+            val gcode = File(result.gcodePath).readText()
+            assertTrue(gcode.contains("; nozzle_diameter = $diameter"))
+            assertTrue(gcode.contains("$diameter nozzle"))
+            assertTrue(gcode.contains("; printer_variant = $diameter"))
+            assertTrue(gcode.contains("; layer_height = ${diameter / 2}"))
+            assertTrue(gcode.contains("; initial_layer_print_height = ${diameter / 2}"))
+            assertFalse(gcode.contains("PRINT_START"))
+        }
+    }
+
     private data class MachineExpectation(
         val target: SlicerTarget,
         val model: String,

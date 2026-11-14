@@ -53,7 +53,6 @@ slice_test.png
 *.o
 *.so
 *.a
-!app/src/main/jniLibs/arm64-v8a/libc++_shared.so
 
 # PrusaSlicer source (large, fetched via script)
 app/src/main/cpp/prusaslicer/
@@ -76,3 +75,9 @@ app/.cmake-orca-arm64/
 
 # Superpowers brainstorm session artifacts (HTML mockups, state)
 .superpowers/
+
+# Private local test evidence and device backups
+/.audit/
+/.codex-remote-attachments/
+/e2e-artifacts/
+/scripts/__pycache__/

@@ -31,14 +31,18 @@ object GcodeThumbnailInjector {
      * Extract a preview image from a 3MF file and inject thumbnail blocks into G-code.
      * Returns true if thumbnails were injected.
      */
-    fun inject(gcodePath: String, sourcePath: String): Boolean {
+    fun inject(
+        gcodePath: String,
+        sourcePath: String,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
+    ): Boolean {
         val sourceFile = File(sourcePath)
         if (!sourceFile.exists() || !sourcePath.endsWith(".3mf", ignoreCase = true)) {
             return false
         }
 
         val bitmap = extractPreviewImage(sourceFile, inferPlateHint(sourceFile.name)) ?: return false
-        val blocks = buildThumbnailBlocks(bitmap)
+        val blocks = buildThumbnailBlocks(bitmap, dialect)
         if (blocks.isEmpty()) return false
 
         return injectIntoGcode(gcodePath, blocks)
@@ -47,8 +51,12 @@ object GcodeThumbnailInjector {
     /**
      * Inject thumbnail blocks from a pre-existing Bitmap (e.g. OpenGL screenshot for STL).
      */
-    fun injectFromBitmap(gcodePath: String, bitmap: Bitmap): Boolean {
-        val blocks = buildThumbnailBlocks(bitmap)
+    fun injectFromBitmap(
+        gcodePath: String,
+        bitmap: Bitmap,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
+    ): Boolean {
+        val blocks = buildThumbnailBlocks(bitmap, dialect)
         if (blocks.isEmpty()) return false
         return injectIntoGcode(gcodePath, blocks)
     }
@@ -124,7 +132,10 @@ object GcodeThumbnailInjector {
     /**
      * Build thumbnail comment blocks for all target sizes.
      */
-    internal fun buildThumbnailBlocks(source: Bitmap): String {
+    internal fun buildThumbnailBlocks(
+        source: Bitmap,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
+    ): String {
         val sb = StringBuilder()
         for ((w, h) in THUMBNAIL_SIZES) {
             val scaled = Bitmap.createScaledBitmap(source, w, h, true)
@@ -142,17 +153,7 @@ object GcodeThumbnailInjector {
             rgb.recycle()
 
             val b64 = Base64.encodeToString(pngBytes, Base64.NO_WRAP)
-            sb.append("; thumbnail begin ${w}x${h} ${b64.length}\n")
-            // Split into 76-char lines — matches the vanilla Klipper/Moonraker format used by
-            // u1-slicer-bridge and supported by all Moonraker versions (incl. older firmware).
-            var i = 0
-            while (i < b64.length) {
-                val end = minOf(i + 76, b64.length)
-                sb.append("; ${b64.substring(i, end)}\n")
-                i = end
-            }
-            sb.append("; thumbnail end\n")
-            sb.append(";\n")
+            sb.append(formatThumbnailBlock(w, h, b64, dialect.thumbnailFormat))
         }
         return sb.toString()
     }

@@ -148,38 +148,100 @@ class BambuSanitizerTest {
 
     @Test
     fun `transform clamping for packed plates`() {
-        val bedCenter = 135f
-        val packedThreshold = bedCenter * 2 + 100 // 370
+        val input = """<assemble_item transform="1 0 0 0 1 0 0 0 1 500 20 8"/>"""
 
-        // A transform with tx=500 (packed by Bambu) should be clamped
-        val tx = 500f
-        assertTrue(kotlin.math.abs(tx) > packedThreshold)
+        val output = String(
+            BambuSanitizer.sanitizeModelSettings(input.toByteArray()),
+        )
 
-        // Should be recentered to bedCenter
-        val clamped = if (kotlin.math.abs(tx) > packedThreshold) bedCenter else tx
-        assertEquals(135f, clamped, 0.001f)
+        assertTrue(output.contains("135.000000 135.000000 0.000000"))
     }
 
     @Test
     fun `transform within threshold is not clamped`() {
-        val bedCenter = 135f
-        val packedThreshold = bedCenter * 2 + 100
+        val input = """<assemble_item transform="1 0 0 0 1 0 0 0 1 370 20 8"/>"""
 
-        val tx = 150f // Within normal range
-        assertFalse(kotlin.math.abs(tx) > packedThreshold)
+        val output = String(
+            BambuSanitizer.sanitizeModelSettings(input.toByteArray(), sourceBedSize = 270f),
+        )
+
+        assertEquals(input, output)
+    }
+
+    @Test
+    fun `source bed heuristics retain Bambu tolerance and wipe tower clamp`() {
+        assertFalse(BambuSanitizer.isVirtualPlatePosition(270f, -10f))
+        assertTrue(BambuSanitizer.isVirtualPlatePosition(270.01f, 0f, sourceBedSize = 270f))
+        assertTrue(BambuSanitizer.isVirtualPlatePosition(135f, -10.01f, sourceBedSize = 270f))
+
+        val config = mutableMapOf<String, Any>(
+            "prime_tower_width" to "35",
+            "prime_tower_brim_width" to "3",
+            "wipe_tower_x" to "999",
+            "wipe_tower_y" to "999",
+        )
+        BambuSanitizer.sanitizeWipeTowerPosition(config)
+
+        assertEquals("243.500", config["wipe_tower_x"])
+        assertEquals("243.500", config["wipe_tower_y"])
+    }
+
+    @Test
+    fun `filterModelToPlate uses source bed envelope and recenters selected virtual item`() {
+        val xml = """
+            <model><resources/>
+              <build>
+                <item objectid="1" transform="1 0 0 0 1 0 0 0 1 128 128 7"/>
+                <item objectid="2" transform="1 0 0 0 1 0 0 0 1 435 128 9"/>
+              </build>
+            </model>
+        """.trimIndent()
+
+        val output = BambuSanitizer.filterModelToPlate(
+            xml = xml,
+            targetPlateId = 2,
+            hasPlateJsons = false,
+            sourceBedSize = 270f,
+        )
+        val build = output.substringAfter("<build>").substringBefore("</build>")
+
+        assertFalse(build.contains("objectid=\"1\""))
+        assertTrue(build.contains("objectid=\"2\""))
+        assertTrue(build.contains("1 0 0 0 1 0 0 0 1 135 135 9"))
+    }
+
+    @Test
+    fun `filterModelToPlate preserves grouped layout around source bed center`() {
+        val xml = """
+            <model><resources/>
+              <build>
+                <item objectid="7" transform="1 0 0 0 1 0 0 0 1 420 100 3"/>
+                <item objectid="8" transform="1 0 0 0 1 0 0 0 1 440 120 3"/>
+                <item objectid="9" transform="1 0 0 0 1 0 0 0 1 100 100 3"/>
+              </build>
+            </model>
+        """.trimIndent()
+
+        val output = BambuSanitizer.filterModelToPlate(
+            xml = xml,
+            targetPlateId = 1,
+            plateObjectIds = setOf("7", "8"),
+            sourceBedSize = 270f,
+        )
+        val build = output.substringAfter("<build>").substringBefore("</build>")
+
+        assertTrue(build.contains("objectid=\"7\""))
+        assertTrue(build.contains("objectid=\"8\""))
+        assertFalse(build.contains("objectid=\"9\""))
+        assertTrue(build.contains("1 0 0 0 1 0 0 0 1 125 125 3"))
+        assertTrue(build.contains("1 0 0 0 1 0 0 0 1 145 145 3"))
     }
 
     // --- filterModelToPlate (build-only rewrite) ---
 
     /**
-     * BambuSanitizer.filterModelToPlate is private; we test it indirectly via
-     * the XML string by calling filterModelToPlate through extractPlate is not
-     * possible from JVM tests.  Instead, test the observable contract: a
-     * 3dmodel.model XML with p:object_id items is correctly filtered so only
-     * the target plate's items remain in <build>.
-     *
-     * We expose the logic by testing it through the expected output format.
-     * The regex used in filterModelToPlate is tested here as white-box.
+     * Historical white-box coverage for the XML filtering rules. Direct production-helper
+     * regression tests above pin the source-bed and recentering behavior.
      */
     @Test
     fun `filterModelToPlate logic - p_object_id plates`() {

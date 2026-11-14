@@ -17,6 +17,17 @@ class PreviewSummaryMappingTest {
     }
 
     @Test
+    fun `buildPerExtruderDisplaySlots excludes slots outside a two slot profile`() {
+        val slots = buildPerExtruderDisplaySlots(
+            count = 3,
+            colorMapping = listOf(1, 3, 0),
+            slotCount = 2,
+        )
+
+        assertEquals(listOf(1, 0, 0), slots)
+    }
+
+    @Test
     fun `buildPerExtruderDisplaySlots falls back to identity when no mapping`() {
         val slots = buildPerExtruderDisplaySlots(
             count = 3,

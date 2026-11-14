@@ -13,6 +13,8 @@ data class SliceConfig(
     @JvmField var bottomSolidLayers: Int = 4,
     @JvmField var fillDensity: Float = 0.15f,
     @JvmField var fillPattern: String = "gyroid",
+    /** Empty preserves the embedded profile/default; otherwise an Orca ironing_type value. */
+    @JvmField var ironingType: String = "",
 
     // Speed (mm/s) — Snapmaker U1 defaults matching standard_0.20mm.json process profile.
     // printSpeed sets outer_wall_speed (inner wall, infill, travel use profile values).

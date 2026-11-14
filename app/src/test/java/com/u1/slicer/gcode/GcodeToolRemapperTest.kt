@@ -192,6 +192,22 @@ class GcodeToolRemapperTest {
     }
 
     @Test
+    fun `generic dialect remaps standard tools but leaves SM commands untouched`() {
+        assertEquals(
+            "T2",
+            GcodeToolRemapper.remapLine("T0", shift2, KlipperGenericDialect),
+        )
+        assertEquals(
+            "SM_PRINT_AUTO_FEED EXTRUDER=0",
+            GcodeToolRemapper.remapLine(
+                "SM_PRINT_AUTO_FEED EXTRUDER=0",
+                shift2,
+                KlipperGenericDialect,
+            ),
+        )
+    }
+
+    @Test
     fun `full file remap includes SM commands`() {
         val gcode = listOf(
             "T0",

@@ -11,9 +11,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MoreVert
@@ -78,6 +81,42 @@ fun EditPanel(
         scope = scope,
         modifier = modifier,
     )
+}
+
+/** F100: explicit picker for objects that were already separate in a 3MF. */
+@Composable
+fun ObjectBrowser(
+    viewModel: SlicerViewModel,
+    objectCount: Int,
+    modelVersion: Int,
+    modifier: Modifier = Modifier,
+) {
+    if (objectCount < 2) return
+    val selection by viewModel.selection.collectAsState()
+    val names = remember(objectCount, modelVersion) {
+        List(objectCount) { index -> viewModel.objectName(index).ifBlank { "Object ${index + 1}" } }
+    }
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Objects ($objectCount)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "Tap an object to edit or delete it",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                itemsIndexed(names, key = { index, _ -> index }) { index, name ->
+                    OutlinedButton(onClick = { viewModel.selectObject(index) }) {
+                        Text(if (selection.objectIndex == index) "✓ $name" else name, maxLines = 1)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -217,6 +256,15 @@ private fun ObjectScopedEditSection(
                 onClick = { viewModel.resetObjectScale(objIdx) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Reset scale") }
+        }
+
+        OutlinedButton(
+            onClick = { viewModel.deleteObject(objIdx) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Delete this object")
         }
 
         if (volumeCount >= 1) {

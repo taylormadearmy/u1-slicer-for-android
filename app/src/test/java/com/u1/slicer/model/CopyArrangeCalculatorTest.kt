@@ -3,7 +3,101 @@ package com.u1.slicer.model
 import org.junit.Assert.*
 import org.junit.Test
 
+private const val U1_BED_SIZE = 270f
+
+private fun CopyArrangeCalculator.calculate(
+    objectSizeX: Float,
+    objectSizeY: Float,
+    copyCount: Int,
+): FloatArray = calculate(objectSizeX, objectSizeY, copyCount, U1_BED_SIZE, U1_BED_SIZE)
+
+private fun CopyArrangeCalculator.maxCopies(objectSizeX: Float, objectSizeY: Float): Int =
+    maxCopies(objectSizeX, objectSizeY, U1_BED_SIZE, U1_BED_SIZE)
+
+private fun CopyArrangeCalculator.copyBedWarning(
+    objectSizeX: Float,
+    objectSizeY: Float,
+    count: Int,
+): String? = copyBedWarning(objectSizeX, objectSizeY, count, U1_BED_SIZE, U1_BED_SIZE)
+
+private fun CopyArrangeCalculator.computeWipeTowerPosition(
+    objectPositions: FloatArray,
+    objectSizeX: Float,
+    objectSizeY: Float,
+    towerWidth: Float,
+): Pair<Float, Float> = computeWipeTowerPosition(
+    objectPositions,
+    objectSizeX,
+    objectSizeY,
+    towerWidth = towerWidth,
+    bedSizeX = U1_BED_SIZE,
+    bedSizeY = U1_BED_SIZE,
+)
+
+private fun CopyArrangeCalculator.computeWipeTowerPosition(
+    objectPositions: FloatArray,
+    objectSizeX: Float,
+    objectSizeY: Float,
+    towerWidth: Float,
+    towerDepth: Float,
+): Pair<Float, Float> = computeWipeTowerPosition(
+    objectPositions,
+    objectSizeX,
+    objectSizeY,
+    towerWidth,
+    towerDepth,
+    U1_BED_SIZE,
+    U1_BED_SIZE,
+)
+
+private fun CopyArrangeCalculator.buildMultiObjectPositions(boxes: FloatArray): FloatArray =
+    buildMultiObjectPositions(boxes, U1_BED_SIZE, U1_BED_SIZE)
+
+private fun CopyArrangeCalculator.placeAdditionalObject(
+    currentPositions: FloatArray,
+    boxes: FloatArray,
+): FloatArray = placeAdditionalObject(currentPositions, boxes, U1_BED_SIZE, U1_BED_SIZE)
+
+private fun CopyArrangeCalculator.computeWipeTowerPositionForObjects(
+    objectPositions: FloatArray,
+    objectBoxes: FloatArray,
+): Pair<Float, Float> = computeWipeTowerPositionForObjects(
+    objectPositions,
+    objectBoxes,
+    bedSizeX = U1_BED_SIZE,
+    bedSizeY = U1_BED_SIZE,
+)
+
+private fun CopyArrangeCalculator.autoArrange(
+    boxes: FloatArray,
+    reservedRect: FloatArray?,
+    incoming: FloatArray,
+): CopyArrangeCalculator.ArrangeResult = autoArrange(
+    boxes,
+    reservedRect,
+    incoming,
+    U1_BED_SIZE,
+    U1_BED_SIZE,
+)
+
 class CopyArrangeCalculatorTest {
+
+    @Test
+    fun `copy arrangement respects 180 270 and 300 millimeter beds`() {
+        for (bedSize in listOf(180f, 270f, 300f)) {
+            val positions = CopyArrangeCalculator.calculate(
+                objectSizeX = 40f,
+                objectSizeY = 30f,
+                copyCount = 12,
+                bedSizeX = bedSize,
+                bedSizeY = bedSize,
+            )
+            for (index in positions.indices step 2) {
+                assertTrue(positions[index] >= 0f && positions[index] + 40f <= bedSize)
+                assertTrue(positions[index + 1] >= 0f && positions[index + 1] + 30f <= bedSize)
+            }
+        }
+    }
 
     @Test
     fun `a1 mini single copy and prime tower stay inside the 180mm bed`() {
@@ -36,7 +130,7 @@ class CopyArrangeCalculatorTest {
             boxes = floatArrayOf(60f, 45f, 10f, 60f, 45f, 10f),
             reservedRect = null,
             incoming = floatArrayOf(0f, 0f, 0f, 0f),
-            bedSize = 180f,
+            bedSizeX = 180f,
             bedSizeY = 100f,
         )
 

@@ -1,0 +1,88 @@
+# Reconcile published v4.0.5 with the v5 candidate
+
+## Scope and phases
+
+The user requested reconciliation followed by all JVM, device, fixture, and regression checks. Publication and physical printing are not authorized.
+
+- [x] Ground both implementations and inventory saved-data differences.
+- [x] Compare two integration designs and select one.
+- [x] Integrate into one machine-profile implementation, preserving v4.0.5 fixes and CC1.
+- [x] Build the v5 candidate and add upgrade, safety, and integration regressions.
+- [x] Run every independent device test and every fixture-driven check, plus the full E2E batch.
+- [x] Restore and verify original device data, record exact evidence and remaining gaps.
+
+## Starting state
+
+Current branch `codex/snapmaker-u1-printer-ux` at `8ac2b292` includes published v4.0.5. The existing `feature/a2-multi-printer` worktree is clean at `efa58e79`. Their common ancestor precedes two current-branch commits and 67 v5 commits. Preserve both histories. The published v4.0.5 has Room schema 9 and embedded generic-profile snapshots; v5 must not regress to schema 8 or silently reinterpret those printers as U1.
+
+Only Pixel 9a `5A101JEBF24790` is selected for automated tests. NF22E1 is prohibited. Other connected non-phone devices are excluded. Back up the Pixel app data before installing or running tests, then restore and verify the original settings and history.
+
+## Verification contract
+
+Build and test success is measured from the actual APKs, JVM XML reports, Orchestrator results, external-fixture drivers, and E2E outputs. Every failure must be diagnosed and repaired without reducing assertions. Adapter tests and mock-host uploads do not prove physical CC1, OctoPrint, or PrusaLink compatibility.
+
+## Synthesis decision
+
+Candidate B is the base. The independent cross-judge agreed that preserving the published snapshot and transport APIs avoids the unnecessary migration risk of candidate A's sealed connection rewrite. Graft A's embedded immutable catalogue snapshots, explicit missing-profile refusal, exact 405 identity preservation, and single captured slice binding. The catalogue's MachineProfile is setup/display metadata derived from the same selected JSON, not a separate native slicing authority.
+
+Keep both Git histories through a local merge. Preserve schema 9, CC1, selected filament temperatures, compact mapping rows, and post-upload identity validation. Generic selected-profile composition gains Marlin and 1–4 independent equal-diameter nozzles. SEMM and mixed nozzle diameters remain unsupported. Native and JVM output tests must prove the supported tool semantics before those variants pass the wizard gate.
+
+Responsibilities: domain worker owns profile parsing/resolution and printer persistence; native worker owns native policy, its focused device regressions, and the rebuilt binary; UI/transport worker owns settings/wizard integration and printer operations; root owns ViewModel/MainActivity integration, artifact/history compatibility, regression drivers, and all device/Gradle execution.
+
+## Regression progress on October 10
+
+Both debug APKs compile. The APK contains the rebuilt NDK 26 Release library with SHA-256 `6EB31D3CC571A6566EFF180107CF621C0FF9CE8563741BAA033798DB98A42B3D`. The pinned catalogue checker passed with four vendors, no errors, and no warnings. Its four Python regression checks also passed.
+
+The first complete JVM run executed 2,230 tests and failed 16. Reports are preserved in `.audit/v5-reconciliation/jvm-initial`. Missing start/end templates in test fixtures caused early profile rejection. The importer also rejected ordinary single-tool profiles explicitly marked for manual filament changes. Composition now accepts that narrow case and still disables SEMM and prime towers. Automatic SEMM and multi-nozzle SEMM remain rejected. Other fixes preserve the Bambu add-route restriction, saved-printer visibility, and neutral host credential labels. The corrected complete run passed all 2,235 tests.
+
+The first native smoke run passed 12 of 15 tests. Marlin relative extrusion failed native validation because the selected configuration lacked `G92 E0` in the layer hook. The independent-tool test oracle also missed valid leading-dot extrusion words such as `E.05721`. Its parser is corrected without changing the expected tool sets, and deterministic numeric checks are added. Native validation remains fatal. All corrected native checks passed in the focused reruns.
+
+The Pixel backup has SHA-256 `6667ED25F91AE62083B3C141077F3D984463EFBE0C8FB36CA7A3301505CC7089`. After the smoke run, the restoration helper restored and byte-verified all 24 original app files. At that point the app remained stopped. Restoration evidence is in `.audit/v5-reconciliation/restore-native-smoke-1`.
+
+The rebuilt candidate passed all 2,235 JVM tests across 249 suites with no failures, errors, or skips. Reports are preserved in `.audit/v5-reconciliation/jvm-passed`. The corrected focused device run passed all 25 checks, including two- and four-tool Klipper and Marlin extrusion, machine offsets, executable heating, and the CC1 setup gate. All 493 independent methods now have passing aggregate evidence, detailed below. The remaining 11 source tests require upgrade or mock-host fixtures and run through their separate drivers. The source inventory is 504 anchored `@Test` annotations.
+
+Remote refs were refreshed. `origin/main` at `712d9fc4` is already an ancestor of the current branch. Published tag `v4.0.5` points to `32aa8ea6`, whose fixes this merge preserves.
+
+`scripts/run-v5-reconciliation-regression.ps1` runs the focused checks, full independent suite, mock-host driver, both published-APK upgrade drivers, and the full U1 and Bambu E2E batch. Its `finally` step reinstalls the debuggable candidate and restores the full original sandbox. The batch exit-status harness passes with both successful and deliberately failed wizard results.
+
+The tested debug APK reports version 5.0.0, code 500, with SHA-256 `25E127F42403D28ECA5A967DB6DC7A46D3F08E0E8568E7618FA079ACEA5ED063`. The corrected test APK has SHA-256 `24152CCC3D8FFB70691DF03EF97E4E548CB7170C6754493E7300CB2A86C68DB6`; the earlier full-run test APK was `74CBF323A3C61363F8FCA73D72E9E71C57E09CCBDB9D20A250D2E87EAA16D493`. The native source gitlink is `f3c6081993c9b7b7b704b22d0f15ec8019f3c5b3`, imported from the existing v5 worktree after the remote could not provide that commit. Before publishing a source branch, verify that this authored-profile-marker commit is available on the submodule remote. No submodule push is performed by this local reconciliation.
+
+The complete independent device run finished with 486 passes, seven failures, and no skips across all 493 tests. Five baseline tests could not write snapshots to public Downloads. They now use app-owned diagnostic storage, exported before restoration. The other two tests directly supplied the old embedder output to native generic slicing instead of using the production immutable-profile composition path. Their setup now matches production, with all previous output assertions retained and explicit Marlin relative-extrusion/reset checks added. No production code or debug APK changed. The runner restored and byte-verified all 24 original sandbox files in `regression-1/restore`.
+
+The test-only resume requires the identical app APK and the exact seven recorded failures before rerunning all seven alongside the 25 focused native/UI checks. Those results, plus the 486 unaffected passes, must cover all 493 independent methods. The 11 fixture methods and the full E2E batch remain required. This is aggregate evidence, not a claim that the initial unfiltered run passed.
+
+The first corrected rerun passed 31 of 32 checks. Its remaining single-extruder failure exposed a second fixture issue: the start-template JSON double-escaped its newline. The native deserializer and Kotlin then disagreed on the selected template. The fixture now uses a normal JSON newline and explicitly asserts its parsed value. All 32 checks passed in `regression-3/focused`, without production changes or weakened assertions. Together with the 486 unaffected full-run passes, every independent device method now has passing evidence.
+
+The mock-host launcher subsequently timed out installing the APK before any tests started. Both mocks recorded zero requests in that failed attempt. The user approved the first one-time Play Protect submission and later allowed Don't send for the repeated prompt. Both choices were made without changing automatic submission or disabling Play Protect. The full original sandbox was restored and byte-verified after the stalled attempts. The runner now skips an install only when the actual installed base.apk matches the requested APK's complete SHA-256.
+
+Two raw host runs each passed two methods and failed one. A malformed 204 response was corrected, but the same EOF remained before the next upload reached the mock. Preserved full-run request history challenged that initial diagnosis. The mock's HTTP/1.0 server closed a connection that the non-retrying upload client attempted to reuse. Three failing-before/passing-after Python wire checks now cover HTTP/1.1 persistence, bodyless 204 replies, and history across request resets. All three unchanged device host methods passed in `regression-7/host-fixtures`; both hosts have non-empty full-history evidence. Upgrade and full E2E checks remain running.
+
+The clean `assembleRelease` build passed. The preserved local `u1-slicer-orca-v5.0.0.apk` has SHA-256 `31AAA46935EEA1B5621D8CECBEDC70FDF3278361E565FE551AC1216D6FA6A87B`, code 500, name 5.0.0, and a verified signature. Its packed native library is 21,749,112 bytes and matches the tested `6EB31D3CC571A6566EFF180107CF621C0FF9CE8563741BAA033798DB98A42B3D` library. This is a local artifact, not a published release.
+
+All 11 unique fixture methods passed in `regression-9`, including both published-APK upgrade sequences. The full E2E batch is still running. Its screenshots exposed an Android 16KB compatibility warning. The existing C++ runtime has 4KB LOAD alignment, the JNI GNU_RELRO ends on a 4KB rather than 16KB boundary, and the uncompressed APK libraries fail ZIP alignment. The phone currently uses 4KB pages, so these behavioral results do not establish execution on a 16KB kernel.
+
+The correction keeps NDK26 and Clang17, statically links the C++ runtime into the sole JNI library, sets both max/common linker page sizes, and compresses native libraries using AGP's supported extraction path. `validate-native-page-size.py` checks every native library in the actual APK, including runtime dependencies, LOAD alignment, GNU_RELRO, and ZIP placement. Its seven regression checks pass, and it rejects the old candidate. The changed candidate will receive a fresh full regression run, without reusing the old APK's passing aggregate as its result.
+
+The corrected native library is 22,756,280 bytes, SHA-256 `065D6BA376BC3D893131079267FF85B7D2E8DFB983E8D1EC42208088277829A4`, built with Clang 17.0.2 and all 64 declared JNI methods. The obsolete shared-runtime file is removed rather than silently excluded from packaging. Ten checker regressions now pass, including actual manifest extraction rules. Both packaged APKs pass, and the release passes SDK `zipalign -c -P 16` and signature verification. The clean-built debug APK hash is `C161D6987D09E7FFABCA029B4C15794D3271D29DBF6845D3879D8731AB3E2A18`, test APK hash `1D26F048F28C708D8508AF42EBDD2F40800BDF1C90EA2F8D272A5D51993F9608`, and release hash `7B9880B41572C4C369EE9DAC01EE5FD4F89389365C764BA9DAA85A38EBEBAA83`.
+
+The old E2E run passed seven cases, then Android unexpectedly updated the package during case8. Its exit record shows PACKAGE UPDATED rather than a native crash; the restarted process lost the loaded model. The obsolete run was stopped, then all 24 original app files were explicitly restored and byte-verified in `restore-interrupted-e2e-9`. The batch now rejects changed/missing process IDs, with a non-device regression proving it cannot accept stale success logs. A fresh full 493-test run, all 11 fixtures, and all 37 E2E scenarios against the corrected APK are in progress in `regression-16k-1`. JVM tests are also executing without cached results. Neither run is yet claimed complete.
+
+The uncached JVM execution completed all 2,235 tests across 249 suites, with zero failures, errors, or skips. XML and HTML evidence is preserved in `jvm-16k-passed`. All 25 focused checks passed on the corrected native runtime. The actual installed app and test APK SHA-256 values match the preserved inputs. The input manifest states that these hashes were observed after the focused checks during the full device run, rather than claiming they were automatically recorded before installation. Future runs record host inputs before device mutation. The new full device suite, fixtures, E2E batch, and release-native run remain open.
+
+At the next continuation, the host process for `regression-16k-1` was absent. Its log contains 126 passes, no failures, and no instrumentation completion or final summary. Those partial results are not a complete pass. The orphaned test packages were stopped, then all 24 original app files were restored and byte-verified in `restore-session-interruption-16k-1`.
+
+`run-v5-reconciliation-background.ps1` now chains the full debug pipeline and the 18 release-native checks in a hidden background process. An exclusive OS file handle prevents duplicate instances on the approved Pixel and releases automatically if the host process dies. `status.json` records the phase, process ID, terminal outcome, and error. Workflow checks cover debug failure, release failure, success, terminal status, and lock release without ADB. The unchanged APKs are running again under `regression-16k-2`. PID82584 remained alive after the launching tool returned. Final tests and restoration are still pending.
+
+The second corrected-runtime run reproduced a F66 test synchronization race. The test waited only for new object bounds, which publish during Loading. `doAddFile` commits reset baselines before it returns to ModelLoaded. The test now waits for both grown bounds and that completion state, then runs every original pose assertion unchanged. No production code, app APK, or release APK changed. The rebuilt test APK has SHA-256 `6C061307D2F0E5C3F23E24CEAF0D05F689C245535D436422EBCFD25FCC1BACB1`. The failing raw log is preserved. The old run was stopped, and all 24 original app files were explicitly restored and byte-verified in `restore-after-f66-wait-race`.
+
+The wrapper now checks nonzero child exits, preflights every input and the backup hash, and atomically replaces its status JSON. Regression checks cover thrown failures, nonzero exits, success, terminal status, released locks, and active mutual exclusion. Windows PowerShell requires `NullString` for the atomic replacement's null backup path. The old PID82584 parsed the earlier wrapper and did not adopt later edits. Its interruption record states that provenance. The fresh `regression-16k-3` run uses the hardened wrapper and corrected test APK; launch-time script hashes are recorded separately. PID88460 is the current runner. Passing-after device, fixture, E2E, release-native, and final-restoration evidence remain pending.
+
+The fresh `regression-16k-3` independent suite completed all 493 tests with zero failures or skips, instrumentation completion code -1, and ADB exit 0. All 20 F66 methods passed with the original assertions. The three mock-host methods passed with non-empty request histories for both hosts. Six unique v4.0.4 upgrade methods and two unique v4.0.5 methods passed, including reinstall persistence. All 504 device methods therefore have passing evidence against the corrected APKs. The E2E batch is running, and the first real screenshot shows the model UI without the earlier compatibility warning. All 37 E2E scenarios, the 18 release-native checks, and final byte-verified restoration are still required. Do not commit the obsolete staged JNI blob. Explicitly stage the final runtime and intended new helpers only after verification finishes.
+
+## Final local verification on October 11
+
+`regression-16k-3/status.json` records `success=true`, phase `complete`, and completion at `2026-10-11T01:07:34Z`. The uncached JVM run passed 2,235 tests. The fresh device run passed all 504 unique methods. The full E2E batch passed all 37 scenarios, including 27 U1 cases, seven H2D cases, two Smart Paint round trips, and the wizard upload-only case. Its summary contains no failed target-identity or foreign-machine-macro checks.
+
+The actual installed release APK matches SHA-256 `7B9880B41572C4C369EE9DAC01EE5FD4F89389365C764BA9DAA85A38EBEBAA83`. All 18 release-native methods passed with no failures or skips, completion code -1, and ADB exit 0. Their class coverage is 13 generic Klipper, three independent-extruder, one Marlin, and one single-extruder method. The corrected test APK is `6C061307D2F0E5C3F23E24CEAF0D05F689C245535D436422EBCFD25FCC1BACB1`. The final restoration byte-verified all 24 original files, and the app is stopped. All 12 observed driver hashes still match after completion.
+
+Evidence is preserved under `.audit/v5-reconciliation/regression-16k-3`, with JVM reports under `jvm-16k-passed`. Private backups and test artifacts are ignored by Git. The local artifact is not a published release. Physical CC1 compatibility, execution on a 16KB kernel, and remote availability of the authored-profile-marker submodule commit remain unverified.

@@ -160,35 +160,40 @@ class ThreeMfParserTest {
         // Old Bambu format (Dragon Scale, Shashibo): no plate JSONs, but printable items
         // are laid out in a large virtual space with TX/TY outside the 270mm bed.
         // Multi-plate is detected by any printable item having TX > 270 or TY outside [0, 270].
-        val bedSize = 270f
-
-        data class Item(val tx: Float, val ty: Float, val printable: Boolean)
-
-        fun hasVirtualPlateItems(items: List<Item>): Boolean =
-            items.any { item ->
-                if (!item.printable) return@any false
-                item.tx > bedSize || item.ty < 0f || item.ty > bedSize
-            }
+        fun item(tx: Float, ty: Float, printable: Boolean) = ThreeMfParser.BuildItem(
+            objectId = "1",
+            printable = printable,
+            transform = FloatArray(12).also {
+                it[9] = tx
+                it[10] = ty
+            },
+        )
 
         // Dragon Scale: 3 items — plate 1 on bed, plates 2+3 at virtual positions
         val dragonItems = listOf(
-            Item(128f, 128f, true),   // plate 1 — on bed
-            Item(435f, 128f, true),   // plate 2 — TX > 270
-            Item(128f, -179f, true)   // plate 3 — TY < 0
+            item(128f, 128f, true),   // plate 1 — on bed
+            item(435f, 128f, true),   // plate 2 — TX > 270
+            item(128f, -179f, true)   // plate 3 — TY < 0
         )
-        assertTrue("Dragon Scale should be multi-plate", hasVirtualPlateItems(dragonItems))
+        assertTrue(
+            "Dragon Scale should be multi-plate",
+            ThreeMfParser.hasVirtualPlateItems(dragonItems),
+        )
 
         // Benchy: 2 items — one printable=0 (reference), one printable=1 on bed
         val benchyItems = listOf(
-            Item(213f, 194f, false),  // printable=0 reference — ignored
-            Item(135f, 119f, true)    // printable=1 — on bed
+            item(213f, 194f, false),  // printable=0 reference — ignored
+            item(135f, 119f, true)    // printable=1 — on bed
         )
-        assertFalse("Benchy should NOT be multi-plate", hasVirtualPlateItems(benchyItems))
+        assertFalse(
+            "Benchy should NOT be multi-plate",
+            ThreeMfParser.hasVirtualPlateItems(benchyItems, sourceBedSize = 270f),
+        )
 
-        // Single-plate dual-color: 1 item on bed
-        val dualColorItems = listOf(Item(135f, 135f, true))
-        assertFalse("Single-plate dual-colour should NOT be multi-plate",
-            hasVirtualPlateItems(dualColorItems))
+        // The boundary remains the source file's legacy envelope, independent of target bed.
+        assertFalse(ThreeMfParser.hasVirtualPlateItems(listOf(item(270f, 270f, true))))
+        assertTrue(ThreeMfParser.hasVirtualPlateItems(listOf(item(270.01f, 135f, true)), 270f))
+        assertTrue(ThreeMfParser.hasVirtualPlateItems(listOf(item(135f, -0.01f, true)), 270f))
     }
 
     @Test

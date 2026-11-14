@@ -134,6 +134,29 @@ class NativeSplitOrientTest {
         )
     }
 
+    // ---- deleteObject ---------------------------------------------------------
+
+    @Test
+    fun deleteObject_removesExactlyOneAndShiftsFollowingIndex() {
+        assertTrue(lib.loadModel(copyAsset("skywing-seawing-silkwing.3mf")))
+        val before = lib.nativeGetObjectCount()
+        assertTrue("fixture must contain multiple objects", before > 1)
+        val followingName = lib.nativeGetObjectName(1)
+
+        assertTrue(lib.nativeDeleteObject(0))
+
+        assertEquals(before - 1, lib.nativeGetObjectCount())
+        assertEquals("following object must become index 0", followingName, lib.nativeGetObjectName(0))
+    }
+
+    @Test
+    fun deleteObject_refusesToDeleteFinalObject() {
+        assertTrue(lib.loadModel(copyAsset("3DBenchy.stl")))
+
+        assertFalse(lib.nativeDeleteObject(0))
+        assertEquals(1, lib.nativeGetObjectCount())
+    }
+
     // ---- Auto-orient ----------------------------------------------------------
 
     @Test

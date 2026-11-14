@@ -2,15 +2,22 @@ package com.u1.slicer.bambu
 
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.slice.SlicerTarget
+import com.u1.slicer.slice.GenericMachineProfile
 
 fun resolveTargetedSliceConfig(
     target: SlicerTarget,
     base: SliceConfig,
+    machineProfile: GenericMachineProfile? = null,
 ): SliceConfig {
     require(target.supportsLocalSlicing) {
         "Local slicing is not yet supported for $target"
     }
-    return bambuMachineProfileFor(target)?.let { profile ->
+    if (target.family == com.u1.slicer.slice.SliceTargetFamily.GENERIC) {
+        val profile = if (target == SlicerTarget.ElegooCentauriCarbon) GenericMachineProfile.centauriCarbon()
+            else requireNotNull(machineProfile) { "Choose a machine profile before slicing" }
+        return profile.applyTo(base, target)
+    }
+    return bambuMachineProfileFor(target, base.nozzleDiameter)?.let { profile ->
         val towerWidth = if (profile.nozzlePrintableAreas.size > 1) 60f else 35f
         val commonNozzleBounds = profile.nozzlePrintableAreas.reduce { common, bounds ->
             BambuPrintBounds(
@@ -85,4 +92,7 @@ private val SlicerTarget.nativeMachineTarget: String
         SlicerTarget.BambuA1 -> "BAMBU_A1"
         SlicerTarget.BambuA1Mini -> "BAMBU_A1_MINI"
         SlicerTarget.BambuH2D -> "BAMBU_H2D"
+        SlicerTarget.ElegooCentauriCarbon -> "ELEGOO_CC1"
+        SlicerTarget.GenericKlipper -> "GENERIC_KLIPPER"
+        SlicerTarget.GenericMarlin -> "GENERIC_MARLIN"
     }

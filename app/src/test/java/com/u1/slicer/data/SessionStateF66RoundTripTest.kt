@@ -106,6 +106,36 @@ class SessionStateF66RoundTripTest {
     }
 
     @Test
+    fun roundTrip_modelOperations_preservesInterleavedDeleteHistory() {
+        val operations = listOf(
+            ModelOperation.SplitObject(3),
+            ModelOperation.DuplicateObject(3),
+            ModelOperation.DeleteObject(1),
+            ModelOperation.SplitVolume(2, 0),
+        )
+        val restored = SessionState.fromJson(SessionState.toJson(
+            baseSession().copy(modelOperations = operations)
+        ))!!
+
+        assertEquals(operations, restored.modelOperations)
+    }
+
+    @Test
+    fun roundTrip_f99DestinationsAndF101Recipe_preserved() {
+        val src = baseSession().copy(
+            adaptiveLayerHeight = AdaptiveLayerHeightState(
+                AdaptiveLayerHeightState.Mode.ADAPTIVE,
+                AdaptiveLayerHeightState.Preset.DETAIL,
+            ),
+            canonicalColourRemaps = listOf(
+                CanonicalColourRemap(0, CanonicalColourDestination.PhysicalSlot(2)),
+                CanonicalColourRemap(3, CanonicalColourDestination.Mix(42L)),
+            ),
+        )
+        assertEquals(src, SessionState.fromJson(SessionState.toJson(src)))
+    }
+
+    @Test
     fun roundTrip_fullFatSession_allFieldsPreserved() {
         val src = baseSession(
             selectedObjectIndex = 5,

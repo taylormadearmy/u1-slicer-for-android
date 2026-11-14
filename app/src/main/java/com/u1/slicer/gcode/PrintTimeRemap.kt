@@ -41,7 +41,7 @@ fun gcodeToolSpaceToDb(value: GcodeToolSpace): String = value.name
  * mapping for the export boundary (Send / Save / Share / Jobs share).
  *
  * Returned list: index = canonical fileIndex, value = physical slot
- * (0..3 for U1). [applyPrintTimeRemap] consumes this list directly.
+ * within the active profile's physical range. [applyPrintTimeRemap] consumes this list directly.
  *
  * Returns `null` when there's no canonical context (legacy file, STL
  * with no canonical list yet, etc.) — caller treats null as "identity
@@ -49,7 +49,7 @@ fun gcodeToolSpaceToDb(value: GcodeToolSpace): String = value.name
  *
  * The five input cases:
  *   1. Full canonical mapping confirmed by user (size == canonicalSize)
- *      → returned as-is (clamped to 0..3 defensively).
+ *      → returned as-is after clamping to the active physical range.
  *   2. Plate-narrowed mapping with explicit fileIndex keys (Phase 2
  *      post-round-2-review fix) → built into a sparse map and expanded
  *      to canonical width with mod-4 fallback for unmapped canonical
@@ -59,7 +59,7 @@ fun gcodeToolSpaceToDb(value: GcodeToolSpace): String = value.name
  *      and known-imperfect for multi-plate files where the plate-
  *      narrowed mapping doesn't start at canonical fileIndex 0.
  *   4. Single-colour with selected slot → `[selectedExtruder]` clamped
- *      to U1's 0..3 range.
+ *      to the active physical range.
  *   5. No canonical context → `null` (identity copy).
  *
  * Edge case: multi-colour file loaded but user hasn't confirmed a
@@ -79,7 +79,7 @@ fun gcodeToolSpaceToDb(value: GcodeToolSpace): String = value.name
  *   correspond to canonical fileIndices 0..size-1. Reviewer 3's P1
  *   "resolver invents wrong slots" finding requires this to avoid
  *   silently misclassifying T-indices on multi-plate sparse files.
- * @param selectedExtruder Physical slot 0..3 to use for single-colour
+ * @param selectedExtruder Physical slot to use for single-colour
  *   files where [confirmedMapping] is null.
  *
  * Spec: docs/superpowers/specs/2026-04-28-canonical-export-mapping-helper-design.md
@@ -89,13 +89,15 @@ fun resolveCanonicalExportMapping(
     confirmedMapping: List<Int>?,
     selectedExtruder: Int,
     confirmedMappingFileIndices: List<Int>? = null,
+    slotCount: Int = 4,
 ): List<Int>? {
+    val slots = slotCount.coerceIn(1, 4)
     if (canonicalSize == 0) {
         // B106: non-canonical single-colour (raw STL). Still apply the user's
         // physical slot so T0 in the sliced G-code is rewritten to the selected
         // extruder at send time. Without this, STL sliced with E3 selected stays
         // as T0 and the wrong extruder is used by the printer.
-        val slot = selectedExtruder.coerceIn(0, 3)
+        val slot = selectedExtruder.coerceIn(0, slots - 1)
         return if (slot != 0) listOf(slot) else null
     }
 
@@ -103,7 +105,7 @@ fun resolveCanonicalExportMapping(
     // confirmedMapping entry to the U1's physical-slot range. Defends
     // against malformed mapping entering state/DB and producing
     // out-of-range T<n> on the printer-bound output.
-    fun Int.clamp(): Int = this.coerceIn(0, 3)
+    fun Int.clamp(): Int = this.coerceIn(0, slots - 1)
 
     if (!confirmedMapping.isNullOrEmpty()) {
         // Phase 2 (post-round-2-review, Reviewer 3 P1) — when the
@@ -119,14 +121,14 @@ fun resolveCanonicalExportMapping(
                     }
                 }
             return List(canonicalSize) { i ->
-                byFileIdx[i] ?: (i % 4)
+                byFileIdx[i] ?: (i % slots)
             }
         }
         return if (confirmedMapping.size >= canonicalSize) {
             confirmedMapping.take(canonicalSize).map { it.clamp() }
         } else {
             List(canonicalSize) { i ->
-                if (i < confirmedMapping.size) confirmedMapping[i].clamp() else (i % 4)
+                if (i < confirmedMapping.size) confirmedMapping[i].clamp() else (i % slots)
             }
         }
     }
@@ -135,7 +137,7 @@ fun resolveCanonicalExportMapping(
         return listOf(selectedExtruder.clamp())
     }
 
-    return List(canonicalSize) { it % 4 }
+    return List(canonicalSize) { it % slots }
 }
 
 fun resolveExportMappingForToolSpace(
@@ -144,6 +146,7 @@ fun resolveExportMappingForToolSpace(
     confirmedMapping: List<Int>?,
     selectedExtruder: Int,
     confirmedMappingFileIndices: List<Int>? = null,
+    slotCount: Int = 4,
 ): List<Int>? {
     if (toolSpace == GcodeToolSpace.PHYSICAL) return null
     return resolveCanonicalExportMapping(
@@ -151,6 +154,7 @@ fun resolveExportMappingForToolSpace(
         confirmedMapping = confirmedMapping,
         selectedExtruder = selectedExtruder,
         confirmedMappingFileIndices = confirmedMappingFileIndices,
+        slotCount = slotCount,
     )
 }
 

@@ -39,8 +39,8 @@ data class GcodeLayer(
 
 data class ParsedGcode(
     val layers: List<GcodeLayer>,
-    val bedWidth: Float = 270f,
-    val bedHeight: Float = 270f,
+    val bedWidth: Float,
+    val bedHeight: Float,
     val perExtruderFilamentMm: List<Float> = emptyList(),
     /** Total filament extruded inside prime/wipe tower regions (all extruders, mm). */
     val wipeTowerFilamentMm: Float = 0f,

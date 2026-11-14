@@ -81,4 +81,10 @@ class SelectionStateMachineTest {
         val s = ObjectSelection().withObject(7).onSplit(removedIdx = 5, addedCount = 2)
         assertEquals(8, s.objectIndex)
     }
+
+    @Test
+    fun onDelete_clearsDeletedSelectionAndRemapsLaterSelection() {
+        assertNull(ObjectSelection().withObject(2).onDelete(2).objectIndex)
+        assertEquals(2, ObjectSelection().withObject(3).onDelete(2).objectIndex)
+    }
 }

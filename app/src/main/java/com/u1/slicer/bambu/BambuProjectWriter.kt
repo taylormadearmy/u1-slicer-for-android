@@ -26,11 +26,12 @@ object BambuProjectWriter {
         sourceFilamentIndices: List<Int> = emptyList(),
         target: SlicerTarget = SlicerTarget.BambuA1Mini,
         filamentNozzleMap: List<Int> = emptyList(),
+        nozzleDiameter: Float = 0.4f,
     ) {
         require(target.family == com.u1.slicer.slice.SliceTargetFamily.BAMBU && target.supportsLocalSlicing) {
             "Bambu project packaging is not supported for $target"
         }
-        val machine = BAMBU_MACHINE_PROFILES.getValue(target)
+        val machine = requireNotNull(bambuMachineProfileFor(target, nozzleDiameter))
         val normalizedModelName = normalizeModelName(modelName)
         val normalizedFilamentColours = normalizeFilamentColours(filamentColours)
         val normalizedFilamentTypes = normalizeFilamentTypes(filamentTypes, normalizedFilamentColours.size)
@@ -183,7 +184,7 @@ object BambuProjectWriter {
         put("model_name", modelName)
         put("printer_model", machine.printerModel)
         put("printer_model_id", machine.printerModelId)
-        put("printer_variant", "0.4")
+        put("printer_variant", machine.nozzleDiameters.first().toString())
         put("printer_settings_id", machine.printerSettingsId)
         put(
             "printable_area",

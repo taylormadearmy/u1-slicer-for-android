@@ -1,0 +1,313 @@
+{
+    "adaptive_bed_mesh_margin": "0",
+    "auxiliary_fan": "1",
+    "bbl_use_printhost": "0",
+    "bed_custom_model": "",
+    "bed_custom_texture": "",
+    "bed_exclude_area": [
+        "0x0"
+    ],
+    "bed_mesh_max": "267,267",
+    "bed_mesh_min": "3,3",
+    "bed_mesh_probe_distance": "50,50",
+    "before_layer_change_gcode": ";BEFORE_LAYER_CHANGE\n;[layer_z]\nG92 E0\nTIMELAPSE_TAKE_FRAME",
+    "best_object_pos": "0.5,0.5",
+    "change_extrusion_role_gcode": "",
+    "change_filament_gcode": "; Change Tool[previous_extruder] -> Tool[next_extruder] (layer [layer_num])\n{\nlocal max_speed_toolchange = 350.0;\nlocal wait_for_extruder_temp = true;\nposition[2] = position[2] + 2.0;\n\nlocal speed_toolchange = max_speed_toolchange;\nif travel_speed < max_speed_toolchange then\n      speed_toolchange = travel_speed;\nendif\n\"G91\nG0 Z1.5 F600\nG90\n\";\n\"G1 F\" + (speed_toolchange * 60) + \"\n\";\nif wait_for_extruder_temp and not((layer_num < 0) and (next_extruder == initial_tool)) then\n      \"\n\";\n      \"; \" + layer_num + \"\n\";\n      if layer_num == 0 then\n            \"M109 S\" + first_layer_temperature[next_extruder] + \" T\" + next_extruder + \"\n\";\n      else\n            \"M109 S\" + temperature[next_extruder] + \" T\" + next_extruder + \"\n\";\n      endif\nendif\n\"T\" + next_extruder + \"\n\";\n}\nM400\n{if filament_type[next_extruder] == \"PVA\"}\nSET_VELOCITY_LIMIT ACCEL=3000\n{else}\n{endif}",
+    "cooling_tube_length": "5",
+    "cooling_tube_retraction": "91.5",
+    "default_bed_type": "",
+    "default_filament_profile": [
+        "Snapmaker PLA"
+    ],
+    "default_print_profile": "0.20mm Standard @Snapmaker",
+    "deretraction_speed": [
+        "35",
+        "35",
+        "35",
+        "35"
+    ],
+    "disable_m73": "0",
+    "emit_machine_limits_to_gcode": "1",
+    "enable_filament_ramming": "0",
+    "enable_long_retraction_when_cut": "0",
+    "extra_loading_move": "-2",
+    "extruder_clearance_height_to_lid": "140",
+    "extruder_clearance_height_to_rod": "27.5",
+    "extruder_clearance_radius": "72.5",
+    "extruder_colour": [
+        "#FCE94F",
+        "#FCE94F",
+        "#FCE94F",
+        "#FCE94F"
+    ],
+    "extruder_offset": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+    ],
+    "fan_kickstart": "0",
+    "fan_speedup_overhangs": "1",
+    "fan_speedup_time": "0",
+    "from": "User",
+    "gcode_flavor": "klipper",
+    "head_wrap_detect_zone": [],
+    "high_current_on_filament_swap": "0",
+    "host_type": "octoprint",
+    "inherits": "",
+    "instantiation": "true",
+    "is_custom_defined": "0",
+    "printer_technology": "FFF",
+    "type": "machine",
+    "layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]",
+    "long_retractions_when_cut": [
+        "0",
+        "0",
+        "0",
+        "0"
+    ],
+    "machine_end_gcode": " PRINT_END\nTIMELAPSE_STOP",
+    "machine_load_filament_time": "0",
+    "machine_max_acceleration_e": [
+        "5000",
+        "5000"
+    ],
+    "machine_max_acceleration_extruding": [
+        "20000",
+        "20000"
+    ],
+    "machine_max_acceleration_retracting": [
+        "5000",
+        "5000"
+    ],
+    "machine_max_acceleration_travel": [
+        "20000",
+        "20000"
+    ],
+    "machine_max_acceleration_x": [
+        "20000",
+        "20000"
+    ],
+    "machine_max_acceleration_y": [
+        "20000",
+        "20000"
+    ],
+    "machine_max_acceleration_z": [
+        "500",
+        "200"
+    ],
+    "machine_max_jerk_e": [
+        "2.5",
+        "2.5"
+    ],
+    "machine_max_jerk_x": [
+        "9",
+        "9"
+    ],
+    "machine_max_jerk_y": [
+        "9",
+        "9"
+    ],
+    "machine_max_jerk_z": [
+        "3",
+        "0.4"
+    ],
+    "machine_max_junction_deviation": [
+        "0",
+        "0"
+    ],
+    "machine_max_speed_e": [
+        "30",
+        "25"
+    ],
+    "machine_max_speed_x": [
+        "500",
+        "200"
+    ],
+    "machine_max_speed_y": [
+        "500",
+        "200"
+    ],
+    "machine_max_speed_z": [
+        "20",
+        "12"
+    ],
+    "machine_min_extruding_rate": [
+        "0",
+        "0"
+    ],
+    "machine_min_travel_rate": [
+        "0",
+        "0"
+    ],
+    "machine_pause_gcode": "M600",
+    "machine_start_gcode": ";===== machine: PR2 ========================\n;===== date: 20250717 =====================\nPRINT_START\n;===== 预热热床和第一个挤出头 =================\nM140 S{bed_temperature_initial_layer_single}\nM104 T{initial_extruder} S140\n\n;===== 粗回零 =================\nG28 X Y\nT{initial_extruder}\nM109 T{initial_extruder} S140\nG28 Z\nG90\nG0 Z10 F10000\nMOVE_TO_DISCARD_FILAMENT_POSITION\nM109 S{nozzle_temperature[initial_extruder] - 50}\nROUGHLY_CLEAN_NOZZLE_WITH_DISCARD\nM104 S{nozzle_temperature[initial_extruder] - 90}\nG4 P2000\nROUGHLY_CLEAN_NOZZLE\nMOVE_TO_XY_IDLE_POSITION_EXTRUDER\n\n;===== 检测钢板 =================\nDETECT_BED_PLATE\nMOVE_TO_XY_IDLE_POSITION_EXTRUDER\n\n;===== 自动进料  ======================\n{if (is_extruder_used[0])}\nSM_PRINT_AUTO_FEED EXTRUDER=0\n{endif}\n{if (is_extruder_used[1])}\nSM_PRINT_AUTO_FEED EXTRUDER=1\n{endif}\n{if (is_extruder_used[2])}\nSM_PRINT_AUTO_FEED EXTRUDER=2\n{endif}\n{if (is_extruder_used[3])}\nSM_PRINT_AUTO_FEED EXTRUDER=3\n{endif}\n\n;===== 挤出流量  ======================\n{if (is_extruder_used[0])}\nSM_PRINT_FLOW_CALIBRATE INDEX=0 TARGET_TEMP={nozzle_temperature[0]}\n{endif}\n{if (is_extruder_used[1])}\nSM_PRINT_FLOW_CALIBRATE INDEX=1 TARGET_TEMP={nozzle_temperature[1]}\n{endif}\n{if (is_extruder_used[2])}\nSM_PRINT_FLOW_CALIBRATE INDEX=2 TARGET_TEMP={nozzle_temperature[2]}\n{endif}\n{if (is_extruder_used[3])}\nSM_PRINT_FLOW_CALIBRATE INDEX=3 TARGET_TEMP={nozzle_temperature[3]}\n{endif}\n\n;===== 取出第一个挤出头 =================\nT{initial_extruder}\nSET_VELOCITY_LIMIT ACCEL=10000\nM204 S10000\n\n;===== 深度清洁喷嘴 =================\nG90\nG0 Z10 F10000\nROUGHLY_CLEAN_NOZZLE_WITH_DISCARD\nG0 Z5 F10000\nFINELY_CLEAN_NOZZLE_STAGE_1\nG0 Z5 F10000\nROUGHLY_CLEAN_NOZZLE\nG0 Z5 F10000\nFINELY_CLEAN_NOZZLE_STAGE_2\nM83\n\n;===== 第一个挤出头降温 =================\nM109 S{nozzle_temperature[initial_extruder] - 90}\nM190 S{bed_temperature_initial_layer_single}\nM106 S0\nG90\nG0 Z5 F10000\nMOVE_TO_DISCARD_FILAMENT_POSITION\nINNER_CUTOFF_BASE_DISCARD\nINNER_ROUGHLY_CLEAN_NOZZLE_BASE_DISCARD\nINNER_ROUGHLY_CLEAN_NOZZLE_BASE_DISCARD\nMOVE_TO_XY_IDLE_POSITION_EXTRUDER\n\n;===== 精回零 =================\nG28 Z\n;===== 热床调平 =================\n; Always pass `ADAPTIVE_MARGIN=0` because Orca has already handled `adaptive_bed_mesh_margin` internally\n; Make sure to set ADAPTIVE to 0 otherwise Klipper will use it's own adaptive bed mesh logic\nBED_MESH_CALIBRATE mesh_min={adaptive_bed_mesh_min[0]},{adaptive_bed_mesh_min[1]} mesh_max={adaptive_bed_mesh_max[0]},{adaptive_bed_mesh_max[1]} ALGORITHM=[bed_mesh_algo] PROBE_COUNT={bed_mesh_probe_count[0]},{bed_mesh_probe_count[1]} ADAPTIVE=0 ADAPTIVE_MARGIN=0\n\n;BED_MESH_CALIBRATE PROBE_COUNT=7,7\n\n\n;======== 预挤出/划线 ================\n{if (is_extruder_used[0]) and 0 != initial_extruder}\nSM_PRINT_START_LINE INDEX=0 TARGET_TEMP={nozzle_temperature_initial_layer[0]}\nM83\nM104 S{nozzle_temperature[0] - 90}\n{endif}\n\n{if (is_extruder_used[1]) and 1 != initial_extruder}\nSM_PRINT_START_LINE INDEX=1 TARGET_TEMP={nozzle_temperature_initial_layer[1]}\nM83\nM104 S{nozzle_temperature[1] - 90}\n{endif}\n\n{if (is_extruder_used[2]) and 2 != initial_extruder}\nSM_PRINT_START_LINE INDEX=2 TARGET_TEMP={nozzle_temperature_initial_layer[2]}\nM83\nM104 S{nozzle_temperature[2] - 90}\n{endif}\n\n{if (is_extruder_used[3]) and 3 != initial_extruder}\nSM_PRINT_START_LINE INDEX=3 TARGET_TEMP={nozzle_temperature_initial_layer[3]}\nM83\nM104 S{nozzle_temperature[3] - 90}\n{endif}\n\n{if (is_extruder_used[initial_extruder])}\nSM_PRINT_START_LINE INDEX={initial_extruder} TARGET_TEMP={nozzle_temperature_initial_layer[initial_extruder]}\n{endif}\nM109 S{nozzle_temperature_initial_layer[initial_extruder]} T{initial_extruder}\nM106 S0\n\nTIMELAPSE_START",
+    "machine_tool_change_time": "5",
+    "machine_unload_filament_time": "0",
+    "manual_filament_change": "0",
+    "max_layer_height": [
+        "0.32",
+        "0.32",
+        "0.32",
+        "0.32"
+    ],
+    "max_resonance_avoidance_speed": "120",
+    "min_layer_height": [
+        "0.08",
+        "0.08",
+        "0.08",
+        "0.08"
+    ],
+    "min_resonance_avoidance_speed": "70",
+    "name": "Snapmaker U1 (0.4 nozzle) - multiplate",
+    "nozzle_diameter": [
+        "0.4",
+        "0.4",
+        "0.4",
+        "0.4"
+    ],
+    "nozzle_height": "2.5",
+    "nozzle_hrc": "0",
+    "nozzle_type": "hardened_steel",
+    "nozzle_volume": "0",
+    "parking_pos_retraction": "92",
+    "pellet_modded_printer": "0",
+    "preferred_orientation": "0",
+    "printable_area": [
+        "-0.5x-1",
+        "270.5x-1",
+        "270.5x271",
+        "-0.5x271"
+    ],
+    "printable_height": "270",
+    "printer_model": "Snapmaker U1",
+    "printer_notes": "1、修改幅面坐标，原点坐标\n2、修改换头时间，5S",
+    "printer_settings_id": "Snapmaker U1 (0.4 nozzle) - multiplate",
+    "printer_structure": "undefine",
+    "printer_technology": "FFF",
+    "printer_variant": "0.4",
+    "printhost_authorization_type": "key",
+    "printhost_ssl_ignore_revoke": "0",
+    "printing_by_object_gcode": "",
+    "purge_in_prime_tower": "0",
+    "resonance_avoidance": "0",
+    "retract_before_wipe": [
+        "0%",
+        "0%",
+        "0%",
+        "0%"
+    ],
+    "retract_length_toolchange": [
+        "10",
+        "10",
+        "10",
+        "10"
+    ],
+    "retract_lift_above": [
+        "0",
+        "0",
+        "0",
+        "0"
+    ],
+    "retract_lift_below": [
+        "269",
+        "269",
+        "269",
+        "269"
+    ],
+    "retract_lift_enforce": [
+        "All Surfaces",
+        "All Surfaces",
+        "All Surfaces",
+        "All Surfaces"
+    ],
+    "retract_restart_extra": [
+        "0",
+        "0",
+        "0",
+        "0"
+    ],
+    "retract_restart_extra_toolchange": [
+        "0",
+        "0",
+        "0",
+        "0"
+    ],
+    "retract_when_changing_layer": [
+        "1",
+        "1",
+        "1",
+        "1"
+    ],
+    "retraction_distances_when_cut": [
+        "18",
+        "18",
+        "18",
+        "18"
+    ],
+    "retraction_length": [
+        "0.8",
+        "0.8",
+        "0.8",
+        "0.8"
+    ],
+    "retraction_minimum_travel": [
+        "1",
+        "1",
+        "1",
+        "1"
+    ],
+    "retraction_speed": [
+        "40",
+        "40",
+        "40",
+        "40"
+    ],
+    "scan_first_layer": "0",
+    "silent_mode": "0",
+    "single_extruder_multi_material": "0",
+    "support_air_filtration": "1",
+    "support_chamber_temp_control": "1",
+    "support_multi_bed_types": "1",
+    "template_custom_gcode": "",
+    "thumbnails": "48x48/PNG, 300x300/PNG",
+    "thumbnails_format": "PNG",
+    "time_cost": "0",
+    "time_lapse_gcode": "",
+    "travel_slope": [
+        "3",
+        "3",
+        "3",
+        "3"
+    ],
+    "upward_compatible_machine": [],
+    "use_firmware_retraction": "0",
+    "use_relative_e_distances": "1",
+    "version": "2.3.1.10",
+    "wipe": [
+        "1",
+        "1",
+        "1",
+        "1"
+    ],
+    "wipe_distance": [
+        "2",
+        "2",
+        "2",
+        "2"
+    ],
+    "z_hop": [
+        "0.4",
+        "0.4",
+        "0.4",
+        "0.4"
+    ],
+    "z_hop_types": [
+        "Auto Lift",
+        "Auto Lift",
+        "Auto Lift",
+        "Auto Lift"
+    ],
+    "z_offset": "0"
+}

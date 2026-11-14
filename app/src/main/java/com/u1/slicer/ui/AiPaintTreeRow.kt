@@ -47,7 +47,7 @@ fun AiPaintTreeRow(
     canonicalCount: Int = numPhysical,
     activeMixes: List<MixedFilamentRow> = emptyList(),
     physicalColours: List<Color> = emptyList(),
-    onCreateMix: () -> Unit = {},
+    onCreateMix: (() -> Unit)? = null,
     onEditMix: (MixedFilamentRow) -> Unit = {},
 ) {
     // fix #2 (M4): mix-slot ids start above the larger of the physical extruder count and the
@@ -183,15 +183,16 @@ fun AiPaintTreeRow(
                     }
                 }
             }
-            // "+" create-mix chip.
-            Box(
-                Modifier
-                    .size(20.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
-                    .clickable { onCreateMix() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("+", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            onCreateMix?.let { onCreateMix ->
+                Box(
+                    Modifier
+                        .size(20.dp)
+                        .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                        .clickable { onCreateMix() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("+", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
     }

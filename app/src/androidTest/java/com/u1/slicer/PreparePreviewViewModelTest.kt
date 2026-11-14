@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
@@ -27,6 +28,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.zip.ZipFile
@@ -36,6 +38,7 @@ import java.util.zip.ZipFile
 
 
 class PreparePreviewViewModelTest {
+    @get:Rule val u1Printer = OfflineU1PrinterRule()
 
     private val targetContext get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val assetContext get() = InstrumentationRegistry.getInstrumentation().context
@@ -1044,17 +1047,45 @@ class PreparePreviewViewModelTest {
                 colors.size > 1 && colors[1].isNotBlank()
             )
 
-            // Get native preview mesh and recolor using the REAL mapping + colors
-            val preview = NativeLibrary().getPreparePreviewMesh()
-            assertNotNull("Native preview mesh should be available for H2C benchy", preview)
-            preview!!
-            val mesh = preview.toMeshData()
-            assertNotNull("MeshData conversion should succeed", mesh)
-            mesh!!
+            // Build the same native render scene that the Prepare UI consumes.
+            // The legacy one-shot API copies every triangle into Java arrays and
+            // then toMeshData allocates another 120-byte-per-triangle buffer; for
+            // this painted Benchy that temporary copy exceeds the emulator's
+            // large-heap budget. Scene buffers are native-backed and recolor()
+            // writes the production per-vertex color buffer directly.
+            val native = NativeLibrary()
+            val sceneHandle = native.buildPrepareRenderScene()
+            assertTrue("Native render scene should be available for H2C benchy", sceneHandle != 0L)
+            var mesh: com.u1.slicer.viewer.MeshData? = null
+            try {
+                val sceneDeadline = System.currentTimeMillis() + 120_000L
+                while (!native.nativeIsPrepareRenderSceneComplete(sceneHandle) &&
+                    System.currentTimeMillis() < sceneDeadline) {
+                    Thread.sleep(10)
+                }
+                assertTrue("H2C native render scene should complete", native.nativeIsPrepareRenderSceneComplete(sceneHandle))
+                val batches = (0 until native.nativeGetPrepareRenderSceneBatchCount(sceneHandle)).map { batchIndex ->
+                    val geometry = native.nativeGetPrepareRenderSceneGeometryBuffer(sceneHandle, batchIndex)
+                    val materialIndices = native.nativeGetPrepareRenderSceneMaterialBuffer(sceneHandle, batchIndex)
+                    assertNotNull("H2C render batch $batchIndex should expose geometry", geometry)
+                    assertNotNull("H2C render batch $batchIndex should expose material indices", materialIndices)
+                    com.u1.slicer.viewer.NativeRenderBatch(
+                        geometry!!.order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer(),
+                        materialIndices,
+                        native.nativeGetPrepareRenderSceneTriangleCount(sceneHandle, batchIndex),
+                    )
+                }
+                assertTrue("H2C render scene should contain batches", batches.isNotEmpty())
+                mesh = com.u1.slicer.viewer.MeshData(
+                    batches = batches,
+                    minX = 0f, minY = 0f, minZ = 0f,
+                    maxX = 0f, maxY = 0f, maxZ = 0f,
+                    sceneHandle = sceneHandle,
+                )
 
-            // Phase 2 §4 — preview palette is canonical-driven (file-wide,
-            // indexed by raw fileIndex). Mesh extruderIndices store fileIndices
-            // directly, so palette[fileIndex] addresses the right colour.
+                // Phase 2 §4 — preview palette is canonical-driven (file-wide,
+                // indexed by raw fileIndex). Native material indices store the
+                // fileIndex directly, so palette[fileIndex] addresses its colour.
             val canonical = viewModel.getCanonicalFilamentList()
             assertNotNull("H2C benchy must have canonical filament list", canonical)
             canonical!!
@@ -1066,7 +1097,7 @@ class PreparePreviewViewModelTest {
             val palette = canonical.filaments.map {
                 SlicerViewModel.staticHexColorToFloatArray(it.color)
             }
-            mesh.recolor(palette)
+            mesh!!.recolor(palette)
 
             // Find green's fileIndex via canonical (not hardcoded). Green is the
             // canonical entry whose hex colour has G as the dominant component —
@@ -1087,29 +1118,36 @@ class PreparePreviewViewModelTest {
             val expectedGreen = SlicerViewModel.staticHexColorToFloatArray(
                 canonical.filaments[greenFileIndex].color
             )
-            val indices = mesh.extruderIndices!!
             var greenFound = false
-            for (tri in indices.indices) {
-                val idx = indices[tri].toInt() and 0xFF
-                if (idx == greenFileIndex) {
-                    val rOffset = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX + 6
-                    val r = mesh.vertices.get(rOffset)
-                    val g = mesh.vertices.get(rOffset + 1)
-                    val b = mesh.vertices.get(rOffset + 2)
-                    if (kotlin.math.abs(r - expectedGreen[0]) < 0.05f &&
-                        kotlin.math.abs(g - expectedGreen[1]) < 0.05f &&
-                        kotlin.math.abs(b - expectedGreen[2]) < 0.05f) {
-                        greenFound = true
-                        break
+                for (batch in batches) {
+                    val indices = batch.materialIndices!!.duplicate().apply { position(0) }
+                    val colors = batch.colorBuffer!!.duplicate().apply { position(0) }
+                    for (tri in 0 until batch.triangleCount) {
+                        val idx = indices.get().toInt() and 0xFF
+                        if (idx == greenFileIndex) {
+                            val colorOffset = tri * 3 * 4
+                            val r = colors.get(colorOffset)
+                            val g = colors.get(colorOffset + 1)
+                            val b = colors.get(colorOffset + 2)
+                            if (kotlin.math.abs(r - expectedGreen[0]) < 0.05f &&
+                                kotlin.math.abs(g - expectedGreen[1]) < 0.05f &&
+                                kotlin.math.abs(b - expectedGreen[2]) < 0.05f) {
+                                greenFound = true
+                                break
+                            }
+                        }
                     }
+                    if (greenFound) break
                 }
-            }
             assertTrue(
                 "H2C benchy Prepare preview must contain canonical green " +
                     "(${canonical.filaments[greenFileIndex].color}) at fileIndex " +
                     "$greenFileIndex triangles after canonical recolor",
                 greenFound
             )
+
+            // Drop the large native render scene before slicing.
+            mesh!!.release(native)
 
             // Now slice and verify T1 > 0
             viewModel.startSlicing()
@@ -1133,6 +1171,9 @@ class PreparePreviewViewModelTest {
                     "toolCounts=$toolCounts",
                 toolCounts.size >= 2
             )
+            } finally {
+                mesh?.release(native) ?: native.nativeReleasePrepareRenderScene(sceneHandle)
+            }
         } finally {
             viewModel.clearModel()
             modelFile.delete()
@@ -1266,7 +1307,8 @@ class PreparePreviewViewModelTest {
             )
 
             viewModel.startSlicing()
-            waitUntil("Shashibo plate 5 slice complete", timeoutMs = 300_000L) {
+            // ARM64 translation on x86_64 emulators can take several times longer than a phone.
+            waitUntil("Shashibo plate 5 slice complete", timeoutMs = 900_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -1489,7 +1531,10 @@ class PreparePreviewViewModelTest {
 
             // Slice.
             viewModel.startSlicing()
-            waitUntil("spiderman slice complete", timeoutMs = 300_000L) {
+            // This slice takes over eight minutes with ARM64 translation on x86 emulators.
+            val sliceTimeoutMs = InstrumentationRegistry.getArguments()
+                .getString("spidermanSliceTimeoutMs")?.toLong() ?: 900_000L
+            waitUntil("spiderman slice complete", timeoutMs = sliceTimeoutMs) {
                 viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -2174,7 +2219,8 @@ class PreparePreviewViewModelTest {
         val application = targetContext.applicationContext as U1SlicerApplication
         val viewModel = SlicerViewModel(application)
         val modelFile = copyAssetToCache("1890038_xav01_H2C_279_104.3mf")
-        val overridesBefore = viewModel.slicingOverrides.value
+        val settings = application.container.settingsRepository
+        val overridesBefore = runBlocking { settings.slicingOverrides.first() }
         try {
             viewModel.loadModelFromFile(modelFile)
 
@@ -2237,7 +2283,7 @@ class PreparePreviewViewModelTest {
                 t1Count > 0
             )
         } finally {
-            viewModel.saveSlicingOverrides(overridesBefore) // restore original overrides
+            runBlocking { settings.saveSlicingOverrides(overridesBefore) }
             viewModel.clearModel()
             modelFile.delete()
         }
@@ -2261,9 +2307,15 @@ class PreparePreviewViewModelTest {
     @Test
     fun f91_editLibraryFilamentAfterLoad_triggersReEmbedSoNewValuesReachGcode() = runBlocking {
         val application = targetContext.applicationContext as U1SlicerApplication
+        val settings = application.container.settingsRepository
+        val overridesBefore = settings.slicingOverrides.first()
+        // This case asserts one filament entry. An inherited E2 support override
+        // legitimately expands every per-filament header array to two entries.
+        settings.saveSlicingOverrides(SlicingOverrides())
         val viewModel = SlicerViewModel(application)
         val modelFile = copyAssetToCache("tetrahedron.stl")
         val filamentDao = application.container.filamentDao
+        var filamentBefore: FilamentProfile? = null
 
         try {
             viewModel.loadModelFromFile(modelFile)
@@ -2287,6 +2339,7 @@ class PreparePreviewViewModelTest {
                 "seeded Generic PLA missing after 15s wait — SeedCallback may not have run"
             )
             val pla = allFilaments.first { it.name == "Generic PLA" }
+            filamentBefore = pla
 
             // Link slot 0 to the PLA profile via PrintersRepository, matching cheeky_b52's setup.
             val printersRepo = application.container.printersRepository
@@ -2348,6 +2401,8 @@ class PreparePreviewViewModelTest {
                 pa!!.contains("0.024")
             )
         } finally {
+            filamentBefore?.let { filamentDao.update(it) }
+            settings.saveSlicingOverrides(overridesBefore)
             viewModel.clearModel()
             modelFile.delete()
         }

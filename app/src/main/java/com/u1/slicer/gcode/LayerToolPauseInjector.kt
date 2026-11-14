@@ -11,7 +11,6 @@ import java.util.zip.ZipFile
 
 object LayerToolPauseInjector {
     private const val EPSILON = 0.0001f
-    private val pauseRegex = Regex("""^\s*; ?PAUSE_PRINT\s*$""")
     private val zCommentRegex = Regex("""^\s*;Z:([0-9.]+)\s*$""")
     private val gcodeParamRegex = Regex("""\b([A-Za-z])([+-]?\d*\.?\d+)""")
     private val toolOnlyRegex = Regex("""^T([0-9]+(?:\.[0-9]+)?)\s*$""")
@@ -30,13 +29,14 @@ object LayerToolPauseInjector {
         gcodePath: String,
         model3mf: File,
         plateIdx: Int,
-        getPlateData: ((Int) -> String?)?
+        getPlateData: ((Int) -> String?)?,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
     ): Boolean {
         if (!model3mf.exists() || !model3mf.name.endsWith(".3mf", ignoreCase = true)) return false
 
         val xmlTargets = mutableListOf<PauseTarget>()
         var nozzleTemps: Map<Int, Int>? = null
-        val pauseCommand = ZipFile(model3mf).use { zip ->
+        val profilePauseCommand = ZipFile(model3mf).use { zip ->
             zip.getEntry("Metadata/custom_gcode_per_layer.xml")?.let { entry ->
                 val xml = zip.getInputStream(entry).bufferedReader().readText()
                 xmlTargets += extractPauseTargets(xml)
@@ -46,7 +46,11 @@ object LayerToolPauseInjector {
                 nozzleTemps = parseNozzleTemperatures(json)
                 Regex(""""machine_pause_gcode"\s*:\s*"([^"]*)"""").find(json)?.groupValues?.getOrNull(1)
             }
-        } ?: "M400 U1"
+        }
+        val pauseRules = dialect.pauseInjection
+        val pauseCommand = profilePauseCommand
+            ?.takeIf { pauseRules.useProfileCommand }
+            ?: pauseRules.fallbackCommand
 
         // Native path: read customGcode from g_model via JNI. Production passes a method
         // reference to NativeLibrary.nativeGetPlateData. Returns null when no model is loaded,
@@ -91,7 +95,11 @@ object LayerToolPauseInjector {
         if (!gcodeFile.exists()) return false
         if (containsNativeToolchangeWorkflow(gcodeFile)) return false
         val gcodeToolTemps = parseToolNozzleTemperaturesFromGcode(gcodeFile)
-        val gcodeSmTargetTemps = parseSmTargetTempsFromGcode(gcodeFile)
+        val gcodeSmTargetTemps = if (dialect === KlipperSnapmakerDialect) {
+            parseSmTargetTempsFromGcode(gcodeFile)
+        } else {
+            emptyMap()
+        }
         val gcodeLastNozzleTemp = parseLastNozzleTempFromGcode(gcodeFile)
 
         val pendingTargets = pauseTargets
@@ -111,7 +119,7 @@ object LayerToolPauseInjector {
 
         fun hasPauseImmediatelyBefore(): Boolean {
             val v = lastNonBlank ?: return false
-            return pauseRegex.matches(v)
+            return v.trim() in pauseRules.recognizedMarkers
         }
 
         try {
@@ -127,13 +135,14 @@ object LayerToolPauseInjector {
                                     while (pendingTargets.isNotEmpty() && z > pendingTargets.first().topZ + EPSILON) {
                                         val target = pendingTargets.removeAt(0)
                                         if (!hasPauseImmediatelyBefore()) {
-                                            writer.write("; PAUSE_PRINT\n")
+                                            writer.write(pauseRules.marker)
+                                            writer.write("\n")
                                             writer.write(pauseCommand)
                                             writer.write("\n")
                                             val toolIndex = target.extruderBambu - 1
                                             // Skip T0 (starting tool, no switch needed).
                                             // All higher tool indices (T1, T2, … T6+) are real swaps and must be written.
-                                            if (toolIndex >= 1) {
+                                            if (toolIndex >= 1 && pauseRules.emitToolChange) {
                                                 writer.write("; layer_tool extruder ${target.extruderBambu} → T$toolIndex\n")
                                                 writer.write("T$toolIndex\n")
                                                 // Prefer 3MF project settings; fall back to explicit M104/M109 Tn in source G-code.
@@ -141,13 +150,17 @@ object LayerToolPauseInjector {
                                                     ?: gcodeToolTemps[toolIndex]
                                                     ?: gcodeSmTargetTemps[toolIndex]
                                                     ?: gcodeLastNozzleTemp
-                                                if (setTemp != null && setTemp in 1..400) {
+                                                if (
+                                                    pauseRules.emitToolTemperature &&
+                                                    setTemp != null &&
+                                                    setTemp in 1..400
+                                                ) {
                                                     writer.write("M109 S$setTemp T$toolIndex\n")
                                                 }
                                             }
                                             writer.write("\n")
                                             injected = true
-                                            lastNonBlank = "; PAUSE_PRINT"
+                                            lastNonBlank = pauseRules.marker
                                         }
                                     }
                                 }

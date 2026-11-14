@@ -1,0 +1,10 @@
+{
+  "printers": [
+    {"id":"405-u1","nickname":"Published U1","kind":"MOONRAKER","machine":"SNAPMAKER_U1","moonrakerUrl":"http://127.0.0.1:7125","selectedWebcamUid":"published-camera","extruderPresets":[{"index":0,"color":"#112233","materialType":"PLA"}]},
+    {"id":"405-bambu","nickname":"Published Bambu","kind":"BAMBU_LAN","machine":"BAMBU","moonrakerUrl":"","bambu":{"ip":"127.0.0.1","accessCode":"fixture-only","serial":"fixture-serial","model":"A1"},"extruderPresets":[]},
+    {"id":"405-cc1","nickname":"Published CC1","kind":"ELEGOO_CC1","machine":"ELEGOO_CENTAURI_CARBON","moonrakerUrl":"","host":{"url":"127.0.0.1","apiKey":""},"extruderPresets":[{"index":0,"color":"#334455","materialType":"PETG"}]},
+    {"id":"405-octo","nickname":"Published OctoPrint","kind":"OCTOPRINT","machine":"GENERIC_KLIPPER","moonrakerUrl":"","host":{"url":"http://127.0.0.1:18080/proxy","apiKey":"published-fixture-key"},"machineProfile":{"type":"machine","name":"405 Upgrade Klipper","gcode_flavor":"klipper","printable_area":["0x0","300x0","300x280","0x280"],"printable_height":"320","nozzle_diameter":["0.4"],"machine_start_gcode":"G28\n; PUBLISHED_405_MACHINE","machine_end_gcode":"M84"},"extruderPresets":[{"index":0,"color":"#556677","materialType":"ABS"}]},
+    {"id":"405-klipper","nickname":"Published Klipper","kind":"MOONRAKER","machine":"GENERIC_KLIPPER","moonrakerUrl":"http://127.0.0.1:7126","machineProfile":{"type":"machine","name":"405 Upgrade Klipper","gcode_flavor":"klipper","printable_area":["0x0","300x0","300x280","0x280"],"printable_height":"320","nozzle_diameter":["0.4"],"machine_start_gcode":"G28\n; PUBLISHED_405_MACHINE","machine_end_gcode":"M84"},"extruderPresets":[{"index":0,"color":"#778899","materialType":"PETG"}]}
+  ],
+  "activeId":"405-klipper"
+}

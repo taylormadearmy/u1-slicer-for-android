@@ -31,6 +31,8 @@ data class SlicingOverrides(
     val bottomShellLayers: OverrideValue<Int> = OverrideValue(),
     val topSurfacePattern: OverrideValue<String> = OverrideValue(),
     val bottomSurfacePattern: OverrideValue<String> = OverrideValue(),
+    /** Orca [ironing_type]: no ironing, top, topmost, or solid. */
+    val ironing: OverrideValue<String> = OverrideValue(),
     val sparseInfillSpeed: OverrideValue<Int> = OverrideValue(),
     // F41: Reduce infill retraction - default off for Snapmaker U1
     val reduceInfillRetraction: OverrideValue<Boolean> = OverrideValue(),
@@ -95,7 +97,7 @@ data class SlicingOverrides(
     fun layerAndInfillOverrideCount(): Int = listOf(
         layerHeight, infillDensity, wallCount, wallGenerator, seamPosition,
         infillPattern, sparseInfillSpeed, topShellLayers, bottomShellLayers,
-        topSurfacePattern, bottomSurfacePattern, reduceInfillRetraction
+        topSurfacePattern, bottomSurfacePattern, ironing, reduceInfillRetraction
     ).count { it.mode == OverrideMode.OVERRIDE }
 
     fun supportOverrideCount(): Int = listOf(
@@ -181,6 +183,7 @@ data class SlicingOverrides(
         putOverride("bottomShellLayers", bottomShellLayers)
         putOverride("topSurfacePattern", topSurfacePattern)
         putOverride("bottomSurfacePattern", bottomSurfacePattern)
+        putOverride("ironing", ironing)
         putOverride("sparseInfillSpeed", sparseInfillSpeed)
         putOverride("reduceInfillRetraction", reduceInfillRetraction)
         putOverride("wallGenerator", wallGenerator)
@@ -227,6 +230,7 @@ data class SlicingOverrides(
             "bottomShellLayers" to 4,
             "topSurfacePattern" to "monotonic",
             "bottomSurfacePattern" to "monotonic",
+            "ironing" to "no ironing",
             "sparseInfillSpeed" to 0,
             "reduceInfillRetraction" to false,
             "wallGenerator" to "arachne",
@@ -280,6 +284,7 @@ data class SlicingOverrides(
                     bottomShellLayers = parseOverride("bottomShellLayers") { (it as Number).toInt() },
                     topSurfacePattern = parseOverride("topSurfacePattern") { it.toString() },
                     bottomSurfacePattern = parseOverride("bottomSurfacePattern") { it.toString() },
+                    ironing = parseOverride("ironing") { it.toString() },
                     sparseInfillSpeed = parseOverride("sparseInfillSpeed") { (it as Number).toInt() },
                     reduceInfillRetraction = parseOverride("reduceInfillRetraction") { it as Boolean },
                     wallGenerator = parseOverride("wallGenerator") { it.toString() },

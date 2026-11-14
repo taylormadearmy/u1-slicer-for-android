@@ -32,7 +32,7 @@ interface BambuFtpsSessionHandle : AutoCloseable {
     fun querySize(remoteName: String, dataMode: BambuFtpsDataMode): Long?
 }
 
-enum class BambuFtpsDataMode { PROTECTED, CLEAR }
+enum class BambuFtpsDataMode { PROTECTED, CLEAR, PROTECTED_ALLOW_NEW_SESSION }
 
 /**
  * The data connection has been flushed and closed after every byte was copied,
@@ -232,7 +232,12 @@ class DefaultBambuFileUploadClient(
                                 return@withTimeout
                             }
                             val fallbackMode = candidateModes.getOrNull(index + 1)
-                            if (fallbackMode != null && BambuFtpsUploadRecovery.shouldTryAlternateMode(remoteSize, e)) {
+                            val canRetry = if (fallbackMode == BambuFtpsDataMode.PROTECTED_ALLOW_NEW_SESSION) {
+                                BambuFtpsUploadRecovery.isSessionReuseFailure(e)
+                            } else {
+                                BambuFtpsUploadRecovery.shouldTryAlternateMode(remoteSize, e)
+                            }
+                            if (fallbackMode != null && canRetry) {
                                 Log.w(TAG, "retrying upload for $remoteName with fallback data mode $fallbackMode")
                                 BambuDiagnostics.record(
                                     "ftps_fallback",
@@ -277,6 +282,11 @@ class DefaultBambuFileUploadClient(
 }
 
 internal object BambuFtpsUploadRecovery {
+    fun isSessionReuseFailure(error: Exception): Boolean =
+        error is BambuFtpsPhaseFailure && error.phase == "data_tls_handshake" &&
+            error.transferredBytes == 0L && error.cause is SSLException &&
+            error.cause?.message.orEmpty().contains("SESSION_MAY_NOT_BE_CREATED")
+
     fun shouldVerifyAfterFailure(error: Exception): Boolean {
         return error is BambuFtpsPostTransferReplyFailure &&
             error.transferredBytes == error.expectedBytes
@@ -416,6 +426,10 @@ internal object BambuFtpsProtocol {
         BambuModel.A1, BambuModel.A1_MINI -> listOf(
             BambuFtpsDataMode.PROTECTED,
             BambuFtpsDataMode.CLEAR,
+        )
+        BambuModel.P1S -> listOf(
+            BambuFtpsDataMode.PROTECTED,
+            BambuFtpsDataMode.PROTECTED_ALLOW_NEW_SESSION,
         )
         else -> listOf(BambuFtpsDataMode.PROTECTED)
         }
@@ -653,7 +667,7 @@ private class BambuFtpsSession(
             createPassiveDataSocket(
                 host = host,
                 port = port,
-                reuseControlSessionPort = !clearData,
+                reuseControlSessionPort = dataMode == BambuFtpsDataMode.PROTECTED,
             )
         } catch (error: Exception) {
             throw BambuFtpsPhaseFailure("passive_connect", expectedBytes, 0L, error)
@@ -669,7 +683,7 @@ private class BambuFtpsSession(
                 rawDataSocket
             } else {
                 try {
-                    protectDataSocket(rawDataSocket)
+                    protectDataSocket(rawDataSocket, dataMode)
                 } catch (error: Exception) {
                     throw BambuFtpsPhaseFailure("data_tls_handshake", expectedBytes, 0L, error)
                 }
@@ -820,7 +834,7 @@ private class BambuFtpsSession(
             connect(InetSocketAddress(host, port), SOCKET_TIMEOUT_MS)
         }
 
-    private fun protectDataSocket(rawSocket: Socket): SSLSocket {
+    private fun protectDataSocket(rawSocket: Socket, dataMode: BambuFtpsDataMode): SSLSocket {
         // Conscrypt keys resumable client sessions by the TLS peer host/port.
         // Use the control SSLSession's exact peer identity even though the TCP
         // connection uses the passive port, as required by H2D's reuse policy.
@@ -851,8 +865,9 @@ private class BambuFtpsSession(
         return protectSocket(
             rawSocket = rawSocket,
             tlsPeerHost = controlPeerHost,
-            tlsPeerPort = controlPeerPort,
-            requireExistingSession = true,
+            tlsPeerPort = if (dataMode == BambuFtpsDataMode.PROTECTED) controlPeerPort else rawSocket.port,
+            requireExistingSession = dataMode == BambuFtpsDataMode.PROTECTED,
+            recordDataSession = true,
         )
     }
 
@@ -861,6 +876,7 @@ private class BambuFtpsSession(
         tlsPeerHost: String,
         tlsPeerPort: Int,
         requireExistingSession: Boolean,
+        recordDataSession: Boolean = false,
     ): SSLSocket {
         try {
             // H2 firmware requires the data connection to resume the control
@@ -886,7 +902,7 @@ private class BambuFtpsSession(
                 tlsSocket.enableSessionCreation = false
             }
             tlsSocket.startHandshake()
-            if (requireExistingSession) {
+            if (recordDataSession) {
                 val controlSession = controlSocket.session
                 val dataSession = tlsSocket.session
                 BambuDiagnostics.record(

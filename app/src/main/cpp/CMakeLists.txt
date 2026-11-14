@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project("prusaslicer_ndk" VERSION 1.0.0 LANGUAGES CXX C)
 
+if(ANDROID AND NOT ANDROID_STL STREQUAL "c++_static")
+    message(FATAL_ERROR "Use -DANDROID_STL=c++_static for the single JNI library and 16KB page support")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
@@ -1147,4 +1151,7 @@ target_link_libraries(prusaslicer-jni
 )
 
 # 16KB page-size compliance (Android 15+ devices with 16KB kernel pages).
-target_link_options(prusaslicer-jni PRIVATE "-Wl,-z,max-page-size=16384")
+target_link_options(prusaslicer-jni PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384"
+)

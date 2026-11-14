@@ -1,0 +1,16 @@
+{
+  "name": "Elegoo Centauri Carbon 0.4 nozzle - Cosmos",
+  "type": "printer",
+  "base_id": "LyL8izVzYFaXHlPb",
+  "version": "2.4.0.2",
+  "inherits": "Elegoo Centauri Carbon 0.4 nozzle",
+  "host_type": "moonraker",
+  "printer_agent": "moonraker",
+  "machine_end_gcode": "PRINT_END",
+  "machine_pause_gcode": "PAUSE",
+  "machine_start_gcode": "M104 S0 ; Stops OrcaSlicer from sending temp waits separately\\n\\nM140 S0\\n\\nSET_PRINT_STATS_INFO TOTAL_LAYER=[total_layer_count]\\n\\nPRINT_START EXTRUDER=[first_layer_temperature] BED=[first_layer_bed_temperature] CHAMBER=[chamber_temperature]",
+  "printer_settings_id": "Elegoo Centauri Carbon 0.4 nozzle - Cosmos",
+  "change_filament_gcode": "M600",
+  "manual_filament_change": "1",
+  "support_multi_bed_types": "1"
+}

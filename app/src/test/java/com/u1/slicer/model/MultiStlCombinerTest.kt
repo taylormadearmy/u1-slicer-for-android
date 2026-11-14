@@ -44,6 +44,13 @@ class MultiStlCombinerTest {
         return ByteBuffer.wrap(bytes, 80, 4).order(ByteOrder.LITTLE_ENDIAN).int
     }
 
+    private fun combine(
+        inputs: List<File>,
+        output: File,
+        bedSizeX: Float = 270f,
+        bedSizeY: Float = 270f,
+    ): MultiStlCombiner.Result? = MultiStlCombiner.combine(inputs, output, bedSizeX, bedSizeY)
+
     /** Read the AABB of all vertices in a binary STL. */
     private fun readAabb(file: File): FloatArray {
         val bytes = file.readBytes()
@@ -82,7 +89,7 @@ class MultiStlCombinerTest {
         val c = writeBinaryStl("c.stl", simpleTriangle(0f, 0f))
         val out = tmp.newFile("combined.stl")
 
-        val result = MultiStlCombiner.combine(listOf(a, b, c), out)
+        val result = combine(listOf(a, b, c), out)
         assertNotNull(result)
         result!!
         assertEquals(3, result.placedParts.size)
@@ -100,7 +107,7 @@ class MultiStlCombinerTest {
         )
         val f = writeBinaryStl("a.stl", triangles)
         val out = tmp.newFile("combined.stl")
-        MultiStlCombiner.combine(listOf(f), out)!!
+        combine(listOf(f), out)!!
         val aabb = readAabb(out)
         assertEquals("Z minimum must snap to 0", 0f, aabb[2], 0.001f)
     }
@@ -110,7 +117,7 @@ class MultiStlCombinerTest {
         val b = writeBinaryStl("b.stl", simpleTriangle(0f, 0f, sizeMm = 20f))
         val c = writeBinaryStl("c.stl", simpleTriangle(0f, 0f, sizeMm = 20f))
         val out = tmp.newFile("combined.stl")
-        MultiStlCombiner.combine(listOf(a, b, c), out)!!
+        combine(listOf(a, b, c), out)!!
 
         val aabb = readAabb(out)
         // Three 20mm parts in a row with 5mm margin = 70mm wide. Combined
@@ -128,7 +135,7 @@ class MultiStlCombinerTest {
         val bogus = tmp.newFile("bogus.stl").apply { writeBytes(ByteArray(10)) }
         val out = tmp.newFile("combined.stl")
 
-        val result = MultiStlCombiner.combine(listOf(good, bogus), out)!!
+        val result = combine(listOf(good, bogus), out)!!
         assertEquals(1, result.placedParts.size)
         assertEquals(listOf(bogus), result.failed)
         assertTrue(result.oversize.isEmpty())
@@ -142,7 +149,7 @@ class MultiStlCombinerTest {
         )
         val small = writeBinaryStl("small.stl", simpleTriangle(0f, 0f))
         val out = tmp.newFile("combined.stl")
-        val result = MultiStlCombiner.combine(listOf(huge, small), out)!!
+        val result = combine(listOf(huge, small), out)!!
         assertEquals(1, result.placedParts.size)
         assertEquals(listOf(huge), result.oversize)
     }
@@ -153,13 +160,32 @@ class MultiStlCombinerTest {
             listOf(floatArrayOf(0f, 0f, 0f, 300f, 0f, 0f, 0f, 300f, 0f))
         )
         val out = tmp.newFile("combined.stl")
-        val result = MultiStlCombiner.combine(listOf(huge), out)
+        val result = combine(listOf(huge), out)
         assertNull("No placeable parts → null", result)
         assertFalse(out.exists() && out.length() > 80L)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `combine requires at least one input file`() {
-        MultiStlCombiner.combine(emptyList(), tmp.newFile("x.stl"))
+        combine(emptyList(), tmp.newFile("x.stl"))
+    }
+
+    @Test fun `combine classifies parts against each supplied bed size`() {
+        for (bedSize in listOf(180f, 270f, 300f)) {
+            val fitting = writeBinaryStl(
+                "fitting_${bedSize.toInt()}.stl",
+                simpleTriangle(0f, 0f, bedSize),
+            )
+            val oversized = writeBinaryStl(
+                "oversized_${bedSize.toInt()}.stl",
+                simpleTriangle(0f, 0f, bedSize + 1f),
+            )
+            val out = tmp.newFile("combined_${bedSize.toInt()}.stl")
+
+            val result = combine(listOf(fitting, oversized), out, bedSize, bedSize)!!
+
+            assertEquals(listOf(fitting), result.placedParts.map { it.sourceFile })
+            assertEquals(listOf(oversized), result.oversize)
+        }
     }
 }

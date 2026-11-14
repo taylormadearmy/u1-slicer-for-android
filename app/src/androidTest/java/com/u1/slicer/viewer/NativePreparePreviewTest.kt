@@ -128,38 +128,73 @@ class NativePreparePreviewTest {
         copyAssetToModelFile("negative-volume-articulated.3mf")
         assertTrue(lib.loadModel(modelFile.absolutePath))
 
-        val preview = lib.getPreparePreviewMesh()
-        assertNotNull(preview)
-        preview!!
+        // Use the native-backed renderer buffers used by the Prepare screen. The legacy
+        // one-shot conversion allocates a second 120-byte-per-triangle direct buffer and
+        // exceeds the emulator's large-heap limit for this fixture.
+        val sceneHandle = lib.buildPrepareRenderScene()
+        assertTrue("Native render scene should be available", sceneHandle != 0L)
+        var mesh: MeshData? = null
+        try {
+            val deadline = System.currentTimeMillis() + 120_000L
+            while (!lib.nativeIsPrepareRenderSceneComplete(sceneHandle) &&
+                System.currentTimeMillis() < deadline) {
+                Thread.sleep(10)
+            }
+            assertTrue("Negative-volume render scene should complete", lib.nativeIsPrepareRenderSceneComplete(sceneHandle))
 
-        val triCount = preview.extruderIndices.size
-        val modStart = lib.nativeGetPreviewModifierBlockStart()
+            val batches = (0 until lib.nativeGetPrepareRenderSceneBatchCount(sceneHandle)).map { batchIndex ->
+                val geometry = lib.nativeGetPrepareRenderSceneGeometryBuffer(sceneHandle, batchIndex)
+                val materialIndices = lib.nativeGetPrepareRenderSceneMaterialBuffer(sceneHandle, batchIndex)
+                assertNotNull("Render batch $batchIndex should expose geometry", geometry)
+                assertNotNull("Render batch $batchIndex should expose material indices", materialIndices)
+                NativeRenderBatch(
+                    geometry!!.order(ByteOrder.nativeOrder()).asFloatBuffer(),
+                    materialIndices,
+                    lib.nativeGetPrepareRenderSceneTriangleCount(sceneHandle, batchIndex),
+                )
+            }
+            val triCount = batches.sumOf { it.triangleCount }
+            val modStart = lib.nativeGetPreviewModifierBlockStart()
 
-        assertTrue("Preview must contain triangles", triCount > 0)
-        assertTrue(
-            "Modifier block start must be >= 0 when the model has negative volumes (got $modStart)",
-            modStart >= 0
-        )
-        assertTrue(
-            "Modifier block must come after at least one model-part triangle (start=$modStart)",
-            modStart > 0
-        )
-        assertTrue(
-            "Modifier block must contain at least one triangle (start=$modStart, total=$triCount)",
-            modStart < triCount
-        )
+            assertTrue("Preview must contain triangles", triCount > 0)
+            assertTrue(
+                "Modifier block start must be >= 0 when the model has negative volumes (got $modStart)",
+                modStart >= 0
+            )
+            assertTrue(
+                "Modifier block must come after at least one model-part triangle (start=$modStart)",
+                modStart > 0
+            )
+            assertTrue(
+                "Modifier block must contain at least one triangle (start=$modStart, total=$triCount)",
+                modStart < triCount
+            )
 
-        // The trailing block recolors translucent via MeshData; verify the boundary survives
-        // the toMeshData hand-off and recolor paints those triangles with alpha < 1.
-        preview.modifierBlockStartTriangle = modStart
-        val mesh = preview.toMeshData()
-        assertNotNull(mesh)
-        assertEquals(modStart, mesh!!.modifierBlockStartTriangle)
-        // recolor with a simple opaque palette; modifier triangles must end up translucent.
-        mesh.recolor(listOf(floatArrayOf(1f, 0f, 0f, 1f), floatArrayOf(0f, 1f, 0f, 1f)))
-        val modTriBase = (modStart * 3) * MeshData.FLOATS_PER_VERTEX + 6
-        val modAlpha = mesh.vertices.get(modTriBase + 3)
-        assertTrue("First modifier triangle must be translucent (alpha=$modAlpha)", modAlpha < 1f)
+            mesh = MeshData(
+                batches = batches,
+                minX = 0f, minY = 0f, minZ = 0f,
+                maxX = 0f, maxY = 0f, maxZ = 0f,
+                modifierBlockStartTriangle = modStart,
+                sceneHandle = sceneHandle,
+            )
+            assertEquals(modStart, mesh!!.modifierBlockStartTriangle)
+            // Recolor with an opaque palette, then inspect alpha at the first modifier triangle.
+            mesh!!.recolor(listOf(floatArrayOf(1f, 0f, 0f, 1f), floatArrayOf(0f, 1f, 0f, 1f)))
+            var batchStart = 0
+            var modAlpha: Float? = null
+            for (batch in batches) {
+                val localTriangle = modStart - batchStart
+                if (localTriangle in 0 until batch.triangleCount) {
+                    modAlpha = batch.colorBuffer!!.get(localTriangle * 3 * 4 + 3)
+                    break
+                }
+                batchStart += batch.triangleCount
+            }
+            assertNotNull("First modifier triangle should belong to a render batch", modAlpha)
+            assertTrue("First modifier triangle must be translucent (alpha=$modAlpha)", modAlpha!! < 1f)
+        } finally {
+            mesh?.release(lib) ?: lib.nativeReleasePrepareRenderScene(sceneHandle)
+        }
     }
 
     @Test

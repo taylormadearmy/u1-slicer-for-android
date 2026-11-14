@@ -20,6 +20,7 @@ extern void setPreviewExtruderOverride(int objIdx, int volIdx, int slot);
 extern std::vector<Slic3r::Vec3d>& getRotationBasePositions();
 extern std::vector<Slic3r::Vec3d>& getRotationBaseRotations();
 extern void onSplitObjectReshape(int objIdx, int newCount, int newVolumeCount);
+extern void onDeleteObjectReshape(int objIdx);
 extern void onSplitVolumeReshape(int objIdx, int newVolumeCount);
 extern void resetRotationBases();
 
@@ -653,11 +654,26 @@ std::optional<int> SlicerEngine::duplicateObject(int objIdx) {
     return newIdx;
 }
 
-int SlicerEngine::splitVolume(int objIdx, int volIdx) {
+bool SlicerEngine::deleteObject(int objIdx) {
+    if (!f66_objIdxValid(objIdx)) return false;
+    Slic3r::Model& model = getGlobalModel();
+    if (model.objects.size() <= 1) return false;
+
+    model.delete_object(static_cast<size_t>(objIdx));
+    onDeleteObjectReshape(objIdx);
+    resetLoadTimeScaleFactors();
+    resetRotationBases();
+    invalidatePreviewMeshCache();
+    SAPIL_LOGI("deleteObject: removed object %d; %d remain", objIdx, (int)model.objects.size());
+    return true;
+}
+
+int SlicerEngine::splitVolume(int objIdx, int volIdx, int configured_extruders) {
     if (!f66_volIdxValid(objIdx, volIdx)) return -1;
     auto* obj = getGlobalModel().objects[objIdx];
-    constexpr unsigned MAX_EXTRUDERS = 4; // U1 hardware limit
-    obj->volumes[volIdx]->split(MAX_EXTRUDERS);
+    const unsigned max_extruders = static_cast<unsigned>(
+        std::max(1, std::min(configured_extruders, 4)));
+    obj->volumes[volIdx]->split(max_extruders);
     // F66 review-2026-05-30 P0: keep the override cache + base snapshots in sync.
     onSplitVolumeReshape(objIdx, (int)obj->volumes.size());
     resetLoadTimeScaleFactors();

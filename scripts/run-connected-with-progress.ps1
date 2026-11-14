@@ -1,6 +1,7 @@
 param(
     [string]$Device = $env:ANDROID_SERIAL,
     [string]$ClassFilter = "",
+    [hashtable]$RunnerArguments = @{},
     [switch]$NoDaemon = $true
 )
 
@@ -26,6 +27,10 @@ if ($NoDaemon) {
     $gradleArgs += "--no-daemon"
 }
 $gradleArgs += "-Pkotlin.incremental=false"
+$gradleArgs += "-Pkotlin.compiler.execution.strategy=in-process"
+foreach ($argument in $RunnerArguments.GetEnumerator()) {
+    $gradleArgs += "-Pandroid.testInstrumentationRunnerArguments.$($argument.Key)=$($argument.Value)"
+}
 if (-not [string]::IsNullOrWhiteSpace($ClassFilter)) {
     $gradleArgs += "-Pandroid.testInstrumentationRunnerArguments.class=$ClassFilter"
 }

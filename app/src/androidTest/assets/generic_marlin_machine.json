@@ -1,0 +1,17 @@
+{
+  "type": "machine",
+  "name": "Authored Generic Marlin 220",
+  "vendor": "Generic",
+  "printer_model": "Generic Marlin 220",
+  "printer_variant": "0.4",
+  "printable_area": ["0x0", "220x0", "220x220", "0x220"],
+  "printable_height": "250",
+  "nozzle_diameter": ["0.4"],
+  "extruder_offset": ["0x0"],
+  "gcode_flavor": "marlin",
+  "single_extruder_multi_material": "0",
+  "machine_start_gcode": "M83\nM104 S[nozzle_temperature_initial_layer]\nM140 S[bed_temperature_initial_layer_single]\nG28\nM190 S[bed_temperature_initial_layer_single]\nM109 S[nozzle_temperature_initial_layer]",
+  "machine_end_gcode": "M104 S0\nM140 S0\nM84",
+  "machine_change_filament_gcode": "M600",
+  "machine_pause_gcode": "M600"
+}

@@ -2,11 +2,57 @@ package com.u1.slicer.data
 
 import com.u1.slicer.buildProfileOverridesImpl
 import com.u1.slicer.computeTogglePrimeTower
+import com.u1.slicer.resolveNativeIroningType
 import com.u1.slicer.ui.formatFileValue
 import org.junit.Assert.*
 import org.junit.Test
 
 class SlicingOverridesTest {
+
+    @Test
+    fun `ironing override survives settings serialization`() {
+        val restored = SlicingOverrides.fromJson(
+            """{"ironing":{"mode":"OVERRIDE","value":"topmost"}}""",
+        )
+
+        assertTrue(
+            "Ironing must be a persisted slicing override",
+            restored.toJson().contains("\"ironing\""),
+        )
+        assertEquals(OverrideValue(OverrideMode.OVERRIDE, "topmost"), restored.ironing)
+    }
+
+    @Test
+    fun `ironing override is embedded without replacing a file setting by default`() {
+        val overridden = buildProfileOverridesImpl(
+            cfg = SliceConfig(),
+            ov = SlicingOverrides(ironing = OverrideValue(OverrideMode.OVERRIDE, "top")),
+            slotCount = 1,
+            hasSourceConfig = true,
+        )
+        val passthrough = buildProfileOverridesImpl(
+            cfg = SliceConfig(),
+            ov = SlicingOverrides(),
+            slotCount = 1,
+            hasSourceConfig = true,
+        )
+
+        assertEquals("top", overridden["ironing_type"])
+        assertFalse(passthrough.containsKey("ironing_type"))
+    }
+
+    @Test
+    fun `native ironing override is only sent when the user chooses it`() {
+        assertEquals("", resolveNativeIroningType(OverrideValue()))
+        assertEquals(
+            "no ironing",
+            resolveNativeIroningType(OverrideValue(OverrideMode.ORCA_DEFAULT)),
+        )
+        assertEquals(
+            "solid",
+            resolveNativeIroningType(OverrideValue(OverrideMode.OVERRIDE, "solid")),
+        )
+    }
 
     // ---- F86: override counting helpers ----
 
