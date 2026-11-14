@@ -7,10 +7,13 @@ $sourceScript = Join-Path $PSScriptRoot "run-batch-manual-e2e.ps1"
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("batch-e2e-exit-" + [guid]::NewGuid())
 $harnessScript = Join-Path $tempRoot "run-batch-manual-e2e.ps1"
 $originalPath = $env:PATH
+$originalAgentDeviceCommand = $env:U1_AGENT_DEVICE_COMMAND
 
 function Invoke-Harness([int]$RunnerExit, [string]$CaseName) {
     $results = Join-Path $tempRoot "$CaseName-results"
     $artifacts = Join-Path $tempRoot "$CaseName-artifacts"
+    New-Item -ItemType Directory -Force -Path $results | Out-Null
+    Set-Content -LiteralPath (Join-Path $results 'historical-summary.txt') -Value "STALE_HISTORICAL_RESULT`nOVERALL: FAIL"
     $env:BATCH_E2E_STUB_EXIT = "$RunnerExit"
     $output = & powershell.exe -NoProfile -File $harnessScript `
         -Device "5A101JEBF24790" `
@@ -32,6 +35,8 @@ function Invoke-Harness([int]$RunnerExit, [string]$CaseName) {
 }
 
 try {
+    # The harness stubs every device operation; never inherit a live UI driver.
+    Remove-Item Env:U1_AGENT_DEVICE_COMMAND -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
     if ([string]::IsNullOrWhiteSpace($BatchRevision)) {
         $content = Get-Content -Raw $sourceScript
@@ -60,6 +65,9 @@ exit [int]$env:BATCH_E2E_STUB_EXIT
     if ($passing.Summary -notmatch 'OVERALL: PASS') {
         throw "Passing batch summary omitted the wizard result: $($passing.Summary)"
     }
+    if ($passing.Summary -match 'STALE_HISTORICAL_RESULT') {
+        throw 'Batch summary included stale historical results: STALE_HISTORICAL_RESULT'
+    }
 
     $failing = Invoke-Harness -RunnerExit 9 -CaseName "failing"
     if ($failing.ExitCode -eq 0) { throw "Failing wizard batch returned exit code 0." }
@@ -73,6 +81,7 @@ exit [int]$env:BATCH_E2E_STUB_EXIT
     Write-Host "Batch E2E script exit propagation: PASS"
 } finally {
     $env:PATH = $originalPath
+    $env:U1_AGENT_DEVICE_COMMAND = $originalAgentDeviceCommand
     Remove-Item Env:BATCH_E2E_STUB_EXIT -ErrorAction SilentlyContinue
     $resolvedTemp = [IO.Path]::GetFullPath($tempRoot)
     $allowedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

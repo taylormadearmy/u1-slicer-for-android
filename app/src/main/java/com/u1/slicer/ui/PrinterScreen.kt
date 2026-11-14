@@ -686,6 +686,7 @@ fun PrinterScreen(
                                     Text(status.printTimeFormatted, fontWeight = FontWeight.Medium)
                                 }
                             }
+                            com.u1.slicer.ui.printer.PrintCompletionRow(status)
                         }
                     }
                 }

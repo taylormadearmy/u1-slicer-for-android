@@ -6,7 +6,7 @@ Native Android slicer for the **Snapmaker U1** and supported rectangular-bed FDM
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v5.0.5` (`versionCode 505`)
+Current release: `v5.0.6` (`versionCode 506`)
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -16,6 +16,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 
 ## Features
 
+- **Estimated print finish time (v5.0.6)**: the Printer screen shows an approximate completion clock time using the phone's timezone and 12/24-hour preference, with tomorrow/date labels for longer jobs. The estimate appears after the first minute and 1% progress and is hidden while paused.
 - **Multi-printer profiles (v5.0.1)**: browse the eligible subset of a pinned `taylormadearmy/OrcaSlicer` v2.2.4 source catalogue containing 326 models across 56 usable vendors, or import an `.orca_printer` bundle. Eligibility checks require rectangular FDM geometry, 1 to 4 physical slots, and Klipper or Marlin G-code. Upload uses Moonraker, OctoPrint, or PrusaLink when the selected transport supports it.
 - **Elegoo Centauri Carbon 1 beta**: its experimental add route uses the dedicated Elegoo transport and bundled machine profile. Carbon 2 is not supported. Physical CC1 compatibility remains unverified.
 - **Experimental CC1 with COSMOS firmware**: a separate Add Printer option selects the bundled COSMOS 26.07+ profile and Moonraker, with HTTP port 80 as its default. This preset is for a 0.4 mm nozzle without AFC/CANVAS. Existing generic printers can select **Use COSMOS profile for CC1** in Edit. Reslice old jobs after changing the firmware profile; stock CC1 commands are incompatible with COSMOS. A user verified COSMOS operation; AFC/CANVAS is excluded.
@@ -112,11 +113,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 2318 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 530 independent device tests (ARM64 required)
+./gradlew testDebugUnitTest              # 2330 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 534 independent device tests (ARM64 required)
 ```
 
-**2859 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2318 JVM tests and 541 device tests. The default device run includes 530 tests; another 11 require upgrade or mock-host fixtures.
+**2875 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2330 JVM tests and 545 device tests. The default device run includes 534 tests; another 11 require upgrade or mock-host fixtures.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

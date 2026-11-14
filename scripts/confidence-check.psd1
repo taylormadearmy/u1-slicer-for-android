@@ -32,6 +32,8 @@
         'com.u1.slicer.bambu.ThreeMfColourRemapperInstrumentedTest'
         'com.u1.slicer.ui.FilamentMappingLayoutTest'
         'com.u1.slicer.ui.printer.PrinterEditDialogInstrumentedTest'
+        'com.u1.slicer.ui.printer.PrintCompletionRowTest'
+        'com.u1.slicer.ui.printer.PrinterCompletionScreenTest'
         'com.u1.slicer.slicing.SemmSlicingTest'
         'com.u1.slicer.MatchAColourE2ETest'
     )

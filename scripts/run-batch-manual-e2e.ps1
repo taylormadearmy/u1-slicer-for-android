@@ -13,7 +13,8 @@ param(
     [switch]$KeepExistingResults,
     [switch]$NoInstall,
     [switch]$IncludePrinterWizardUpload,
-    [switch]$UseInstalledApksForWizard
+    [switch]$UseInstalledApksForWizard,
+    [string]$AgentDeviceCommand = $env:U1_AGENT_DEVICE_COMMAND
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,6 +35,11 @@ function Get-SafeName([string]$Name) {
 }
 
 function Capture-Screenshot([string]$Path) {
+    if ($AgentDeviceCommand) {
+        & $AgentDeviceCommand screenshot $Path | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw 'Device-panel screenshot failed.' }
+        return
+    }
     Invoke-Adb shell input keyevent KEYCODE_WAKEUP | Out-Null
     Invoke-Adb shell wm dismiss-keyguard | Out-Null
     Start-Sleep -Seconds 1
@@ -69,13 +75,23 @@ function Test-ScenarioProcess {
 function Start-ScenarioApp {
     $script:ScenarioAppPid = $null
     Invoke-Adb logcat -c | Out-Null
-    Invoke-Adb shell am force-stop $AppId | Out-Null
-    Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
+    if ($AgentDeviceCommand) {
+        & $AgentDeviceCommand open $AppId --relaunch | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw 'Device-panel app launch failed.' }
+    } else {
+        Invoke-Adb shell am force-stop $AppId | Out-Null
+        Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
+    }
     Start-Sleep -Seconds 8
     $script:ScenarioAppPid = Get-ScenarioPid
     if (!$script:ScenarioAppPid) {
         Write-Step 'Reopening after the APK upgrade reset'
-        Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
+        if ($AgentDeviceCommand) {
+            & $AgentDeviceCommand open $AppId | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw 'Device-panel app relaunch failed.' }
+        } else {
+            Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
+        }
         Start-Sleep -Seconds 4
         $script:ScenarioAppPid = Get-ScenarioPid
     }
@@ -419,7 +435,12 @@ if (!$NoInstall) {
     Invoke-Adb install -r "app/build/outputs/apk/debug/app-debug.apk" | Out-Host
 }
 
-Invoke-Adb shell pm grant $AppId android.permission.POST_NOTIFICATIONS 2>$null
+if ($AgentDeviceCommand) {
+    & $AgentDeviceCommand settings permission grant notifications --app $AppId | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'Device-panel notification permission failed.' }
+} else {
+    Invoke-Adb shell pm grant $AppId android.permission.POST_NOTIFICATIONS 2>$null
+}
 
 $passed = 0
 $failed = 0
@@ -484,7 +505,7 @@ if ($IncludePrinterWizardUpload -and $Suite -in @('U1', 'Both')) {
 
 $summary = Join-Path $ResultsDir ("batch-manual-e2e-" + (Get-Date -Format "yyyy-MM-dd-HHmmss") + ".txt")
 Get-ChildItem $ResultsDir -Filter "*.txt" |
-    Where-Object { $_.Name -notmatch "current-artifact-dir|batch-manual-e2e" } |
+    Where-Object { $_.Name -like '??-*.txt' -or $_.Name -eq 'printer-wizard-add-slice-upload.txt' } |
     Sort-Object Name |
     ForEach-Object { Get-Content $_.FullName; ""; } |
     Set-Content $summary
