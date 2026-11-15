@@ -6,8 +6,7 @@ Native Android slicer for the **Snapmaker U1** and supported rectangular-bed FDM
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v5.0.6` (`versionCode 506`)
-Local cumulative candidate: `v5.0.8` (`versionCode 508`), including all v5.0.5/v5.0.6 changes and the Bambu nozzle fixes. The isolated v5.0.7-rc1 release was withdrawn; its tag is reserved and must not be reused.
+Current release: [`v5.0.8`](https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v5.0.8) (`versionCode 508`), including all v5.0.5/v5.0.6 changes and the Bambu nozzle fixes. The isolated v5.0.7-rc1 release was withdrawn; its tag is reserved and must not be reused.
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
