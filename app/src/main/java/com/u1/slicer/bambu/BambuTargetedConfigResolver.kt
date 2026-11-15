@@ -17,7 +17,7 @@ fun resolveTargetedSliceConfig(
             else requireNotNull(machineProfile) { "Choose a machine profile before slicing" }
         return profile.applyTo(base, target)
     }
-    return bambuMachineProfileFor(target)?.let { profile ->
+    return bambuMachineProfileFor(target, base.nozzleDiameter)?.let { profile ->
         val towerWidth = if (profile.nozzlePrintableAreas.size > 1) 60f else 35f
         val commonNozzleBounds = profile.nozzlePrintableAreas.reduce { common, bounds ->
             BambuPrintBounds(

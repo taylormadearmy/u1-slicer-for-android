@@ -25,11 +25,11 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal build
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest                        # 2294 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 520 independent device tests, uses Orchestrator
+./gradlew testDebugUnitTest                        # 2306 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 545 independent device tests, uses Orchestrator
 ```
 
-**2825 total tests:** 2294 JVM tests and 531 device tests. The default device run includes 520 independent tests. The remaining 11 require the upgrade or mock-host drivers named by `@RequiresExternalFixture`. Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
+**2862 total tests:** 2306 JVM tests and 556 device tests. The default device run includes 545 independent tests. The remaining 11 require the upgrade or mock-host drivers named by `@RequiresExternalFixture`. Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
 
 **Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs. Pass the serial via `ANDROID_SERIAL=<id>` env var. Never deploy automated tests to personal or non-phone devices (the NF22E1 listed in local notes is off-limits).
 

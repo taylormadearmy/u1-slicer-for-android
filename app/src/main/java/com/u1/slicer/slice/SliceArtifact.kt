@@ -28,6 +28,7 @@ sealed class SliceArtifact {
         val sourceFilamentIndices: List<Int> = emptyList(),
         val filamentNozzleMap: List<Int> = emptyList(),
         override val target: SlicerTarget = SlicerTarget.BambuA1Mini,
+        val nozzleDiameter: Float = 0.4f,
     ) : SliceArtifact()
 }
 
@@ -43,7 +44,8 @@ fun SliceArtifact.isCompatibleWith(printer: Printer?): Boolean {
         SlicerTarget.GenericMarlin -> printer.machine == MachineKind.GENERIC_MARLIN &&
             this is SliceArtifact.MoonrakerGcodeArtifact && machineProfileFingerprint != null &&
             machineProfileFingerprint == printer.machineProfile?.fingerprint
-        else -> printer.machine == MachineKind.BAMBU && target.isCompatibleWith(printer.kind, printer.bambu?.model)
+        else -> printer.machine == MachineKind.BAMBU && target.isCompatibleWith(printer.kind, printer.bambu?.model) &&
+            this is SliceArtifact.BambuProjectArtifact && nozzleDiameter == printer.bambu?.nozzleDiameter
     }
 }
 
@@ -71,6 +73,7 @@ fun buildSliceArtifact(
     filamentTypes: List<String>,
     filamentNozzleAssignments: List<Int> = emptyList(),
     machineProfileFingerprint: String? = null,
+    bambuNozzleDiameter: Float = 0.4f,
 ): SliceArtifact = buildSliceArtifactWithTimings(
     target = target,
     sourceModelName = sourceModelName,
@@ -82,6 +85,7 @@ fun buildSliceArtifact(
     filamentNozzleAssignments = filamentNozzleAssignments,
     onPackagingStage = null,
     machineProfileFingerprint = machineProfileFingerprint,
+    bambuNozzleDiameter = bambuNozzleDiameter,
 )
 
 fun buildSliceArtifactWithTimings(
@@ -95,6 +99,7 @@ fun buildSliceArtifactWithTimings(
     filamentNozzleAssignments: List<Int> = emptyList(),
     onPackagingStage: ((stage: String, elapsedMs: Long) -> Unit)?,
     machineProfileFingerprint: String? = null,
+    bambuNozzleDiameter: Float = 0.4f,
 ): SliceArtifact = when (target) {
     SlicerTarget.SnapmakerU1 -> SliceArtifact.MoonrakerGcodeArtifact(
         sourceModelName = sourceModelName,
@@ -156,6 +161,7 @@ fun buildSliceArtifactWithTimings(
                     source = compactedGcode,
                     output = h2dGcode,
                     filamentMap = filamentNozzleMap,
+                    profile = requireNotNull(com.u1.slicer.bambu.bambuMachineProfileFor(target, bambuNozzleDiameter)),
                 )
             }
         } else {
@@ -172,6 +178,7 @@ fun buildSliceArtifactWithTimings(
             sourceFilamentIndices = usedFilamentIndices,
             target = target,
             filamentNozzleMap = filamentNozzleMap,
+            nozzleDiameter = bambuNozzleDiameter,
         )
         stageComplete("archive_write")
         SliceArtifact.BambuProjectArtifact(
@@ -181,6 +188,7 @@ fun buildSliceArtifactWithTimings(
             sourceFilamentIndices = projectSourceIndices,
             filamentNozzleMap = filamentNozzleMap,
             target = target,
+            nozzleDiameter = bambuNozzleDiameter,
         )
     } else {
         SliceArtifact.MoonrakerGcodeArtifact(

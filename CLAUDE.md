@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v5.0.4` (`versionCode 504`)
+Local release candidate: `v5.0.7-rc1` (`versionCode 507`), isolated from `v5.0.4`.
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -92,8 +92,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2294 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 520 independent device tests, uses Orchestrator
+./gradlew testDebugUnitTest                        # 2306 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 545 independent device tests, uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -122,7 +122,8 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2294 tests across 255 reported test suites
+### Unit tests (`app/src/test/`) - 2306 tests across 256 reported test suites
+- `bambu/BambuNozzleSupportTest.kt` (13) ? saved nozzle defaults and round trips, all target identities, H2D/P2S variant maps, upstream process limits, imported tuning precedence, artifact compatibility, and project metadata.
 - Generic printer coverage includes imported machine-profile validation and identity, saved-job compatibility, filament temperature composition, CC1 and OctoPrint protocol handling, and draft connection/preset persistence.
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
@@ -224,9 +225,10 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 531 tests across 97 Kotlin source files
+### Instrumented tests (`app/src/androidTest/`) - 556 tests across 98 Kotlin source files
+- `slicing/BambuNozzleWorkflowTest.kt` (17) ? P1S/H2D at all four sizes from STL and imported 3MF through actual project saving, toolpath/metadata assertions, stale-nozzle export rejection, and incompatible imported-process errors.
 
-The default runner executes 520 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
+The default runner executes 545 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
 
 - `slicing/GenericIndependentExtruderNativeTest.kt` has three checks for two- and four-tool Klipper and Marlin output, actual extrusion, selected offsets and heating, and numeric test-oracle correctness.
 - `ui/printer/PrinterEditDialogInstrumentedTest.kt` has 11 checks for the experimental add gate, the CC1 route, saved third-party editing, immutable Marlin snapshots, host credentials, installed nozzle settings, stale-binding removal, and refusal to save a generic machine without its profile.

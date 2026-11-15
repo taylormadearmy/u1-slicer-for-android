@@ -27,6 +27,27 @@ import org.junit.runner.RunWith
 class PrinterEditDialogInstrumentedTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun bambuNozzleSelectionSavesWithExperimentalGateOff() = verifyBambuNozzle(0.6f)
+    @Test fun bambuFineNozzleSaves() = verifyBambuNozzle(0.2f)
+    @Test fun bambuDefaultNozzleSaves() = verifyBambuNozzle(0.4f)
+    @Test fun bambuLargeNozzleSaves() = verifyBambuNozzle(0.8f)
+    @Test fun h2dNozzleSelectorExplainsMatchingHotends() = verifyBambuNozzle(0.2f, com.u1.slicer.data.BambuModel.H2D)
+
+    private fun verifyBambuNozzle(diameter: Float, model: com.u1.slicer.data.BambuModel = com.u1.slicer.data.BambuModel.P1S) {
+        val existing = Printer("bambu", "Offline Bambu", kind = PrinterKind.BAMBU_LAN,
+            bambu = com.u1.slicer.data.BambuConfig("192.0.2.5", "test", "TEST", model))
+        var saved: Printer? = null
+        compose.setContent { MaterialTheme {
+            PrinterEditDialog(existing, onSave = { saved = it }, onTest = { error("No printer should be contacted") }, onDismiss = {})
+        } }
+        compose.onNodeWithText("Changing nozzle diameter requires slicing again.").performScrollTo().assertExists()
+        if (model == com.u1.slicer.data.BambuModel.H2D) compose.onNodeWithText("Use the same nozzle diameter on both hotends.").performScrollTo().assertExists()
+        compose.onNodeWithText("0.4 mm").performScrollTo().performClick()
+        compose.onNode(hasText("$diameter mm") and hasAnyAncestor(isPopup())).performClick()
+        compose.onNodeWithText("Save").performClick()
+        compose.runOnIdle { assertEquals(existing.copy(bambu = existing.bambu!!.copy(nozzleDiameter = diameter)), saved) }
+    }
+
     @Test fun changingGenericMachineToU1ClearsThePreviousProfileBinding() {
         val snapshot = com.u1.slicer.slice.GenericMachineProfile.fromJson(
             org.json.JSONObject(com.u1.slicer.slice.GenericMachineProfile.centauriCarbon().resolvedJson)

@@ -70,6 +70,7 @@ fun PrinterEditDialog(
     var accessCode by remember { mutableStateOf(existing?.bambu?.accessCode.orEmpty()) }
     var serial by remember { mutableStateOf(existing?.bambu?.serial.orEmpty()) }
     var model by remember { mutableStateOf(existing?.bambu?.model ?: BambuModel.P1S) }
+    var bambuNozzleDiameter by remember { mutableStateOf(existing?.bambu?.nozzleDiameter ?: 0.4f) }
     var result by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -109,7 +110,7 @@ fun PrinterEditDialog(
         username = username.trim().takeIf { it.isNotBlank() },
         password = password.takeIf { it.isNotBlank() },
         moonrakerUrl = if (kind == PrinterKind.MOONRAKER) normalizePrintHostUrl(url, hostType) else "",
-        bambu = if (kind == PrinterKind.BAMBU_LAN) BambuConfig(ip.trim(), accessCode.trim(), serial.trim().uppercase(java.util.Locale.ROOT), model) else null,
+        bambu = if (kind == PrinterKind.BAMBU_LAN) BambuConfig(ip.trim(), accessCode.trim(), serial.trim().uppercase(java.util.Locale.ROOT), model, bambuNozzleDiameter) else null,
         machine = machine,
         machineProfile = profile.takeIf { machine == MachineKind.GENERIC_KLIPPER || machine == MachineKind.GENERIC_MARLIN },
         machineProfileId = existing?.machineProfileId.takeIf {
@@ -188,6 +189,9 @@ fun PrinterEditDialog(
                 if (kind == PrinterKind.ELEGOO_CC1) Text("Centauri Carbon 1 support is beta and has not been validated on hardware. Carbon 2 is not supported.", style = MaterialTheme.typography.bodySmall)
                 if (kind == PrinterKind.BAMBU_LAN) {
                     PrinterChoice("Bambu model", model, BambuModel.entries, { it.name.replace('_', ' ') }) { model = it; result = null }
+                    PrinterChoice("Nozzle diameter", bambuNozzleDiameter, BambuConfig.SUPPORTED_NOZZLE_DIAMETERS, { "$it mm" }) { bambuNozzleDiameter = it; result = null }
+                    Text("Changing nozzle diameter requires slicing again.", style = MaterialTheme.typography.bodySmall)
+                    if (model == BambuModel.H2D) Text("Use the same nozzle diameter on both hotends.", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(ip, { ip = it; result = null }, label = { Text("Printer IP") }, singleLine = true)
                     OutlinedTextField(accessCode, { accessCode = it; result = null }, label = { Text("Access code") }, singleLine = true)
                     OutlinedTextField(serial, { serial = it; result = null }, label = { Text("Serial") }, singleLine = true)

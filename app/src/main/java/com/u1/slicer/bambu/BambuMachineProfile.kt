@@ -142,5 +142,25 @@ internal val BAMBU_MACHINE_PROFILES: Map<SlicerTarget, BambuMachineProfile> = ma
     ),
 )
 
-internal fun bambuMachineProfileFor(target: SlicerTarget): BambuMachineProfile? =
-    BAMBU_MACHINE_PROFILES[target]
+internal fun bambuMachineProfileFor(target: SlicerTarget, nozzleDiameter: Float = 0.4f): BambuMachineProfile? {
+    val profile = BAMBU_MACHINE_PROFILES[target] ?: return null
+    require(nozzleDiameter in com.u1.slicer.data.BambuConfig.SUPPORTED_NOZZLE_DIAMETERS) {
+        "Unsupported Bambu nozzle diameter: $nozzleDiameter"
+    }
+    val standardVariantsOnly = target == SlicerTarget.BambuH2D && nozzleDiameter in listOf(0.2f, 0.8f)
+    val p2sStandardVariantsOnly = target == SlicerTarget.BambuP2S && nozzleDiameter in listOf(0.2f, 0.8f)
+    val variants = when {
+        standardVariantsOnly -> listOf(0, 1, 3, 4)
+        p2sStandardVariantsOnly -> listOf(0, 1)
+        else -> profile.nozzleVolumes.indices.toList()
+    }
+    return profile.copy(
+        nozzleTypes = variants.map { profile.nozzleTypes[it] },
+        nozzleVolumes = variants.map { profile.nozzleVolumes[it] },
+        printerExtruderIds = variants.map { profile.printerExtruderIds[it] },
+        printerExtruderVariants = variants.map { profile.printerExtruderVariants[it] },
+        extruderVariantList = if (standardVariantsOnly || p2sStandardVariantsOnly) List(profile.nozzleDiameters.size) { "Direct Drive Standard,Direct Drive High Flow" } else profile.extruderVariantList,
+        nozzleDiameters = List(profile.nozzleDiameters.size) { nozzleDiameter },
+        printerSettingsId = profile.printerSettingsId.replace("0.4 nozzle", "$nozzleDiameter nozzle"),
+    )
+}
