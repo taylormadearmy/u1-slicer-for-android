@@ -123,7 +123,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
 ### Unit tests (`app/src/test/`) - 2306 tests across 256 reported test suites
-- `bambu/BambuNozzleSupportTest.kt` (13) ? saved nozzle defaults and round trips, all target identities, H2D/P2S variant maps, upstream process limits, imported tuning precedence, artifact compatibility, and project metadata.
+- `bambu/BambuNozzleSupportTest.kt` (12) ? saved nozzle defaults and round trips, all target identities, H2D/P2S variant maps, upstream process limits, imported tuning precedence, artifact compatibility, and project metadata.
 - Generic printer coverage includes imported machine-profile validation and identity, saved-job compatibility, filament temperature composition, CC1 and OctoPrint protocol handling, and draft connection/preset persistence.
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
