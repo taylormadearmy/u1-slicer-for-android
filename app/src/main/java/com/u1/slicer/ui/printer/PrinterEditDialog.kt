@@ -204,6 +204,7 @@ fun PrinterEditDialog(
                 if (kind == PrinterKind.BAMBU_LAN) {
                     PrinterChoice("Bambu model", model, BambuModel.entries, { it.name.replace('_', ' ') }) { model = it; result = null }
                     PrinterChoice("Nozzle diameter", bambuNozzleDiameter, BambuConfig.SUPPORTED_NOZZLE_DIAMETERS, { "$it mm" }) { bambuNozzleDiameter = it; result = null }
+                    Text("Changing nozzle diameter requires slicing again.", style = MaterialTheme.typography.bodySmall)
                     if (model == BambuModel.H2D) Text("Use the same nozzle diameter on both hotends.", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(ip, { ip = it; result = null }, label = { Text("Printer IP") }, singleLine = true)
                     OutlinedTextField(accessCode, { accessCode = it; result = null }, label = { Text("Access code") }, singleLine = true)

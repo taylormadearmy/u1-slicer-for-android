@@ -132,7 +132,7 @@ internal object BambuImportedConfigComposer {
                 disposition = Disposition.FIRMWARE_SAFETY,
             )
         }
-        if (nozzleDiameter != 0.4f) com.u1.slicer.machine.NozzleProcessPolicy.validate(values, nozzleDiameter)
+        if (nozzleDiameter != 0.4f) BambuNozzlePolicy.validate(values, nozzleDiameter)
         return Result(values, provenance)
     }
 
@@ -200,7 +200,7 @@ internal object BambuImportedConfigComposer {
                 putAll(com.u1.slicer.machine.NozzleProcessPolicy.defaults(nozzleDiameter))
                 put("print_settings_id", defaultProcessSettingsId(target).replace("0.20mm", java.lang.String.format(java.util.Locale.ROOT, "%.2fmm", nozzleDiameter / 2)))
                 put("min_layer_height", List(machine.nozzleDiameters.size) { (nozzleDiameter * 0.2f).toString() })
-                put("max_layer_height", List(machine.nozzleDiameters.size) { (nozzleDiameter * 0.8f).toString() })
+                put("max_layer_height", List(machine.nozzleDiameters.size) { (nozzleDiameter * 0.7f).toString() })
             }
             if (machine.nozzleTypes.isNotEmpty()) put("nozzle_type", machine.nozzleTypes)
             if (machine.nozzleVolumes.isNotEmpty()) put("nozzle_volume", machine.nozzleVolumes)

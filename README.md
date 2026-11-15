@@ -7,6 +7,7 @@ Native Android slicer for the **Snapmaker U1** and supported rectangular-bed FDM
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
 Current release: `v5.0.6` (`versionCode 506`)
+Local cumulative candidate: `v5.0.8` (`versionCode 508`), including all v5.0.5/v5.0.6 changes and the Bambu nozzle fixes. The isolated v5.0.7-rc1 release was withdrawn; its tag is reserved and must not be reused.
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -113,11 +114,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 2330 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 534 independent device tests (ARM64 required)
+./gradlew testDebugUnitTest              # 2333 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 555 independent device tests (ARM64 required)
 ```
 
-**2875 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2330 JVM tests and 545 device tests. The default device run includes 534 tests; another 11 require upgrade or mock-host fixtures.
+**2899 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2333 JVM tests and 566 device tests. The default device run includes 555 tests; another 11 require upgrade or mock-host fixtures.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

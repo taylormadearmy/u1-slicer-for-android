@@ -631,9 +631,7 @@ class MainActivity : ComponentActivity() {
                     printerViewModel = printerViewModel,
                     onPickFile = { filePickerLauncher.launch(pickFileMimeTypes) },
                     onSaveGcode = {
-                        val suggested = "${com.u1.slicer.data.ModelFileNaming.baseName(
-                            currentModelFileName, "output.gcode"
-                        )}.gcode"
+                        val suggested = viewModel.suggestedGcodeFilename(currentModelFileName)
                         gcodeSaveLauncher.launch(suggested)
                     },
                     prepareContent = {
@@ -686,7 +684,7 @@ class MainActivity : ComponentActivity() {
                                     bambuProject?.source == PreviewBambuProject.Source.GeneratedSliceArtifact
                                 }
                                 if (!canSendSliceArtifactToPrinter(selectedSliceArtifact, previewActivePrinter)) {
-                                    printerViewModel.reportSendError("This slice was created for a different printer")
+                                    printerViewModel.reportSendError("This slice uses a different printer or nozzle diameter. Slice again for the selected printer.")
                                 } else if (previewActivePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN &&
                                     bambuProject != null
                                 ) {
@@ -716,7 +714,7 @@ class MainActivity : ComponentActivity() {
                                     bambuProject?.source == PreviewBambuProject.Source.GeneratedSliceArtifact
                                 }
                                 if (!canSendSliceArtifactToPrinter(selectedSliceArtifact, previewActivePrinter)) {
-                                    printerViewModel.reportSendError("This slice was created for a different printer")
+                                    printerViewModel.reportSendError("This slice uses a different printer or nozzle diameter. Slice again for the selected printer.")
                                 } else if (previewActivePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN &&
                                     bambuProject != null
                                 ) {
@@ -744,9 +742,7 @@ class MainActivity : ComponentActivity() {
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
                             onShareGcode = { viewModel.shareGcode() },
                             onSaveGcode = {
-                                val suggested = "${com.u1.slicer.data.ModelFileNaming.baseName(
-                                    currentModelFileName, "output.gcode"
-                                )}.gcode"
+                                val suggested = viewModel.suggestedGcodeFilename(currentModelFileName)
                                 gcodeSaveLauncher.launch(suggested)
                             },
                             sharedPreviewCameraState = sharedPreviewCameraState,
@@ -3076,7 +3072,7 @@ fun PreviewScreen(
                             "Centauri Carbon 1 support is beta and has not been validated on hardware."
                         activePrinter?.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN -> null
                         !canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter) ->
-                            "This slice was created for a different printer. Slice again for the active printer before sending."
+                            "This slice uses a different printer or nozzle diameter. Slice again for the selected printer before sending."
                         else -> null
                     },
                     primaryActionLabel = if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN || usesPlainGcodeSend(activePrinter)) {

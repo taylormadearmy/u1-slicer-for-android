@@ -17,6 +17,40 @@ import java.util.zip.ZipFile
 class BambuNozzleSupportTest {
     @get:Rule val tmp = TemporaryFolder()
 
+    @Test fun `P2S fine and large nozzles exclude the upstream E3D variant`() {
+        for (diameter in listOf(0.2f, 0.8f)) {
+            val machine = requireNotNull(bambuMachineProfileFor(SlicerTarget.BambuP2S, diameter))
+            assertEquals(listOf(1, 1), machine.printerExtruderIds)
+            assertEquals(listOf("Direct Drive Standard", "Direct Drive High Flow"), machine.printerExtruderVariants)
+        }
+    }
+
+    @Test fun `H2D variant maps follow the selected upstream nozzle profile`() {
+        BambuConfig.SUPPORTED_NOZZLE_DIAMETERS.forEach { diameter ->
+            val profile = requireNotNull(bambuMachineProfileFor(SlicerTarget.BambuH2D, diameter))
+            val restricted = diameter in listOf(0.2f, 0.8f)
+            assertEquals(if (restricted) listOf(1, 1, 2, 2) else listOf(1, 1, 1, 2, 2, 2, 2), profile.printerExtruderIds)
+            assertEquals(if (restricted) listOf(130, 133, 145, 148) else listOf(130, 133, 133, 145, 148, 148, 148), profile.nozzleVolumes)
+            assertEquals(profile.nozzleVolumes.size, profile.nozzleTypes.size)
+            assertEquals(profile.nozzleVolumes.size, profile.printerExtruderVariants.size)
+            assertEquals(listOf(diameter, diameter), profile.nozzleDiameters)
+        }
+    }
+
+    @Test fun `Bambu limits reject heights beyond official nondefault profiles`() {
+        listOf(0.2f, 0.6f, 0.8f).forEach { diameter ->
+            for (height in listOf(diameter * 0.19f, diameter * 0.71f)) {
+                val error = assertThrows(IllegalArgumentException::class.java) {
+                    BambuImportedConfigComposer.compose(SlicerTarget.BambuP1S,
+                        explicitOverrides = mapOf("layer_height" to height.toString()), nozzleDiameter = diameter)
+                }
+                assertTrue(error.message!!.contains("compatible process"))
+            }
+            val config = BambuImportedConfigComposer.compose(SlicerTarget.BambuP1S, nozzleDiameter = diameter).config
+            assertEquals(listOf((diameter * 0.7f).toString()), config["max_layer_height"])
+        }
+    }
+
     @Test fun `saved diameters round trip and legacy printers retain 04`() {
         val legacy = JSONObject().put("ip", "192.168.1.2").put("accessCode", "test")
             .put("serial", "TEST").put("model", "P1S")
