@@ -18,7 +18,7 @@ data class ImportedOrcaBundle(
     val processes: List<ProcessProfile>,
 )
 
-/** Streams Orca preset bundles without extracting archive paths to disk. */
+/** Resolves JSON and streamed Orca bundles without extracting archive paths to disk. */
 class OrcaProfileBundleImporter(
     private val loadMissing: (String, OrcaProfileType, String) -> String?,
     private val validateMachine: suspend (MachineProfile) -> MachineProfileValidationResult,
@@ -27,11 +27,28 @@ class OrcaProfileBundleImporter(
     private val maxEntryBytes: Int = DEFAULT_MAX_ENTRY_BYTES,
     private val maxTotalBytes: Int = DEFAULT_MAX_TOTAL_BYTES,
 ) {
-    suspend fun import(input: InputStream, fileName: String): ImportedOrcaBundle = withContext(Dispatchers.IO) {
+    suspend fun import(
+        input: InputStream,
+        fileName: String,
+        expectedType: OrcaProfileType? = null,
+    ): ImportedOrcaBundle = withContext(Dispatchers.IO) {
+        val buffered = input.buffered()
+        buffered.mark(4)
+        val signature = List(4) { buffered.read() }
+        buffered.reset()
+        val archive = signature == listOf(0x50, 0x4b, 3, 4)
+        val presets = if (archive) readBundle(buffered, fileName) else readJson(buffered, fileName, expectedType)
+        require(expectedType == null || presets.any { it.type == expectedType }) {
+            "Select a ${expectedType?.name?.lowercase()} preset."
+        }
+        resolvePresets(presets, expectedType)
+    }
+
+    private fun readBundle(input: InputStream, fileName: String): List<RawPreset> {
         val expected = when {
             fileName.endsWith(".orca_printer", ignoreCase = true) -> BundleKind.PRINTER
             fileName.endsWith(".orca_filament", ignoreCase = true) -> BundleKind.FILAMENT
-            else -> throw IllegalArgumentException("Choose an .orca_printer or .orca_filament bundle.")
+            else -> null // Providers may rename files; the manifest owns the archive type.
         }
         val files = readArchive(input)
         val manifestText = files[MANIFEST]
@@ -41,7 +58,7 @@ class OrcaProfileBundleImporter(
         }
         val kind = BundleKind.fromManifest(manifest.optString("bundle_type"))
             ?: throw IllegalArgumentException("Orca bundle has an unsupported bundle_type.")
-        require(kind == expected) { "Bundle extension does not match bundle_type." }
+        require(expected == null || kind == expected) { "Bundle extension does not match bundle_type." }
         val declaration = declaredProfiles(kind, manifest)
         require(declaration.paths.isNotEmpty()) { "Orca bundle declares no profiles." }
 
@@ -54,8 +71,8 @@ class OrcaProfileBundleImporter(
             }
             val type = profileType(json)
                 ?: throw IllegalArgumentException("Orca profile $path has no supported profile type.")
-            val expectedType = declaration.types[path]
-            require(expectedType == null || expectedType == type) {
+            val declaredType = declaration.types[path]
+            require(declaredType == null || declaredType == type) {
                 "Orca profile $path does not match its declared category."
             }
             RawPreset(path, text, json, type, declaration.vendors[path])
@@ -66,7 +83,46 @@ class OrcaProfileBundleImporter(
         if (kind == BundleKind.FILAMENT && presets.none { it.type == OrcaProfileType.FILAMENT }) {
             throw IllegalArgumentException("Orca filament bundle contains no filament profile.")
         }
+        return presets
+    }
 
+    private fun readJson(input: InputStream, fileName: String, expectedType: OrcaProfileType?): List<RawPreset> {
+        val bytes = input.readBytesLimited(maxTotalBytes)
+        val text = decodeUtf8(bytes, fileName).removePrefix("\uFEFF").trim()
+        val objects = if (text.startsWith("[")) JSONArray(text) else {
+            val root = JSONObject(text)
+            root.optJSONArray("process_profiles") ?: root.optJSONArray("filaments")
+                ?: JSONArray().put(root)
+        }
+        require(objects.length() in 1..MAX_ENTRIES) { "Import between 1 and $MAX_ENTRIES presets." }
+        return (0 until objects.length()).map { index ->
+            val json = objects.getJSONObject(index)
+            require(!json.has("type") || json.optString("type") in setOf("machine", "filament", "process")) {
+                "Unsupported preset type: ${json.optString("type")}."
+            }
+            val type = profileType(json) ?: expectedType
+                ?: throw IllegalArgumentException("Preset has no supported profile type.")
+            if (json.optString("name").isBlank() && type != OrcaProfileType.FILAMENT) {
+                val fallback = fileName.substringBeforeLast('.')
+                json.put("name", if (objects.length() == 1) fallback else "$fallback #${index + 1}")
+            }
+            RawPreset("$index.json", json.toString(), json, type, null)
+        }
+    }
+
+    private fun InputStream.readBytesLimited(limit: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = read(buffer)
+            if (count < 0) break
+            require(output.size() + count <= limit) { "Preset JSON is too large." }
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private suspend fun resolvePresets(presets: List<RawPreset>, expectedType: OrcaProfileType?): ImportedOrcaBundle {
         val local = presets.groupBy { preset ->
             LocalPresetKey(preset.type, inferVendor(preset), preset.json.optString("name"))
         }
@@ -78,12 +134,17 @@ class OrcaProfileBundleImporter(
         val machines = mutableListOf<MachineProfile>()
         val filaments = mutableListOf<FilamentProfile>()
         val processes = mutableListOf<ProcessProfile>()
-        for (preset in presets.filterNot { it.json.optString("instantiation") == "false" }) {
+        for (preset in presets.filterNot { it.json.optString("instantiation") == "false" }
+            .filter { expectedType == null || it.type == expectedType }) {
             val vendor = inferVendor(preset)
             val resolved = OrcaProfileResolver.resolve(preset.text) { parentName ->
                 val parentVendor = vendorForParent(vendor, preset.type, parentName)
                 localPreset(local, vendor, parentVendor, preset.type, parentName)?.text
                     ?: loadMissing(parentVendor, preset.type, parentName)
+                    ?: throw IllegalArgumentException(
+                        "Missing parent preset \"$parentName\" for \"${preset.json.optString("name")}\". " +
+                            "Export a bundle containing its parent presets, or a project 3MF with resolved settings.",
+                    )
             } ?: throw IllegalArgumentException(
                 "Could not resolve ${preset.json.optString("name", preset.path)}.",
             )
@@ -92,8 +153,9 @@ class OrcaProfileBundleImporter(
                     val vendorQualified = JSONObject(resolved).apply {
                         if (optString("vendor").isBlank()) put("vendor", vendor)
                     }.toString()
-                    val profile = MachineProfile.fromResolvedOrcaJson(vendorQualified, MachineFamily.GENERIC)
-                        ?: throw IllegalArgumentException("Imported machine profile is not printable.")
+                    val profile = MachineProfile.fromSnapshot(
+                        com.u1.slicer.slice.GenericMachineProfile.fromJson(vendorQualified),
+                    )
                     require(PrinterWizardViewModel.isWizardSupported(profile)) {
                         "Imported machine uses an unsupported delta or multi-material configuration."
                     }
@@ -118,7 +180,7 @@ class OrcaProfileBundleImporter(
                 }
             }
         }
-        ImportedOrcaBundle(machines, filaments, processes)
+        return ImportedOrcaBundle(machines, filaments, processes)
     }
 
     private fun readArchive(input: InputStream): Map<String, String> {

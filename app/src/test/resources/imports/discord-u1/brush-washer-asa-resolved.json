@@ -1,0 +1,100 @@
+{
+  "type": "filament",
+  "name": "Elegoo ASA U1 - brush-washer project snapshot",
+  "filament_settings_id": [
+    "Elegoo ASA U1 - brush-washer project snapshot"
+  ],
+  "filament_type": [
+    "ASA"
+  ],
+  "filament_colour": [
+    "#101010"
+  ],
+  "filament_density": [
+    "1.1"
+  ],
+  "filament_cost": [
+    "20"
+  ],
+  "filament_flow_ratio": [
+    "0.98"
+  ],
+  "filament_max_volumetric_speed": [
+    "12"
+  ],
+  "nozzle_temperature": [
+    "270"
+  ],
+  "nozzle_temperature_initial_layer": [
+    "270"
+  ],
+  "hot_plate_temp": [
+    "90"
+  ],
+  "hot_plate_temp_initial_layer": [
+    "90"
+  ],
+  "textured_plate_temp": [
+    "90"
+  ],
+  "textured_plate_temp_initial_layer": [
+    "90"
+  ],
+  "cool_plate_temp": [
+    "0"
+  ],
+  "cool_plate_temp_initial_layer": [
+    "0"
+  ],
+  "chamber_temperature": [
+    "65"
+  ],
+  "filament_retraction_length": [
+    "nil"
+  ],
+  "filament_retraction_speed": [
+    "nil"
+  ],
+  "fan_min_speed": [
+    "10"
+  ],
+  "fan_max_speed": [
+    "80"
+  ],
+  "overhang_fan_speed": [
+    "80"
+  ],
+  "additional_cooling_fan_speed": [
+    "0"
+  ],
+  "fan_cooling_layer_time": [
+    "35"
+  ],
+  "slow_down_layer_time": [
+    "3"
+  ],
+  "slow_down_min_speed": [
+    "20"
+  ],
+  "close_fan_the_first_x_layers": [
+    "3"
+  ],
+  "full_fan_speed_layer": [
+    "0"
+  ],
+  "enable_pressure_advance": [
+    "1"
+  ],
+  "pressure_advance": [
+    "0.04"
+  ],
+  "filament_minimal_purge_on_wipe_tower": [
+    "15"
+  ],
+  "filament_retract_before_wipe": [
+    "85%"
+  ],
+  "source_project": "brush-washer_v2.3mf",
+  "source_project_sha256": "fcdbc1fbf9a182f89cc4a88a8fd1a2092414bde90e3e67ec5d9b2c1d401deae4",
+  "source_filament_index": "2 (1-based)"
+}

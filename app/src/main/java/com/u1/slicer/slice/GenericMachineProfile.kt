@@ -79,13 +79,25 @@ class GenericMachineProfile private constructor(
         return config
     }
 
-    private fun normalized(key: String, value: Any): Any = if (value is List<*> &&
-        key !in setOf("printable_area", "bed_exclude_area") &&
-        !key.startsWith("machine_max_") && !key.startsWith("machine_min_")) {
-        require(value.isNotEmpty() || key == "extruder_offset") { "Empty array for '$key'" }
-        if (value.isEmpty()) List(extruderCount) { "0x0" }
-        else List(extruderCount) { value.getOrElse(it) { value.last() }.toString() }
-    } else value
+    private fun normalized(key: String, value: Any): Any {
+        if (value is List<*> && key == "nozzle_type") {
+            // The engine has one nozzle-material field. Mixed tools must remain unspecified.
+            return value.map { it.toString() }.distinct().singleOrNull() ?: "undefine"
+        }
+        if (value is List<*> && key == "nozzle_volume") {
+            require(value.isNotEmpty() && value.distinct().size == 1) {
+                "Nozzle volume differs between tools; this engine requires one value."
+            }
+            return value.first().toString()
+        }
+        return if (value is List<*> &&
+            key !in setOf("printable_area", "bed_exclude_area") &&
+            !key.startsWith("machine_max_") && !key.startsWith("machine_min_")) {
+            require(value.isNotEmpty() || key == "extruder_offset") { "Empty array for '$key'" }
+            if (value.isEmpty()) List(extruderCount) { "0x0" }
+            else List(extruderCount) { value.getOrElse(it) { value.last() }.toString() }
+        } else value
+    }
 
     companion object {
         fun fromJson(json: String): GenericMachineProfile = import(json)
@@ -122,7 +134,9 @@ class GenericMachineProfile private constructor(
                 result.putAll(readSettings(doc).filterKeys { it !in METADATA_KEYS })
                 return result
             }
-            val values = resolve(leaves.single(), emptySet()).toMutableMap()
+            val values = com.u1.slicer.machine.OrcaPresetCompatibility.standardMachine(
+                resolve(leaves.single(), emptySet()),
+            ).toMutableMap()
             TEMPLATE_KEYS.forEach { key ->
                 val value = values[key]
                 if (value is List<*>) {
@@ -151,7 +165,7 @@ class GenericMachineProfile private constructor(
             require(strings(values["printer_extruder_id"]).size <= nozzles.size && strings(values["physical_extruder_map"]).size <= nozzles.size) { "Invalid physical extruder map" }
             require(values["printer_structure"]?.toString()?.lowercase() != "delta") { "Delta printers are not supported" }
             val polygon = strings(values["printable_area"])
-            require(polygon.size == 4) { "Only rectangular origin-based beds are supported" }
+            require(polygon.size == 4) { "Only rectangular beds are supported" }
             val points = polygon.map { point ->
                 val xy = point.split('x')
                 require(xy.size == 2) { "Invalid printable area point '$point'" }
@@ -160,8 +174,14 @@ class GenericMachineProfile private constructor(
             require(points.all { (x, y) -> x != null && y != null && x.isFinite() && y.isFinite() }) { "Printable area must have finite coordinates" }
             val width = positive(points.maxOf { it.first!! }.toString(), "bed width", 1f, 2000f)
             val depth = positive(points.maxOf { it.second!! }.toString(), "bed depth", 1f, 2000f)
-            require(points.toSet() == setOf(0f to 0f, width to 0f, width to depth, 0f to depth)) { "Only rectangular beds starting at 0,0 are supported" }
-            values["printable_area"] = listOf("0x0", "${number(width)}x0", "${number(width)}x${number(depth)}", "0x${number(depth)}")
+            val minX = points.minOf { it.first!! }
+            val minY = points.minOf { it.second!! }
+            require(minX >= 0 && minY >= 0 && width > minX && depth > minY &&
+                points.toSet() == setOf(minX to minY, width to minY, width to depth, minX to depth)) {
+                "Only rectangular beds with non-negative coordinates are supported"
+            }
+            // UI dimensions describe the origin-to-maximum envelope. Native slicing keeps the exact inset polygon.
+            values["printable_area"] = listOf("${number(minX)}x${number(minY)}", "${number(width)}x${number(minY)}", "${number(width)}x${number(depth)}", "${number(minX)}x${number(depth)}")
             val exclusion = strings(values["bed_exclude_area"])
             require(exclusion.isEmpty() || exclusion == listOf("0x0") || exclusion.size == 4) { "Only rectangular bed exclusion polygons are supported" }
             exclusion.forEach { point ->
@@ -237,10 +257,14 @@ class GenericMachineProfile private constructor(
             "retraction_length", "retraction_speed", "deretraction_speed", "retraction_minimum_travel", "retract_before_wipe",
             "retract_when_changing_layer", "retract_restart_extra", "z_hop", "z_hop_types", "retract_lift_above", "retract_lift_below", "wipe", "wipe_distance",
             "min_layer_height", "max_layer_height", "extruder_clearance_radius", "extruder_clearance_height_to_rod", "extruder_clearance_height_to_lid",
-            "use_relative_e_distances", "disable_m73", "silent_mode", "auxiliary_fan", "nozzle_type", "nozzle_volume",
+            "use_relative_e_distances", "disable_m73", "silent_mode", "auxiliary_fan", "nozzle_type", "nozzle_volume", "support_chamber_temp_control",
         )
 
         private val PROCESS_KEYS = setOf(
+            "bridge_density", "bridge_flow", "internal_bridge_speed", "extra_perimeters_on_overhangs", "gap_fill_target",
+            "internal_solid_infill_line_width", "min_width_top_surface", "overhang_reverse", "seam_gap", "slowdown_for_curled_perimeters",
+            "support_bottom_interface_spacing", "support_top_z_distance", "support_ironing", "top_shell_thickness",
+            "tree_support_auto_brim", "tree_support_brim_width",
             "layer_height", "initial_layer_print_height", "wall_loops", "top_shell_layers", "bottom_shell_layers", "sparse_infill_density", "sparse_infill_pattern",
             "line_width", "outer_wall_line_width", "inner_wall_line_width", "top_surface_line_width", "sparse_infill_line_width", "initial_layer_line_width", "support_line_width",
             "outer_wall_speed", "inner_wall_speed", "sparse_infill_speed", "internal_solid_infill_speed", "top_surface_speed", "initial_layer_speed", "initial_layer_infill_speed",
@@ -253,7 +277,7 @@ class GenericMachineProfile private constructor(
             "brim_type", "brim_width", "brim_object_gap", "skirt_loops", "skirt_distance", "skirt_height", "seam_position", "elefant_foot_compensation",
             "top_surface_pattern", "bottom_surface_pattern", "ironing_type", "ironing_speed", "ironing_flow", "ironing_spacing", "curr_bed_type",
             "filament_type", "filament_colour", "extruder_colour", "filament_diameter", "filament_flow_ratio", "filament_density", "filament_cost", "filament_max_volumetric_speed",
-            "nozzle_temperature", "nozzle_temperature_initial_layer", "hot_plate_temp", "hot_plate_temp_initial_layer", "textured_plate_temp", "textured_plate_temp_initial_layer",
+            "chamber_temperature", "nozzle_temperature", "nozzle_temperature_initial_layer", "hot_plate_temp", "hot_plate_temp_initial_layer", "textured_plate_temp", "textured_plate_temp_initial_layer",
             "cool_plate_temp", "cool_plate_temp_initial_layer", "fan_min_speed", "fan_max_speed", "overhang_fan_speed", "additional_cooling_fan_speed", "fan_cooling_layer_time",
             "reduce_fan_stop_start_freq", "close_fan_the_first_x_layers", "full_fan_speed_layer", "slow_down_layer_time", "slow_down_min_speed", "enable_pressure_advance", "pressure_advance",
         )

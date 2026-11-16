@@ -42,8 +42,14 @@ class AppContainer(context: Context) {
     val profileCache = ProfileCache(machineProfilesDir)
     val cachedOrcaProfileLookup = CachedOrcaProfileLookup(profileCache, vendorCatalogClient)
     val machineProfileValidator = NativeMachineProfileValidator(context.applicationContext)
+    private val bundledFilamentParents = context.assets.list("bambu_profile_chain").orEmpty().toSet()
     val orcaProfileBundleImporter = OrcaProfileBundleImporter(
-        loadMissing = cachedOrcaProfileLookup::resolveByName,
+        loadMissing = { vendor, type, name ->
+            if (vendor == "BBL" && type == com.u1.slicer.machine.OrcaProfileType.FILAMENT &&
+                "$name.json" in bundledFilamentParents) {
+                context.assets.open("bambu_profile_chain/$name.json").bufferedReader().use { it.readText() }
+            } else cachedOrcaProfileLookup.resolveByName(vendor, type, name)
+        },
         validateMachine = machineProfileValidator::validate,
         parseFilaments = { json -> com.u1.slicer.ui.parseFilamentJson(json) },
         parseProcesses = ProcessProfileParser::parse,

@@ -1,6 +1,7 @@
 package com.u1.slicer.machine
 
 import org.json.JSONObject
+import org.json.JSONArray
 
 /** Resolves Orca machine presets into a single flat, child-overrides-parent JSON object. */
 object OrcaProfileResolver {
@@ -39,7 +40,15 @@ object OrcaProfileResolver {
         while (keys.hasNext()) {
             val key = keys.next()
             if (key !in BOOKKEEPING_KEYS) {
-                merged.put(key, current.get(key))
+                val value = current.get(key)
+                val inherited = merged.optJSONArray(key)
+                if (value is JSONArray && inherited != null) {
+                    merged.put(key, JSONArray().apply {
+                        for (i in 0 until value.length()) {
+                            put(if (value.optString(i) == "nil") inherited.opt(i) ?: value.get(i) else value.get(i))
+                        }
+                    })
+                } else merged.put(key, value)
             }
         }
         BOOKKEEPING_KEYS.forEach(merged::remove)

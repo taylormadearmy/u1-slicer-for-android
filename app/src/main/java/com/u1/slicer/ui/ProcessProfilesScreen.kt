@@ -15,7 +15,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -23,7 +22,7 @@ import com.u1.slicer.data.ProcessProfile
 
 /**
  * F87: list of imported OrcaSlicer process profiles.
- * - Import JSON via the action bar.
+ * - Import JSON or an Orca bundle via the action bar.
  * - Tap a profile to make it the active selection (slicing uses its keys).
  * - Long-press / Edit menu to rename or delete.
  */
@@ -32,13 +31,12 @@ import com.u1.slicer.data.ProcessProfile
 fun ProcessProfilesScreen(
     profiles: List<ProcessProfile>,
     activeId: String?,
-    onImport: (json: String, fallbackName: String) -> Unit,
+    onImport: (android.net.Uri) -> Unit,
     onSetActive: (String?) -> Unit,
     onRename: (id: String, name: String) -> Unit,
     onDelete: (id: String) -> Unit,
     onBack: () -> Unit,
 ) {
-    val context = LocalContext.current
     var importError by remember { mutableStateOf<String?>(null) }
     var renamingId by remember { mutableStateOf<String?>(null) }
     var deletingId by remember { mutableStateOf<String?>(null) }
@@ -48,12 +46,7 @@ fun ProcessProfilesScreen(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         try {
-            val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
-                ?: throw Exception("Could not read file")
-            // Derive a fallback name from the file (best effort).
-            val displayName = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')
-                ?: "Imported profile"
-            onImport(json, displayName)
+            onImport(uri)
         } catch (e: Exception) {
             importError = e.message ?: "Import failed"
         }
@@ -116,7 +109,7 @@ fun ProcessProfilesScreen(
                 actions = {
                     TextButton(
                         onClick = {
-                            importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            importLauncher.launch(arrayOf("*/*"))
                         },
                         modifier = Modifier.padding(end = 4.dp)
                     ) {
@@ -126,7 +119,7 @@ fun ProcessProfilesScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("Import JSON")
+                        Text("Import profile")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

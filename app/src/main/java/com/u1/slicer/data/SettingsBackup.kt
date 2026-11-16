@@ -326,6 +326,7 @@ object SettingsBackup {
                     p.enablePressureAdvance?.let { put("enablePressureAdvance", it) }
                     p.pressureAdvance?.let { put("pressureAdvance", it.toDouble()) }
                     p.filamentMinimalPurgeOnWipeTower?.let { put("filamentMinimalPurgeOnWipeTower", it.toDouble()) }
+                    p.chamberTemperature?.let { put("chamberTemperature", it) }
                 })
             }
         }
@@ -360,6 +361,7 @@ object SettingsBackup {
                 enablePressureAdvance = if (obj.has("enablePressureAdvance")) obj.getBoolean("enablePressureAdvance") else null,
                 pressureAdvance = if (obj.has("pressureAdvance")) obj.getDouble("pressureAdvance").toFloat() else null,
                 filamentMinimalPurgeOnWipeTower = if (obj.has("filamentMinimalPurgeOnWipeTower")) obj.getDouble("filamentMinimalPurgeOnWipeTower").toFloat() else null,
+                chamberTemperature = if (obj.has("chamberTemperature")) obj.getInt("chamberTemperature") else null,
             )
         }
     }

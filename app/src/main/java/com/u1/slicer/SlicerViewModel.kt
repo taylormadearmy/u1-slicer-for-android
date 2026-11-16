@@ -1,5 +1,6 @@
 package com.u1.slicer
 
+import com.u1.slicer.ui.documentDisplayName
 import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
@@ -2171,13 +2172,30 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         processProfilesRepo.activeProfile
             .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    /** F87: import a process profile from a JSON file picked by the user. */
-    fun importProcessProfilesFromJson(json: String, fallbackName: String, onResult: (Int) -> Unit = {}) {
+    fun importProcessProfilesFromJson(json: String, fallbackName: String, onResult: (Int) -> Unit = {}) =
+        importProcessProfiles(onResult) {
+            container.orcaProfileBundleImporter.import(
+                json.byteInputStream(), "$fallbackName.json", com.u1.slicer.machine.OrcaProfileType.PROCESS,
+            ).processes
+        }
+
+    fun importProcessProfilesFromDocument(uri: Uri) = importProcessProfiles({}) {
+        val context = getApplication<Application>()
+        val name = context.documentDisplayName(uri) ?: "process.json"
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            container.orcaProfileBundleImporter.import(
+                input, name, com.u1.slicer.machine.OrcaProfileType.PROCESS,
+            ).processes
+        } ?: error("Could not read preset file")
+    }
+
+    private fun importProcessProfiles(onResult: (Int) -> Unit, read: suspend () -> List<com.u1.slicer.data.ProcessProfile>) {
         viewModelScope.launch {
             val parsed = try {
-                com.u1.slicer.data.ProcessProfileParser.parse(json, fallbackName)
+                read()
             } catch (e: Exception) {
-                _toastEvents.tryEmit("Import failed: ${e.message ?: "Could not parse JSON"}")
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _toastEvents.tryEmit("Import failed: ${e.message ?: "Could not parse preset"}")
                 onResult(0)
                 return@launch
             }
@@ -5256,12 +5274,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val cfg = nozzleDiameter?.let { U1NozzlePolicy.baseConfig(_config.value, it) } ?: _config.value
         if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
             val machine = requireNotNull(selectedGenericProfile()) { "Import a Klipper machine profile before slicing" }
-            require(!info.hasLayerToolChanges && info.usedExtruderIndices.all { it <= machine.extruderCount }) {
-                "The model references tools not available on the selected machine."
-            }
-            require(machine.extruderCount > 1 || (!info.hasPaintData && !info.hasMultiExtruderAssignments)) {
-                "Single-nozzle machines require an unpainted single-filament model."
-            }
+            com.u1.slicer.slice.validateGenericModelTools(info, machine.extruderCount, plateId)
             val genericOverrides = buildExplicitBambuProfileOverrides(
                 buildProfileOverrides(cfg, machine.extruderCount, hasSourceConfig = _sourceConfig.value != null),
                 slicingOverrides.value,
@@ -10050,6 +10063,10 @@ internal fun buildFilamentLibrarySettings(
     }
 
     emitInt("nozzle_temperature_initial_layer") { it.nozzleTempInitialLayer }
+    // An unspecified chamber target is off for that slot, rather than inheriting another spool's heat.
+    if (profilesPerSlot.any { it?.chamberTemperature != null }) {
+        result["chamber_temperature"] = profilesPerSlot.map { (it?.chamberTemperature ?: 0).toString() }
+    }
     emitInt("hot_plate_temp_initial_layer") { it.bedTempInitialLayer }
     emitFloat("filament_flow_ratio") { it.flowRatio }
     emitFloat("filament_max_volumetric_speed") { it.maxVolumetricSpeed }

@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.u1.slicer.ui.documentDisplayName
 import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.MachineKind
@@ -40,9 +41,7 @@ import com.u1.slicer.slice.GenericMachineProfile
 import com.u1.slicer.slice.CosmosMachineProfile
 import com.u1.slicer.printer.normalizePrintHostUrl
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.UUID
 
 @Composable
@@ -81,20 +80,15 @@ fun PrinterEditDialog(
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             try {
-                profile = withContext(Dispatchers.IO) {
-                    val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
-                        val chars = CharArray(1_048_577)
-                        var count = 0
-                        while (count < chars.size) {
-                            val read = reader.read(chars, count, chars.size - count)
-                            if (read < 0) break
-                            count += read
-                        }
-                        require(count <= 1_048_576) { "Machine profile must be smaller than 1 MiB" }
-                        String(chars, 0, count)
-                    } ?: error("Cannot read profile")
-                    GenericMachineProfile.fromJson(text)
-                }
+                val container = (context.applicationContext as com.u1.slicer.U1SlicerApplication).container
+                val name = context.documentDisplayName(uri) ?: "profile.json"
+                val imported = context.contentResolver.openInputStream(uri)?.use { input ->
+                    container.orcaProfileBundleImporter.import(
+                        input, name, com.u1.slicer.machine.OrcaProfileType.MACHINE,
+                    )
+                } ?: error("Cannot read profile")
+                require(imported.machines.size == 1) { "Select exactly one machine profile." }
+                profile = GenericMachineProfile.fromJson(imported.machines.single().machineJson)
                 machine = if (profile?.gcodeFlavor == "klipper") MachineKind.GENERIC_KLIPPER else MachineKind.GENERIC_MARLIN
                 result = null
             } catch (error: Exception) {
@@ -186,7 +180,7 @@ fun PrinterEditDialog(
                 }
                 if (machine == MachineKind.GENERIC_KLIPPER || machine == MachineKind.GENERIC_MARLIN) {
                     Text(profile?.name ?: "Import a resolved Orca machine JSON profile, or a JSON array containing the profile and its parents. Supported profiles use Klipper or Marlin with up to four independent nozzles.", style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) { Text("Import machine profile") }
+                    TextButton(onClick = { importer.launch(arrayOf("*/*")) }) { Text("Import machine profile") }
                     if (kind == PrinterKind.MOONRAKER && allowExperimentalChoices && profile != CosmosMachineProfile.profile) {
                         TextButton(onClick = {
                             profile = CosmosMachineProfile.profile

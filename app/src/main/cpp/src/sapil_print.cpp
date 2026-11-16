@@ -408,8 +408,14 @@ static void validateGenericConfig(const Slic3r::DynamicPrintConfig& dpc, const S
         start->value != config.machine_start_gcode || end->value != config.machine_end_gcode) {
         throw std::runtime_error("Selected independent-extruder machine profile is missing or inconsistent");
     }
+    const double min_x = area->values.front().x();
+    const double min_y = area->values.front().y();
+    if (!std::isfinite(min_x) || !std::isfinite(min_y) || min_x < 0 || min_y < 0 ||
+        min_x >= config.bed_size_x || min_y >= config.bed_size_y) {
+        throw std::runtime_error("Selected machine printable area must be a non-negative rectangle");
+    }
     const std::vector<Slic3r::Vec2d> expected_area = {
-        {0, 0}, {config.bed_size_x, 0}, {config.bed_size_x, config.bed_size_y}, {0, config.bed_size_y}
+        {min_x, min_y}, {config.bed_size_x, min_y}, {config.bed_size_x, config.bed_size_y}, {min_x, config.bed_size_y}
     };
     // JNI geometry is float, while Orca JSON parses double. Allow only rounding
     // error at the supported 2 m bed limit, not a different physical envelope.
@@ -443,12 +449,13 @@ static void validateGenericBounds(const Slic3r::DynamicPrintConfig& dpc, const S
     const auto* area = dpc.option<Slic3r::ConfigOptionPoints>("printable_area");
     const auto* height = dpc.option<Slic3r::ConfigOptionFloat>("printable_height");
     double bed_x = 0, bed_y = 0;
+    double bed_min_x = area->values.front().x(), bed_min_y = area->values.front().y();
     for (const auto& point : area->values) {
         bed_x = std::max(bed_x, point.x());
         bed_y = std::max(bed_y, point.y());
     }
     constexpr double epsilon = 0.01;
-    if (bounds.min.x() < -epsilon || bounds.min.y() < -epsilon || bounds.min.z() < -epsilon ||
+    if (bounds.min.x() < bed_min_x - epsilon || bounds.min.y() < bed_min_y - epsilon || bounds.min.z() < -epsilon ||
         bounds.max.x() > bed_x + epsilon || bounds.max.y() > bed_y + epsilon || bounds.max.z() > height->value + epsilon) {
         throw std::runtime_error("Model or generated helper extrusions exceed the selected machine's printable volume");
     }
@@ -1164,6 +1171,10 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 // print-time estimation.  They are sourced from the merged printer+process
                 // profile JSON so we don't need to hardcode U1-specific values here.
                 static const char* profile_keys[] = {
+                    "bridge_density", "bridge_flow", "internal_bridge_speed", "extra_perimeters_on_overhangs", "gap_fill_target",
+                    "internal_solid_infill_line_width", "min_width_top_surface", "overhang_reverse", "seam_gap", "slowdown_for_curled_perimeters",
+                    "support_bottom_interface_spacing", "support_top_z_distance", "support_ironing", "top_shell_thickness",
+                    "tree_support_auto_brim", "tree_support_brim_width",
                     // Machine geometry + plate type
                     "printable_area",
                     "printable_height",
@@ -1171,6 +1182,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "nozzle_diameter",
                     "filament_diameter",
                     // Bed temperature (per plate type)
+                    "chamber_temperature",
                     "hot_plate_temp",
                     "hot_plate_temp_initial_layer",
                     // G-code templates

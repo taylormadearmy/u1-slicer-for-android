@@ -11,7 +11,7 @@ class OrcaProfileImportWiringTest {
         val settings = File("src/main/java/com/u1/slicer/ui/SettingsScreen.kt").readText()
 
         assertTrue(card.contains("ActivityResultContracts.OpenDocument"))
-        assertTrue(card.contains("Import .orca_printer bundle"))
+        assertTrue(card.contains("Import Orca printer profile"))
         assertTrue(settings.contains("orcaProfileBundleImporter.import"))
         assertTrue(settings.contains("addProfilePrinter"))
     }
@@ -20,7 +20,7 @@ class OrcaProfileImportWiringTest {
     fun `filament library routes orca filament bundles through the same importer`() {
         val source = File("src/main/java/com/u1/slicer/ui/FilamentScreen.kt").readText()
 
-        assertTrue(source.contains(".orca_filament"))
+        assertTrue(source.contains("OrcaProfileType.FILAMENT"))
         assertTrue(source.contains("orcaProfileBundleImporter.import"))
         assertTrue(source.contains("parseFilamentJson"))
     }

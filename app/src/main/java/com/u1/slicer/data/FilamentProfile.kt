@@ -35,4 +35,5 @@ data class FilamentProfile(
     val enablePressureAdvance: Boolean? = null,          // enable_pressure_advance
     val pressureAdvance: Float? = null,                  // pressure_advance
     val filamentMinimalPurgeOnWipeTower: Float? = null,  // filament_minimal_purge_on_wipe_tower
+    val chamberTemperature: Int? = null,                // chamber_temperature (degrees C)
 )

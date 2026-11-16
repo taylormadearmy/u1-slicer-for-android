@@ -159,17 +159,12 @@ fun FilamentScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         importScope.launch {
             try {
-                val providerName = context.documentDisplayName(uri)
-                val name = providerName ?: if (
-                    context.contentResolver.getType(uri) in setOf("application/zip", "application/octet-stream")
-                ) "profile.orca_filament" else "profile.json"
+                val name = context.documentDisplayName(uri) ?: "profile.json"
+                val container = (context.applicationContext as U1SlicerApplication).container
                 val profiles = context.contentResolver.openInputStream(uri)?.use { input ->
-                    if (name.endsWith(".orca_filament", ignoreCase = true)) {
-                        val container = (context.applicationContext as U1SlicerApplication).container
-                        container.orcaProfileBundleImporter.import(input, name).filaments
-                    } else {
-                        parseFilamentJson(input.bufferedReader().readText(), context)
-                    }
+                    container.orcaProfileBundleImporter.import(
+                        input, name, com.u1.slicer.machine.OrcaProfileType.FILAMENT,
+                    ).filaments
                 } ?: throw Exception("Could not read file")
                 if (profiles.isEmpty()) throw Exception("No valid filament profiles found in file")
                 onImport(profiles)
@@ -217,12 +212,7 @@ fun FilamentScreen(
                 actions = {
                     TextButton(
                         onClick = {
-                            importLauncher.launch(arrayOf(
-                                "application/json",
-                                "application/zip",
-                                "application/octet-stream",
-                                "*/*",
-                            ))
+                            importLauncher.launch(arrayOf("*/*"))
                         },
                         modifier = Modifier.padding(end = 4.dp)
                     ) {
@@ -639,6 +629,7 @@ private fun FilamentEditDialog(
     var fullFanSpeedLayer by remember { mutableStateOf(filament?.fullFanSpeedLayer?.toString() ?: "") }
     var enablePressureAdvance by remember { mutableStateOf(filament?.enablePressureAdvance) }
     var pressureAdvance by remember { mutableStateOf(filament?.pressureAdvance?.toString() ?: "") }
+    var chamberTemperature by remember { mutableStateOf(filament?.chamberTemperature?.toString() ?: "") }
     var filamentMinimalPurge by remember { mutableStateOf(filament?.filamentMinimalPurgeOnWipeTower?.toString() ?: "") }
 
     val materials = listOf("PLA", "PETG", "ABS", "TPU", "ASA", "PA", "PVA")
@@ -743,6 +734,8 @@ private fun FilamentEditDialog(
                 }
                 OptionalDecimalField("Pressure advance value", pressureAdvance, Modifier.fillMaxWidth()) { pressureAdvance = it }
 
+                OptionalDecimalField("Chamber temperature (\u00B0C)", chamberTemperature, Modifier.fillMaxWidth()) { chamberTemperature = it }
+
                 SectionLabel("Wipe tower")
                 OptionalDecimalField("Minimal purge (mm\u00B3)", filamentMinimalPurge, Modifier.fillMaxWidth()) { filamentMinimalPurge = it }
             }
@@ -776,11 +769,12 @@ private fun FilamentEditDialog(
                         enablePressureAdvance = enablePressureAdvance,
                         pressureAdvance = pressureAdvance.toFloatLenient(),
                         filamentMinimalPurgeOnWipeTower = filamentMinimalPurge.toFloatLenient(),
+                        chamberTemperature = chamberTemperature.toIntOrNull(),
                         isDefault = filament?.isDefault ?: false,
                     )
                     onSave(profile)
                 },
-                enabled = name.isNotBlank()
+                enabled = name.isNotBlank() && (chamberTemperature.isBlank() || chamberTemperature.toIntOrNull()?.let { it in 0..120 } == true)
             ) {
                 Text("Save")
             }
@@ -916,7 +910,7 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
 
     // Detect Bambu/OrcaSlicer format: has array-valued keys like nozzle_temperature
     val isBambu = obj.has("nozzle_temperature") || obj.has("filament_type") ||
-                  obj.optString("type") == "filament"
+                  obj.optString("type") == "filament" || obj.has("filament_settings_id") || obj.has("chamber_temperature")
 
     val material: String
     val nozzleTemp: Int
@@ -1028,6 +1022,12 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
         enablePressureAdvance = enablePressureAdvance,
         pressureAdvance = pressureAdvance,
         filamentMinimalPurgeOnWipeTower = filamentMinimalPurgeOnWipeTower,
+        chamberTemperature = (if (isBambu) extractBambuValue(obj, "chamber_temperature")
+            else obj.optString("chamberTemperature").takeIf { it.isNotBlank() })?.let {
+            requireNotNull(it.toIntOrNull()?.takeIf { value -> value in 0..120 }) {
+                "Chamber temperature must be between 0 and 120 degrees C."
+            }
+        },
     )
 }
 

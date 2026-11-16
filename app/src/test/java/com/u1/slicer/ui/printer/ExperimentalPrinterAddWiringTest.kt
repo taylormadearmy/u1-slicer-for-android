@@ -30,7 +30,7 @@ class ExperimentalPrinterAddWiringTest {
         }
         assertTrue(card.contains("Bambu Lab (LAN)"))
         assertTrue(card.contains("Other printer from Orca catalogue"))
-        assertTrue(card.contains("Import .orca_printer bundle"))
+        assertTrue(card.contains("Import Orca printer profile"))
         assertFalse(card.contains("I understand, continue"))
         assertFalse(card.contains("pendingExperimentalChoice"))
     }

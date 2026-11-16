@@ -453,6 +453,7 @@ fun SettingsScreen(
                         onImportOrcaPrinter = { input, fileName ->
                             val container = (context.applicationContext as U1SlicerApplication).container
                             val imported = container.orcaProfileBundleImporter.import(input, fileName)
+                            require(imported.machines.isNotEmpty()) { "Select a machine JSON or .orca_printer bundle." }
                             val existingFilaments = container.filamentDao.getAll().first()
                                 .mapTo(mutableSetOf()) { it.name }
                             imported.filaments.filter { existingFilaments.add(it.name) }.forEach {

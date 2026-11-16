@@ -80,7 +80,9 @@ object ProcessProfileParser {
                 is JSONArray -> {
                     val list = mutableListOf<String>()
                     for (i in 0 until v.length()) list.add(v.optString(i, ""))
-                    keys[key] = list
+                    if (key.endsWith("_speed") || key.endsWith("_acceleration") || key == "slowdown_for_curled_perimeters") {
+                        com.u1.slicer.machine.OrcaPresetCompatibility.processScalar(key, list)?.let { keys[key] = it }
+                    } else keys[key] = list
                 }
                 is JSONObject -> {
                     // Nested objects aren't part of OrcaSlicer's flat process schema — skip.

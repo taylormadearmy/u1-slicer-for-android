@@ -102,7 +102,7 @@ fun U1NavGraph(
             ProcessProfilesScreen(
                 profiles = cfg.profiles,
                 activeId = cfg.activeId,
-                onImport = { json, fallbackName -> viewModel.importProcessProfilesFromJson(json, fallbackName) },
+                onImport = { uri -> viewModel.importProcessProfilesFromDocument(uri) },
                 onSetActive = { viewModel.setActiveProcessProfile(it) },
                 onRename = { id, name -> viewModel.renameProcessProfile(id, name) },
                 onDelete = { viewModel.deleteProcessProfile(it) },

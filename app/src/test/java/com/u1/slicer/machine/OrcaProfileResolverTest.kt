@@ -8,6 +8,15 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class OrcaProfileResolverTest {
+    @Test fun `nil filament entries inherit matching parent values`() {
+        val result = OrcaProfileResolver.resolve(
+            """{"name":"Child","inherits":"Base","nozzle_temperature":["nil","240"]}""",
+        ) { """{"name":"Base","nozzle_temperature":["220","225"]}""" }
+        val temperatures = JSONObject(requireNotNull(result)).getJSONArray("nozzle_temperature")
+        assertEquals("220", temperatures.getString(0))
+        assertEquals("240", temperatures.getString(1))
+    }
+
     @Test
     fun `resolves inherits chain with child wins and inherited keys`() {
         val profiles = mapOf(

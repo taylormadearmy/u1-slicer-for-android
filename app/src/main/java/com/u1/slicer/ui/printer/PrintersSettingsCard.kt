@@ -102,11 +102,7 @@ fun PrintersSettingsCard(
             AddPrinterChoice.ORCA_CATALOGUE -> addFlow = AddPrinterFlow.CATALOGUE
             AddPrinterChoice.ORCA_IMPORT -> {
                 addFlow = null
-                importLauncher.launch(arrayOf(
-                    "application/zip",
-                    "application/octet-stream",
-                    "*/*",
-                ))
+                importLauncher.launch(arrayOf("*/*"))
             }
         }
     }
@@ -240,8 +236,8 @@ fun PrintersSettingsCard(
                                         onClick = { launchAddChoice(AddPrinterChoice.ORCA_CATALOGUE) },
                                     )
                                     AddPrinterChoice.ORCA_IMPORT -> AddPrinterChoiceButton(
-                                        title = "Import .orca_printer bundle",
-                                        supportingText = "Experimental profile import",
+                                        title = "Import Orca printer profile",
+                                        supportingText = "JSON or .orca_printer bundle; Standard extruders",
                                         enabled = !importing,
                                         onClick = { launchAddChoice(AddPrinterChoice.ORCA_IMPORT) },
                                     )
