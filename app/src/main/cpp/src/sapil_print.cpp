@@ -210,6 +210,19 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     // the app's U1 defaults. Imported projects skip this block and retain the
     // whitelisted source process/filament settings applied by the caller.
     if (!has_embedded_profile) {
+        // Match the Kotlin nozzle process defaults for raw geometry. Keep the
+        // established automatic-width 0.4 mm baseline unchanged.
+        if (config.nozzle_diameter != 0.4f) {
+            const double nd = config.nozzle_diameter;
+            dpc.set_key_value("line_width", new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
+            dpc.set_key_value("outer_wall_line_width", new Slic3r::ConfigOptionFloatOrPercent(nd * 1.05, false));
+            dpc.set_key_value("inner_wall_line_width", new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
+            dpc.set_key_value("top_surface_line_width", new Slic3r::ConfigOptionFloatOrPercent(nd * 1.05, false));
+            dpc.set_key_value("sparse_infill_line_width", new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
+            dpc.set_key_value("internal_solid_infill_line_width", new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
+            dpc.set_key_value("initial_layer_line_width", new Slic3r::ConfigOptionFloatOrPercent(nd * 1.25, false));
+            dpc.set_key_value("support_line_width", new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
+        }
         dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(config.nozzle_diameter == 0.4f ? 0.20 : config.nozzle_diameter / 2.0));
         dpc.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(config.nozzle_diameter == 0.4f ? 0.20 : config.nozzle_diameter / 2.0));
         dpc.set_key_value("elefant_foot_compensation", new Slic3r::ConfigOptionFloat(0.15));
@@ -237,7 +250,7 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.nozzle_diameter)));
     if (config.nozzle_diameter != 0.4f) {
         dpc.set_key_value("min_layer_height", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.nozzle_diameter * 0.2)));
-        dpc.set_key_value("max_layer_height", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.nozzle_diameter * 0.8)));
+        dpc.set_key_value("max_layer_height", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.nozzle_diameter * 0.7)));
     }
     dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.filament_diameter)));
     dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));

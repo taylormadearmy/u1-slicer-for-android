@@ -71,6 +71,7 @@ import com.u1.slicer.model.CopyArrangeCalculator
 import com.u1.slicer.printer.BambuProjectDescriptor
 import com.u1.slicer.printer.BambuProjectFileInspector
 import com.u1.slicer.slice.SliceTargetFamily
+import com.u1.slicer.slice.isCompatibleWith
 import com.u1.slicer.slice.SliceArtifact
 import com.u1.slicer.slice.SlicerTarget
 import com.u1.slicer.slice.GenericMachineProfile
@@ -6767,12 +6768,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 check(activePrinterForSlicing.value == printerForSlice) { "Printer configuration changed during slice preparation. Slice again for the selected printer." }
                 if (target.family == SliceTargetFamily.BAMBU && targetAwareSliceConfig.nozzleDiameter != 0.4f) {
                     val diameter = targetAwareSliceConfig.nozzleDiameter
-                    com.u1.slicer.machine.NozzleProcessPolicy.validate(mapOf(
+                    com.u1.slicer.bambu.BambuNozzlePolicy.validate(mapOf(
                         "layer_height" to targetAwareSliceConfig.layerHeight,
                         "initial_layer_print_height" to targetAwareSliceConfig.firstLayerHeight,
                     ), diameter)
                     val variableLayers = native.nativeGetVariableLayerHeightRange()
-                    require(variableLayers == null || variableLayers[1] <= diameter * 0.8f + 0.00001f) {
+                    require(variableLayers == null || variableLayers[1] <= diameter * 0.7f + 0.00001f) {
                         "Variable layer heights exceed the limit for the $diameter mm nozzle. Regenerate them with a compatible nozzle profile."
                     }
                 }
@@ -8463,6 +8464,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Export generated Bambu archives intact; preserve ordinary G-code mapping for other targets. */
+    internal fun prepareSliceExport(sourceFile: File, destFile: File): Boolean {
+        val bambuProject = _latestSliceArtifact.value as? SliceArtifact.BambuProjectArtifact
+        if (bambuProject != null) {
+            require(bambuProject.isCompatibleWith(activePrinterForSlicing.value)) {
+                "Printer or nozzle settings changed. Slice again before exporting the Bambu project."
+            }
+            if (!bambuProject.projectFile.isFile) return false
+            bambuProject.projectFile.copyTo(destFile, overwrite = true)
+            return true
+        }
+        return prepareExportableGcode(sourceFile, destFile)
+    }
+
     /**
      * Phase 2 (2026-04-28, revised after adversarial review) — produces
      * a print-ready copy of the sliced G-code at [destFile] by routing
@@ -8601,6 +8616,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         requirements.validate(printer?.u1Nozzles ?: U1NozzleConfiguration(), mapping)
     }
 
+    fun suggestedGcodeFilename(modelName: String?): String {
+        val extension = if (_latestSliceArtifact.value is SliceArtifact.BambuProjectArtifact) ".gcode.3mf" else ".gcode"
+        return com.u1.slicer.data.ModelFileNaming.baseName(modelName, "output.gcode") + extension
+    }
+
     fun shareGcode() {
         val result = (_state.value as? SlicerState.SliceComplete)?.result ?: _lastSliceResult
         if (result == null) {
@@ -8620,9 +8640,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 val shareFile = File(
                     sourceFile.parentFile,
-                    "$baseName.share.gcode"
+                    if (_latestSliceArtifact.value is SliceArtifact.BambuProjectArtifact) "$baseName.share.gcode.3mf" else "$baseName.share.gcode"
                 )
-                if (!prepareExportableGcode(sourceFile, shareFile)) {
+                if (!prepareSliceExport(sourceFile, shareFile)) {
                     _toastEvents.tryEmit("Share G-code failed: sliced file is missing")
                     return@launch
                 }
@@ -8693,7 +8713,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "${sourceFile.nameWithoutExtension}.export.${sourceFile.extension}"
             )
             try {
-                if (!prepareExportableGcode(sourceFile, exportFile)) {
+                if (!prepareSliceExport(sourceFile, exportFile)) {
                     Log.e("SaveGcode", "saveGcodeTo: prepareExportableGcode returned false (src missing or empty)")
                     _toastEvents.tryEmit("Save G-code failed: sliced file is missing")
                     diagnostics.recordEvent(

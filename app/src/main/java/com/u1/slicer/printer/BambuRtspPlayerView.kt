@@ -23,6 +23,7 @@ import java.util.ArrayDeque
 import javax.net.SocketFactory
 
 /** Small lifecycle-aware view for Bambu's authenticated TLS-backed RTSP feed. */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class BambuRtspPlayerView(context: Context) : FrameLayout(context) {
     private companion object { const val TAG = "BambuRtspPlayer" }
     private val mainHandler = Handler(Looper.getMainLooper())

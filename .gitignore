@@ -81,3 +81,6 @@ app/.cmake-orca-arm64/
 /.codex-remote-attachments/
 /e2e-artifacts/
 /scripts/__pycache__/
+
+# Local release-candidate validation evidence
+/validation/
