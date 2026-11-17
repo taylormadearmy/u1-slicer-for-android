@@ -157,6 +157,7 @@ internal fun buildExplicitBambuProfileOverrides(
     profileOverrides: Map<String, Any>,
     overrides: SlicingOverrides,
     hasFilamentOverrides: Boolean,
+    hasMaterialOverrides: Boolean = hasFilamentOverrides,
 ): Map<String, Any> {
     val keys = linkedSetOf<String>()
     fun include(mode: OverrideMode, vararg names: String) {
@@ -202,10 +203,13 @@ internal fun buildExplicitBambuProfileOverrides(
     include(overrides.primeTowerChamferMaxWidth.mode, "prime_tower_brim_chamfer_max_width")
     include(overrides.wipeTowerRotationAngle.mode, "wipe_tower_rotation_angle")
     if (hasFilamentOverrides) {
+        keys.add("filament_colour")
+    }
+    if (hasMaterialOverrides) {
         keys.addAll(
             listOf(
-                "filament_type", "filament_colour", "nozzle_temperature",
-                "nozzle_temperature_initial_layer",
+                "filament_type", "nozzle_temperature",
+                "nozzle_temperature_initial_layer", "chamber_temperature",
             )
         )
     }
@@ -1359,9 +1363,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Target lower-left of the combined AABB so it sits centred on the bed.
         // If combined > 270 in either axis the group genuinely doesn't fit and
         // we clamp the lower-left to 0 — the user can scale or remove pieces.
-        val (bedSizeX, bedSizeY) = activeBedDimensions()
-        val targetMinX = ((bedSizeX - combinedW) / 2f).coerceAtLeast(0f)
-        val targetMinY = ((bedSizeY - combinedH) / 2f).coerceAtLeast(0f)
+        val (bedSizeX, bedSizeY) = activePlacementDimensions()
+        val (bedMinX, bedMinY) = activeBedOrigin()
+        val targetMinX = bedMinX + ((bedSizeX - combinedW) / 2f).coerceAtLeast(0f)
+        val targetMinY = bedMinY + ((bedSizeY - combinedH) / 2f).coerceAtLeast(0f)
         val dx = targetMinX - combinedMinX
         val dy = targetMinY - combinedMinY
         val centered = FloatArray(worldMins.size)
@@ -1500,7 +1505,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // user's typical flow (split first, then duplicate).
         // v2.10.11: anchor to the DRAWN position of the source. The combined
         // mesh pre-split is drawn at getPlacementPositions() which is the
-        // bed-centred result of CopyArrangeCalculator.calculate(modelInfo,
+        // bed-centred result of arrangeCopiesOnActiveBed(modelInfo,
         // copyCount=1) — NOT the native world AABB min. For Oreo the gap is
         // ~(47, 45)mm: native world min (3.04, 4.79) vs drawn min (49.7,
         // 49.35). Without this, post-split pieces snap from the drawn
@@ -1580,7 +1585,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 Log.d("SplitDebug", "POST-SPLIT natural worldMins=${natural.toList()}, " +
                     "boxes=${boxes.toList()}, newCount=$newCount")
 
-                val (bedSizeX, bedSizeY) = activeBedDimensions()
+                val (bedSizeX, bedSizeY) = activePlacementDimensions()
                 val positions = if (natural.size == newCount * 2) {
                     val adjusted = natural.copyOf()
                     if (sourceIsSingleCombined) {
@@ -1621,7 +1626,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.d("SplitDebug", "natural.size mismatch — falling back to grid layout " +
                         "(natural.size=${natural.size}, expected=${newCount * 2})")
                     com.u1.slicer.model.CopyArrangeCalculator
-                        .buildMultiObjectPositions(boxes, bedSizeX, bedSizeY)
+                        .buildMultiObjectPositions(boxes, bedSizeX, bedSizeY).withActiveBedOrigin()
                 }
                 val setOk = native.setObjectPositions(positions)
                 Log.d("SplitDebug", "setObjectPositions(${positions.toList()}) → ok=$setOk")
@@ -1686,13 +1691,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
                 _objectBoundingBoxes.value = boxes
                 if (boxes.size >= 3) {
-                    val (bedSizeX, bedSizeY) = activeBedDimensions()
+                    val (bedSizeX, bedSizeY) = activePlacementDimensions()
                     val existing = customObjectPositions
                         ?: com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(
                             boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
-                        )
-                    val positions = com.u1.slicer.model.CopyArrangeCalculator
-                        .placeAdditionalObject(
+                        ).withActiveBedOrigin()
+                    val positions = placeAdditionalOnActiveBed(
                             existing, boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                         )
                     native.setObjectPositions(positions)
@@ -1963,12 +1967,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             } else null
 
             val incoming = customObjectPositions ?: getPlacementPositions()
-            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            val (bedSizeX, bedSizeY) = activePlacementDimensions()
             val result = com.u1.slicer.model.CopyArrangeCalculator.autoArrange(
-                boxes, reserved, incoming, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
+                boxes, reserved?.inActiveBedCoordinates(), incoming.inActiveBedCoordinates(), bedSizeX = bedSizeX, bedSizeY = bedSizeY,
             )
 
-            applyPlacementPositions(result.positions, towerPos)
+            applyPlacementPositions(result.positions.withActiveBedOrigin(), towerPos)
             _sliceStale.value = true
             invalidatePrepareMeshCache()
             if (result.overflowCount > 0) {
@@ -3643,7 +3647,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val combinedName = "combined_${System.currentTimeMillis()}.stl"
                 val combinedFile = File(workspaceDir, combinedName)
-                val (bedSizeX, bedSizeY) = activeBedDimensions()
+                val (bedSizeX, bedSizeY) = activePlacementDimensions()
                 val result = com.u1.slicer.model.MultiStlCombiner.combine(
                     copiedFiles,
                     combinedFile,
@@ -3838,15 +3842,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
             _objectBoundingBoxes.value = boxes
 
-            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            val (bedSizeX, bedSizeY) = activePlacementDimensions()
             val positions = if (existingPos != null) {
-                com.u1.slicer.model.CopyArrangeCalculator.placeAdditionalObject(
+                placeAdditionalOnActiveBed(
                     existingPos, boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                 )
             } else {
                 com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(
                     boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
-                )
+                ).withActiveBedOrigin()
             }
             native.setObjectPositions(positions)
             customObjectPositions = positions
@@ -4384,8 +4388,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 Log.i("SlicerVM", "B78: snapshotted load-time instance offsets: ${_loadTimeInstanceOffsets.value.toList()}")
             } else {
-                val (bedSizeX, bedSizeY) = activeBedDimensions()
-                _loadTimeInstanceOffsets.value = floatArrayOf(bedSizeX / 2f, bedSizeY / 2f)
+                val (bedSizeX, bedSizeY) = activePlacementDimensions()
+                _loadTimeInstanceOffsets.value = floatArrayOf(bedSizeX / 2f, bedSizeY / 2f).withActiveBedOrigin()
             }
             _nativeSliceStateDirty.value = false
 
@@ -4437,8 +4441,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val identityMapping = (0 until slotCount).toList()
                     _colorMapping.value = identityMapping
                     _layerToolOnly.value = false
-                    val (bedSizeX, bedSizeY) = activeBedDimensions()
-                    val positions = CopyArrangeCalculator.calculate(
+                    val (bedSizeX, bedSizeY) = activePlacementDimensions()
+                    val positions = arrangeCopiesOnActiveBed(
                         info.sizeX, info.sizeY, _copyCount.value, bedSizeX, bedSizeY,
                     )
                     val estimatedTowerDepth = WipeTowerDepthEstimator.estimateDepth(info.sizeZ)
@@ -4516,8 +4520,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // N-extruder and G-code post-processing remaps T-commands to physical slots.
                         val slotCount = mfInfo.detectedExtruderCount.coerceIn(1, profileSlotCount)
                         // Compute tower position that avoids the model
-                        val (bedSizeX, bedSizeY) = activeBedDimensions()
-                        val positions = CopyArrangeCalculator.calculate(
+                        val (bedSizeX, bedSizeY) = activePlacementDimensions()
+                        val positions = arrangeCopiesOnActiveBed(
                             info.sizeX, info.sizeY, _copyCount.value, bedSizeX, bedSizeY,
                         )
                         val estimatedTowerDepth = WipeTowerDepthEstimator.estimateDepth(info.sizeZ)
@@ -4654,8 +4658,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Recompute wipe tower position if multi-extruder (unless user already placed it)
         val mi = lastModelInfo
         if (slotCount > 1 && mi != null && mi.sizeX > 0f && customWipeTowerPos == null) {
-            val (bedSizeX, bedSizeY) = activeBedDimensions()
-            val objPos = CopyArrangeCalculator.calculate(
+            val (bedSizeX, bedSizeY) = activePlacementDimensions()
+            val objPos = arrangeCopiesOnActiveBed(
                 mi.sizeX, mi.sizeY, _copyCount.value, bedSizeX, bedSizeY,
             )
             val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
@@ -4808,7 +4812,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // B132c follow-up (v2.10.5): only clear customObjectPositions in single-
         // object mode (so the next slice re-centers the scaled mesh). In multi-
         // object mode, clearing breaks per-object drag: getPlacementPositions
-        // falls back to CopyArrangeCalculator.calculate(combinedSize, copyCount)
+        // falls back to arrangeCopiesOnActiveBed(combinedSize, copyCount)
         // which returns 1 position even though there are N split pieces (the
         // combined 170×171mm bbox can't fit > 1 copy on a 270mm bed). The drag
         // handler then sees count=1 and rejects indices ≥ 1 → "objects can no
@@ -4848,7 +4852,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun refreshCopyBedWarning() {
         val footprint = currentCopyFootprint()
         _copyBedWarning.value = if (footprint != null) {
-            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            val (bedSizeX, bedSizeY) = activePlacementDimensions()
             CopyArrangeCalculator.copyBedWarning(
                 footprint.first, footprint.second, _copyCount.value, bedSizeX, bedSizeY,
             )
@@ -4937,11 +4941,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      *  function with the refined bounds. */
     fun getPlacementPositions(): FloatArray {
         customObjectPositions?.let { return it }
-        val (bedSizeX, bedSizeY) = activeBedDimensions()
-        if (lastModelInfo == null) return floatArrayOf(bedSizeX / 2f, bedSizeY / 2f)
+        val (bedSizeX, bedSizeY) = activePlacementDimensions()
+        if (lastModelInfo == null) return floatArrayOf(bedSizeX / 2f, bedSizeY / 2f).withActiveBedOrigin()
         val (effW, effH) = currentCopyFootprint()
-            ?: return floatArrayOf(bedSizeX / 2f, bedSizeY / 2f)
-        return CopyArrangeCalculator.calculate(effW, effH, _copyCount.value, bedSizeX, bedSizeY)
+            ?: return floatArrayOf(bedSizeX / 2f, bedSizeY / 2f).withActiveBedOrigin()
+        return arrangeCopiesOnActiveBed(effW, effH, _copyCount.value, bedSizeX, bedSizeY)
+    }
+
+    private fun activePlacementDimensions(): Pair<Float, Float> {
+        if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
+            selectedGenericProfile()?.let { return it.printableWidth to it.printableDepth }
+        }
+        return activeBedDimensions()
     }
 
     private fun activeBedDimensions(): Pair<Float, Float> {
@@ -4951,12 +4962,40 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         return targetConfig.bedSizeX to targetConfig.bedSizeY
     }
 
+    private fun activeBedOrigin(): Pair<Float, Float> =
+        if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
+            selectedGenericProfile()?.let { it.bedMinX to it.bedMinY } ?: (0f to 0f)
+        } else 0f to 0f
+
+    private fun FloatArray.withActiveBedOrigin(): FloatArray {
+        val (x, y) = activeBedOrigin()
+        if (x == 0f && y == 0f) return this
+        return FloatArray(size) { this[it] + if (it % 2 == 0) x else y }
+    }
+
+    private fun FloatArray.inActiveBedCoordinates(): FloatArray {
+        val (x, y) = activeBedOrigin()
+        if (x == 0f && y == 0f) return this
+        return FloatArray(size) { this[it] - if (it % 2 == 0) x else y }
+    }
+
+    private fun placeAdditionalOnActiveBed(
+        currentPositions: FloatArray, boxes: FloatArray, bedSizeX: Float, bedSizeY: Float,
+    ): FloatArray = CopyArrangeCalculator.placeAdditionalObject(
+        currentPositions.inActiveBedCoordinates(), boxes, bedSizeX, bedSizeY,
+    ).withActiveBedOrigin()
+
+    private fun arrangeCopiesOnActiveBed(
+        objectSizeX: Float, objectSizeY: Float, copyCount: Int, bedSizeX: Float, bedSizeY: Float,
+    ): FloatArray = CopyArrangeCalculator.calculate(objectSizeX, objectSizeY, copyCount, bedSizeX, bedSizeY)
+        .withActiveBedOrigin()
+
     /** Rebuild automatic placement when the active target has a different bed size. */
     private fun reflowPlacementForActiveTarget() {
         val info = lastModelInfo ?: return
         if (_state.value is SlicerState.Slicing || _state.value is SlicerState.Cancelling) return
 
-        val (bedSizeX, bedSizeY) = activeBedDimensions()
+        val (bedSizeX, bedSizeY) = activePlacementDimensions()
         val cfg = _config.value
         val towerWidth = resolveWipeTowerWidth(cfg, slicingOverrides.value)
         val towerDepth = resolveWipeTowerDepth(info.sizeZ, slicingOverrides.value)
@@ -4965,7 +5004,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val boxes = _objectBoundingBoxes.value
             val positions = CopyArrangeCalculator.buildMultiObjectPositions(
                 boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
-            )
+            ).withActiveBedOrigin()
             val tower = if (cfg.wipeTowerEnabled) {
                 CopyArrangeCalculator.computeWipeTowerPositionForObjects(
                     positions, boxes, towerWidth, towerDepth, bedSizeX, bedSizeY,
@@ -4986,7 +5025,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _multiObjectPositions.value = null
             val footprint = currentCopyFootprint()
             val tower = if (cfg.wipeTowerEnabled && footprint != null) {
-                val positions = CopyArrangeCalculator.calculate(
+                val positions = arrangeCopiesOnActiveBed(
                     footprint.first, footprint.second, _copyCount.value, bedSizeX, bedSizeY,
                 )
                 CopyArrangeCalculator.computeWipeTowerPosition(
@@ -5280,6 +5319,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 buildProfileOverrides(cfg, machine.extruderCount, hasSourceConfig = _sourceConfig.value != null),
                 slicingOverrides.value,
                 hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+                hasMaterialOverrides = _filamentOverrides.value.values.any { it.materialType != null },
             )
             val sourceTuning = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
             val filamentTuning = genericFilamentTuning(machine.applyTo(cfg, effectiveSliceTarget.value))
@@ -5439,6 +5479,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 profileOverrides = profileOverrides,
                 overrides = slicingOverrides.value,
                 hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+                hasMaterialOverrides = _filamentOverrides.value.values.any { it.materialType != null },
             )
             BambuImportedConfigComposer.compose(
                 target = sliceTarget,
@@ -5617,6 +5658,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             filamentTypes = finalTypes,
             nozzleTemps = finalTemps,
             filamentColours = finalColours,
+        ) + com.u1.slicer.slice.materialChamberOverrides(
+            _sourceConfig.value.orEmpty(),
+            if (effectiveSliceTarget.value.family == SliceTargetFamily.BAMBU) {
+                _filamentOverrides.value.mapNotNull { (index, value) -> value.materialType?.let { index to it } }.toMap()
+            } else finalTypes.mapIndexed { index, type -> index to type }.toMap(),
+            filamentCount,
         )
     }
 
@@ -6413,8 +6460,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     .map { it.color }
                     .ifEmpty { listOf("#FFFFFF") }
                 val targetMachineConfig = resolveActiveMachineSliceConfig(target, machineForSlice, _config.value, genericMachineForSlice)
-                val targetBedSizeX = targetMachineConfig.bedSizeX
-                val targetBedSizeY = targetMachineConfig.bedSizeY
+                val targetBedSizeX = genericMachineForSlice?.printableWidth ?: targetMachineConfig.bedSizeX
+                val targetBedSizeY = genericMachineForSlice?.printableDepth ?: targetMachineConfig.bedSizeY
                 if (target.family == SliceTargetFamily.GENERIC && mi != null && mi.sizeZ > targetMachineConfig.maxPrintHeight) {
                     _state.value = SlicerState.Error("Model height (${mi.sizeZ.toInt()}mm) exceeds the selected machine's ${targetMachineConfig.maxPrintHeight.toInt()}mm printable height.")
                     return@launch
@@ -6754,6 +6801,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             profileOverrides = profileOverrides,
                             overrides = ov,
                             hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+                            hasMaterialOverrides = _filamentOverrides.value.values.any { it.materialType != null },
                         ).keys.joinToString(separator = "|", prefix = "|", postfix = "|")
                     } else {
                         ""
@@ -6791,13 +6839,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 if (genericMachineForSlice != null) {
                     val explicit = buildExplicitBambuProfileOverrides(
                         profileOverrides, ov, hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+                        hasMaterialOverrides = _filamentOverrides.value.values.any { it.materialType != null },
                     )
                     val selectedProfileFile = File(transientWorkspaceDir(), "selected-machine-profile.json")
                     val genericConfigForSlice = genericMachineForSlice.compose(genericSourceTuning, genericFilamentTuning + explicit)
                     selectedProfileFile.writeText(profileEmbedder.serializeConfig(genericConfigForSlice))
                     check(native.loadProfile(selectedProfileFile.absolutePath)) { "Native slicer could not load the selected machine profile" }
                 }
-                val result = native.slice(jniSliceConfig)
+                val result = NativeLibrary.previewMutex.withLock {
+                    ensureActive()
+                    native.slice(jniSliceConfig)
+                }
                 ensureActive()
                 if (activePrinterForSlicing.value != printerForSlice) _sliceStale.value = true
 
@@ -10084,7 +10136,7 @@ internal fun buildFilamentLibrarySettings(
 
     emitInt("nozzle_temperature_initial_layer") { it.nozzleTempInitialLayer }
     // An unspecified chamber target is off for that slot, rather than inheriting another spool's heat.
-    if (profilesPerSlot.any { it?.chamberTemperature != null }) {
+    if (profilesPerSlot.any { it != null }) {
         result["chamber_temperature"] = profilesPerSlot.map { (it?.chamberTemperature ?: 0).toString() }
     }
     emitInt("hot_plate_temp_initial_layer") { it.bedTempInitialLayer }

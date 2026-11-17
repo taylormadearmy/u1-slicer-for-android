@@ -1,18 +1,15 @@
 package com.u1.slicer.slice
 
 import com.u1.slicer.bambu.ThreeMfInfo
-import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.bambu.ThreeMfPlate
-import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
 class GenericModelToolValidationTest {
     @Test fun `drawer plate five uses only tool one on a single-nozzle machine`() {
-        val file = File(requireNotNull(javaClass.classLoader?.getResource("regression/4x4_Drawer_ALL.3mf")).toURI())
-        val info = ThreeMfParser.parse(file)
-        assertEquals(setOf(1, 2), info.usedExtruderIndices)
-        assertEquals(listOf("6"), info.plates.single { it.plateId == 5 }.objectIds)
+        // Metadata from the supplied file; the actual Android parser is exercised by the device regression.
+        val info = twoPlates().copy(plates = listOf(ThreeMfPlate(5, "", listOf("6"))),
+            objectExtruderMap = mapOf("6" to 1, "8" to 2))
         validateGenericModelTools(info, extruderCount = 1, plateId = 5)
     }
 
@@ -28,6 +25,10 @@ class GenericModelToolValidationTest {
     @Test fun `tool two remains unavailable on a one-tool machine`() {
         val error = runCatching { validateGenericModelTools(twoPlates(), 1, 2) }.exceptionOrNull()
         assertEquals("The model references tools not available on the selected machine.", error?.message)
+    }
+
+    @Test fun `implicit tool one does not inherit another plates tool two`() {
+        validateGenericModelTools(twoPlates().copy(objectExtruderMap = mapOf("b" to 2)), 1, 1)
     }
 
     @Test fun `compound parts cannot hide their second tool`() {

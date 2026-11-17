@@ -8,6 +8,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GenericMachineProfileTest {
+    @Test fun zeroSkirtLoopsDisableThePhantomFirstLayerEnvelope() {
+        val machine = GenericMachineProfile.centauriCarbon()
+        assertEquals("0", machine.compose()["skirt_height"])
+        assertEquals("0", machine.compose(mapOf("skirt_loops" to "0", "skirt_height" to "1"))["skirt_height"])
+        assertEquals("0", machine.compose(mapOf("skirt_loops" to listOf("0"), "skirt_height" to "1"))["skirt_height"])
+    }
+
+    @Test fun enabledSkirtPreservesItsRequestedHeight() {
+        val settings = GenericMachineProfile.centauriCarbon().compose(mapOf("skirt_loops" to "2", "skirt_height" to "3"))
+        assertEquals("2", settings["skirt_loops"])
+        assertEquals("3", settings["skirt_height"])
+    }
+
     private fun profile(vararg changes: Pair<String, Any>): String = JSONObject().apply {
         put("name", "Test Klipper 0.4")
         put("type", "machine")

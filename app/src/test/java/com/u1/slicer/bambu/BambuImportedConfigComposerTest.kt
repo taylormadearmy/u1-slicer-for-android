@@ -9,6 +9,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BambuImportedConfigComposerTest {
+    @Test fun `X1E retains explicit chamber temperature without enabling generic pre-start heating`() {
+        val result = BambuImportedConfigComposer.compose(SlicerTarget.BambuX1E, emptyMap(),
+            explicitOverrides = mapOf("chamber_temperature" to listOf("65")))
+        assertEquals(listOf("65"), result.config["chamber_temperature"])
+        assertFalse(result.config["activate_chamber_temp_control"] == listOf("1"))
+    }
 
     @Test
     fun `dragon scale safe process and filament values survive x1c source retargeted to h2d`() {

@@ -12,6 +12,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DiscordU1PresetImportTest {
+    @Test fun `high flow only override does not replace inherited Standard speed`() {
+        val resolved = requireNotNull(OrcaProfileResolver.resolve("""{
+            "name":"Variant child","inherits":"Base",
+            "print_extruder_id":["1","1","2","2"],
+            "print_extruder_variant":["Direct Drive Standard","Direct Drive High Flow","Direct Drive Standard","Direct Drive High Flow"],
+            "outer_wall_speed":["nil","250","nil","nil"]
+        }""") { """{"name":"Base","outer_wall_speed":"200"}""" })
+        val profile = ProcessProfileParser.parse(resolved, "fallback").single()
+        assertEquals("200", profile.keys["outer_wall_speed"])
+        assertEquals(com.u1.slicer.data.ProcessSourceVariant(1, "Direct Drive Standard"), profile.sourceVariant)
+        assertFalse(profile.keys.containsKey("print_extruder_variant"))
+        val restored = com.u1.slicer.data.ProcessProfilesConfig.profileFromJson(
+            com.u1.slicer.data.ProcessProfilesConfig.profileToJson(profile.copy(name = "Renamed")))!!
+        assertEquals(profile.sourceVariant, restored.sourceVariant)
+    }
+
+    @Test fun `simple filament fields survive snake or camel chamber aliases`() {
+        for (key in listOf("chamber_temperature", "chamberTemperature")) {
+            val profile = parseFilamentJson("""{"name":"Custom spool","material":"ASA","nozzle_temp":275,"bed_temp":95,"$key":65}""").single()
+            assertEquals("ASA", profile.material)
+            assertEquals(275, profile.nozzleTemp)
+            assertEquals(95, profile.bedTemp)
+            assertEquals(65, profile.chamberTemperature)
+        }
+    }
     @Test fun `brush washer resolved ASA snapshot imports without the unavailable System parent`() = runTest {
         val importer = OrcaProfileBundleImporter(
             loadMissing = { _, _, name -> error("Resolved snapshot must not request $name") },

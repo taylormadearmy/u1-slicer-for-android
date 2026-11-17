@@ -45,6 +45,12 @@ function Install-Apk([string]$Path, [switch]$AllowDowngrade) {
 
 function Launch-App([string]$Label) {
     Write-Host "Launching $Label"
+    if ($env:U1_AGENT_DEVICE_COMMAND) {
+        & $env:U1_AGENT_DEVICE_COMMAND open $AppId --relaunch | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Device-panel launch failed: $Label" }
+        Start-Sleep -Seconds 3
+        return
+    }
     Invoke-Adb shell am force-stop $AppId | Out-Null
     $output = @(& adb -s $Device shell am start -W -n $MainActivity 2>&1)
     $output | Out-Host

@@ -50,10 +50,10 @@ try {
     $inputs | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ResultsDir 'candidate-input.json')
     Invoke-CheckedAdb @('shell', 'am', 'force-stop', 'com.u1.slicer.orca')
     Invoke-CheckedAdb @('shell', 'pm', 'clear', 'com.u1.slicer.orca')
-    $classes = 'com.u1.slicer.slicing.GenericKlipperNativeConfigTest,com.u1.slicer.slicing.GenericIndependentExtruderNativeTest,com.u1.slicer.slicing.MarlinFlavorTest,com.u1.slicer.slicing.SingleExtruderMachineTest'
+    $classes = 'com.u1.slicer.slicing.GenericKlipperNativeConfigTest,com.u1.slicer.slicing.GenericIndependentExtruderNativeTest,com.u1.slicer.slicing.MarlinFlavorTest,com.u1.slicer.slicing.SingleExtruderMachineTest,com.u1.slicer.slicing.CosmosDrawerRegressionTest,com.u1.slicer.slicing.GenericInsetPlacementTest,com.u1.slicer.slicing.BrushWasherRegressionTest,com.u1.slicer.slicing.MaterialChamberRegressionTest,com.u1.slicer.slicing.DiscordPresetNativeTest,com.u1.slicer.slicing.BambuImportedProfileNativeConfigTest,com.u1.slicer.native.NativeLibrarySymbolTest#validateMachineProfile_isLinked'
     & "$PSScriptRoot/run-instrumented-shard.ps1" -Device $Device -ClassFilter $classes -ResultsDir (Join-Path $ResultsDir 'native')
     $summary = Get-Content -LiteralPath (Join-Path $ResultsDir "native/shard-0-$Device.json") -Raw | ConvertFrom-Json
-    if ($summary.passed -ne 18 -or $summary.failed -ne 0 -or $summary.skipped -ne 0 -or $summary.completionCode -ne -1 -or $summary.adbExit -ne 0) {
+    if ($summary.passed -ne 35 -or $summary.failed -ne 0 -or $summary.skipped -ne 0 -or $summary.completionCode -ne -1 -or $summary.adbExit -ne 0) {
         throw 'Release native test count or completion mismatch.'
     }
     $passedMethods = @()
@@ -69,8 +69,15 @@ try {
         'com.u1.slicer.slicing.GenericIndependentExtruderNativeTest' = 3
         'com.u1.slicer.slicing.MarlinFlavorTest' = 1
         'com.u1.slicer.slicing.SingleExtruderMachineTest' = 1
+        'com.u1.slicer.slicing.CosmosDrawerRegressionTest' = 2
+        'com.u1.slicer.slicing.GenericInsetPlacementTest' = 3
+        'com.u1.slicer.slicing.BrushWasherRegressionTest' = 1
+        'com.u1.slicer.slicing.MaterialChamberRegressionTest' = 1
+        'com.u1.slicer.slicing.DiscordPresetNativeTest' = 5
+        'com.u1.slicer.slicing.BambuImportedProfileNativeConfigTest' = 4
+        'com.u1.slicer.native.NativeLibrarySymbolTest' = 1
     }
-    if (@($passedMethods | Select-Object -Unique).Count -ne 18) { throw 'Release native evidence must contain 18 unique passed methods.' }
+    if (@($passedMethods | Select-Object -Unique).Count -ne 35) { throw 'Release native evidence must contain 35 unique passed methods.' }
     foreach ($class in $expectedClassCounts.Keys) {
         if (@($passedMethods | Where-Object { $_.StartsWith("$class#") }).Count -ne $expectedClassCounts[$class]) { throw "Release native class coverage mismatch: $class" }
     }
@@ -82,4 +89,4 @@ try {
             -ExpectedSha256 $BackupSha256 -EvidenceDir (Join-Path $ResultsDir 'restore')
     }
 }
-Write-Host 'All 18 native checks passed against the release APK; original app files restored and byte-verified.'
+Write-Host 'All 35 native checks passed against the release APK; original app files restored and byte-verified.'

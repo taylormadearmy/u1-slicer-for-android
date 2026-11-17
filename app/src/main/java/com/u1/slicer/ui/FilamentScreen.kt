@@ -910,7 +910,7 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
 
     // Detect Bambu/OrcaSlicer format: has array-valued keys like nozzle_temperature
     val isBambu = obj.has("nozzle_temperature") || obj.has("filament_type") ||
-                  obj.optString("type") == "filament" || obj.has("filament_settings_id") || obj.has("chamber_temperature")
+                  obj.optString("type") == "filament" || obj.has("filament_settings_id")
 
     val material: String
     val nozzleTemp: Int
@@ -1022,8 +1022,8 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
         enablePressureAdvance = enablePressureAdvance,
         pressureAdvance = pressureAdvance,
         filamentMinimalPurgeOnWipeTower = filamentMinimalPurgeOnWipeTower,
-        chamberTemperature = (if (isBambu) extractBambuValue(obj, "chamber_temperature")
-            else obj.optString("chamberTemperature").takeIf { it.isNotBlank() })?.let {
+        chamberTemperature = (extractBambuValue(obj, "chamber_temperature")
+            ?: extractBambuValue(obj, "chamberTemperature"))?.let {
             requireNotNull(it.toIntOrNull()?.takeIf { value -> value in 0..120 }) {
                 "Chamber temperature must be between 0 and 120 degrees C."
             }

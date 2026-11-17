@@ -219,6 +219,10 @@ private fun ProcessProfileCard(
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(profile.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    profile.sourceVariant?.let {
+                        Text("Imported from tool ${it.extruderId} / ${it.variant}; applies to all tools.",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                     val layer = profile.keys["layer_height"]?.toString()
                     val walls = profile.keys["wall_loops"]?.toString()
                     val infill = profile.keys["sparse_infill_density"]?.toString()

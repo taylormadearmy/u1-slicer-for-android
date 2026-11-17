@@ -11,7 +11,8 @@ param(
     [switch]$ResumeAfterTestSetupFix,
     [string]$PriorResultsDir,
     [switch]$ResumeAfterIndependentTests,
-    [string]$PriorFocusedResultsDir
+    [string]$PriorFocusedResultsDir,
+    [string]$CompletedIndependentEvidence
 )
 $ErrorActionPreference = 'Stop'
 if ($Device -ne '5A101JEBF24790') { throw 'Only the approved regression Pixel may run this suite.' }
@@ -36,6 +37,20 @@ $results = (Resolve-Path -LiteralPath $ResultsDir).Path
     provenance = 'Host inputs recorded before device mutation'
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $results 'candidate-input.json')
 $env:ANDROID_SERIAL = $Device
+if ($CompletedIndependentEvidence) {
+    if ($ResumeAfterTestSetupFix -or $ResumeAfterIndependentTests) { throw 'Do not combine continuation modes.' }
+    $coverage = Get-Content -LiteralPath $CompletedIndependentEvidence -Raw | ConvertFrom-Json
+    if ($coverage.sha256 -ne (Get-FileHash -LiteralPath $CandidateApk).Hash -or
+        $coverage.testSha256 -ne (Get-FileHash -LiteralPath $TestApk).Hash -or
+        $coverage.passed -ne 570 -or $coverage.focusedPassed -ne 34 -or $coverage.failed -ne 0 -or $coverage.skipped -ne 0 -or
+        @($coverage.methods | Sort-Object -Unique).Count -ne 570) {
+        throw 'Continuation requires complete, unchanged-APK independent coverage.'
+    }
+    foreach ($file in $coverage.files) {
+        if ((Get-FileHash -LiteralPath $file.path).Hash -ne $file.sha256) { throw 'Prior coverage evidence changed.' }
+    }
+    Copy-Item -LiteralPath $CompletedIndependentEvidence -Destination (Join-Path $results 'prior-independent-coverage.json')
+}
 if ($ResumeAfterIndependentTests -and !$ResumeAfterTestSetupFix) { throw 'Independent-test resume also requires the complete diagnosed full-run evidence.' }
 if ($ResumeAfterTestSetupFix) {
     $prior = Get-Content (Join-Path $PriorResultsDir 'candidate-input.json') -Raw | ConvertFrom-Json
@@ -145,12 +160,13 @@ function Install-IfChanged([string]$Apk, [string]$Package) {
 try {
     Install-IfChanged $CandidateApk 'com.u1.slicer.orca'
     Install-IfChanged $TestApk 'com.u1.slicer.orca.test'
+    if ($CompletedIndependentEvidence) { Save-BaselineSnapshots }
     # Run only against disposable test state, never the user's saved hosts or jobs.
     Invoke-CheckedAdb shell am force-stop com.u1.slicer.orca
     Invoke-CheckedAdb shell pm clear com.u1.slicer.orca
     $focusedClasses = 'com.u1.slicer.slicing.GenericKlipperNativeConfigTest,com.u1.slicer.slicing.GenericIndependentExtruderNativeTest,com.u1.slicer.ui.printer.PrinterEditDialogInstrumentedTest'
     if ($ResumeAfterTestSetupFix) { $focusedClasses += ',com.u1.slicer.slicing.GcodeBaselineDiffTest,com.u1.slicer.slicing.MarlinFlavorTest,com.u1.slicer.slicing.SingleExtruderMachineTest' }
-    if (!$ResumeAfterIndependentTests) {
+    if (!$ResumeAfterIndependentTests -and !$CompletedIndependentEvidence) {
         & "$PSScriptRoot/run-instrumented-shard.ps1" -Device $Device `
             -ClassFilter $focusedClasses `
             -ResultsDir (Join-Path $results 'focused')
@@ -158,7 +174,7 @@ try {
             testSha256 = (Get-FileHash -LiteralPath $TestApk).Hash } |
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $results 'passed-inputs.json')
     }
-    if (!$ResumeAfterTestSetupFix) {
+    if (!$ResumeAfterTestSetupFix -and !$CompletedIndependentEvidence) {
         & "$PSScriptRoot/run-instrumented-shard.ps1" -Device $Device -ResultsDir (Join-Path $results 'full-device')
     }
     Save-BaselineSnapshots

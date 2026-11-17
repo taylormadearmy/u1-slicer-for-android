@@ -13,6 +13,8 @@
 #include <array>
 #include <android/log.h>
 
+namespace Slic3r { class Model; class DynamicPrintConfig; }
+
 #define SAPIL_TAG "SAPIL"
 #define SAPIL_LOGI(...) __android_log_print(ANDROID_LOG_INFO, SAPIL_TAG, __VA_ARGS__)
 #define SAPIL_LOGW(...) __android_log_print(ANDROID_LOG_WARN, SAPIL_TAG, __VA_ARGS__)
@@ -214,7 +216,10 @@ public:
     static void cancelSlice();
 
     // Slicing
-    SliceResult slice(const SliceConfig& config, ProgressCallback progress = nullptr);
+    SliceResult slice(const SliceConfig& config, ProgressCallback progress = nullptr,
+                      const std::string& requested_output_path = "");
+    SliceResult sliceValidationModel(const SliceConfig& config, const std::string& model_path,
+                                    const std::string& output_path, float center_x, float center_y);
 
     // Profile management
     bool loadProfile(const std::string& ini_path);
@@ -337,6 +342,9 @@ public:
     bool setVolumeExtruder(int objIdx, int volIdx, int slot);
 
 private:
+    SliceResult sliceModel(const SliceConfig& config, ProgressCallback progress,
+                          const std::string& output_path, Slic3r::Model& model,
+                          Slic3r::DynamicPrintConfig& model_config);
     struct Impl;
     Impl* pImpl;
 };

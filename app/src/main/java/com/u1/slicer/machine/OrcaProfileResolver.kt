@@ -41,11 +41,12 @@ object OrcaProfileResolver {
             val key = keys.next()
             if (key !in BOOKKEEPING_KEYS) {
                 val value = current.get(key)
-                val inherited = merged.optJSONArray(key)
+                val inherited = merged.opt(key)
                 if (value is JSONArray && inherited != null) {
                     merged.put(key, JSONArray().apply {
                         for (i in 0 until value.length()) {
-                            put(if (value.optString(i) == "nil") inherited.opt(i) ?: value.get(i) else value.get(i))
+                            val fallback = if (inherited is JSONArray) inherited.opt(i) else inherited
+                            put(if (value.optString(i) == "nil") fallback ?: value.get(i) else value.get(i))
                         }
                     })
                 } else merged.put(key, value)

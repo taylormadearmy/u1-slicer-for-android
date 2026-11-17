@@ -3,6 +3,7 @@ param(
     [ValidateRange(1, 4)][int]$NumShards = 1,
     [ValidateRange(0, 3)][int]$ShardIndex = 0,
     [ValidatePattern('^[A-Za-z0-9_.$#,]*$')][string]$ClassFilter = '',
+    [string]$ExcludedTestsFile = '',
     [Parameter(Mandatory)][string]$ResultsDir,
     [switch]$IncludeExternalFixtures
 )
@@ -15,6 +16,19 @@ if ($LASTEXITCODE -ne 0 -or !$serial) { throw "Cannot identify device $Device" }
 if ($serial -eq 'NE12442001324') { throw 'The NF22E1 is off-limits for automated tests' }
 foreach ($package in @('com.u1.slicer.orca', 'com.u1.slicer.orca.test', 'androidx.test.services', 'androidx.test.orchestrator')) {
     if (!(& adb -s $Device shell pm path $package)) { throw "Install $package on $Device before running the shard" }
+}
+
+$remoteExclusions = ''
+if ($ExcludedTestsFile) {
+    $exclusions = @(Get-Content -LiteralPath $ExcludedTestsFile)
+    if (!$exclusions.Count -or @($exclusions | Where-Object { $_ -notmatch '^[A-Za-z0-9_.$]+#[A-Za-z0-9_$]+$' }).Count) {
+        throw 'Exclusions must contain one fully qualified test method per line.'
+    }
+    $remoteExclusions = '/data/local/tmp/u1-completed-tests.txt'
+    & adb -s $Device push (Resolve-Path -LiteralPath $ExcludedTestsFile).Path $remoteExclusions
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot supply completed-test exclusions.' }
+    & adb -s $Device shell chmod 644 $remoteExclusions
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot make completed-test exclusions readable.' }
 }
 
 New-Item -ItemType Directory -Force $ResultsDir | Out-Null
@@ -34,6 +48,7 @@ $command = 'CLASSPATH=$(pm path androidx.test.services) app_process / androidx.t
     $(if (!$IncludeExternalFixtures) { ' -e notAnnotation com.u1.slicer.RequiresExternalFixture' } else { '' }) +
     " -e numShards $NumShards -e shardIndex $ShardIndex" +
     $(if ($ClassFilter) { " -e class $ClassFilter" } else { '' }) +
+    $(if ($remoteExclusions) { " -e notTestFile $remoteExclusions" } else { '' }) +
     ' androidx.test.orchestrator/.AndroidTestOrchestrator'
 Write-Host "Starting shard $ShardIndex/$NumShards on $Device"
 & adb -s $Device shell $command 2>&1 | ForEach-Object {

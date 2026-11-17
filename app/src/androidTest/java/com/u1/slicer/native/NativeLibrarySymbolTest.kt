@@ -32,6 +32,13 @@ class NativeLibrarySymbolTest {
 
     private val lib = NativeLibrary()
 
+    @Test fun validateMachineProfile_isLinked() {
+        val result = lib.validateMachineProfile("/missing/profile.json", "/missing/model.stl", "/missing/output.gcode",
+            100f, 100f, com.u1.slicer.data.SliceConfig())
+        assertNotNull(result)
+        assertFalse(result!!.success)
+    }
+
     @Test
     fun getCoreVersion_isLinked() {
         val version = lib.getCoreVersion()

@@ -9,10 +9,10 @@ internal fun validateGenericModelTools(info: ThreeMfInfo, extruderCount: Int, pl
     val tools = if (plate == null) info.usedExtruderIndices + info.volumeExtruders else {
         val objectTools = plate.objectIds.flatMap { id ->
             info.objectPartExtruders[id]?.takeIf { it.isNotEmpty() }
-                ?: listOfNotNull(info.objectExtruderMap[id])
+                ?: listOf(info.objectExtruderMap[id] ?: 1)
         }.filter { it > 0 }.toSet()
         (objectTools + plate.paintExtruderStates + plate.layerToolExtruders + plate.filamentMapSlots)
-            .filter { it > 0 }.toSet().ifEmpty { info.usedExtruderIndices }
+            .filter { it > 0 }.toSet().ifEmpty { setOf(1) }
     }
     require(!(plate?.hasLayerToolChanges ?: info.hasLayerToolChanges) && tools.all { it <= extruderCount }) {
         "The model references tools not available on the selected machine."

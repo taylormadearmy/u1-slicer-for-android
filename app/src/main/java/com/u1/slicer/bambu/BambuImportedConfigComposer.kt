@@ -303,7 +303,7 @@ internal object BambuImportedConfigComposer {
         "curr_bed_type",
         "filament_type", "filament_colour", "extruder_colour", "filament_diameter",
         "filament_ids", "filament_map", "filament_volume_map", "filament_nozzle_map",
-        "filament_flow_ratio", "nozzle_temperature", "nozzle_temperature_initial_layer",
+        "filament_flow_ratio", "nozzle_temperature", "nozzle_temperature_initial_layer", "chamber_temperature",
         "hot_plate_temp", "hot_plate_temp_initial_layer", "textured_plate_temp",
         "textured_plate_temp_initial_layer", "cool_plate_temp", "cool_plate_temp_initial_layer",
         "reduce_fan_stop_start_freq",

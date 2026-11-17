@@ -80,6 +80,10 @@ class NativeLibrary {
 
     // ---- Slicing ----
     external fun slice(config: SliceConfig): SliceResult?
+    external fun validateMachineProfile(
+        profilePath: String, modelPath: String, outputPath: String,
+        centerX: Float, centerY: Float, config: SliceConfig,
+    ): SliceResult?
 
     // ---- Profile ----
     external fun loadProfile(path: String): Boolean

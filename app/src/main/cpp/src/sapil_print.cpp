@@ -470,6 +470,9 @@ static void validateGenericBounds(const Slic3r::DynamicPrintConfig& dpc, const S
     constexpr double epsilon = 0.01;
     if (bounds.min.x() < bed_min_x - epsilon || bounds.min.y() < bed_min_y - epsilon || bounds.min.z() < -epsilon ||
         bounds.max.x() > bed_x + epsilon || bounds.max.y() > bed_y + epsilon || bounds.max.z() > height->value + epsilon) {
+        SAPIL_LOGE("Rejected bounds [%.4f,%.4f,%.4f]-[%.4f,%.4f,%.4f], printable [%.4f,%.4f]-[%.4f,%.4f] height %.4f",
+            bounds.min.x(), bounds.min.y(), bounds.min.z(), bounds.max.x(), bounds.max.y(), bounds.max.z(),
+            bed_min_x, bed_min_y, bed_x, bed_y, height->value);
         throw std::runtime_error("Model or generated helper extrusions exceed the selected machine's printable volume");
     }
     const auto* exclusion = dpc.option<Slic3r::ConfigOptionPoints>("bed_exclude_area");
@@ -1057,16 +1060,44 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     }
 }
 
-SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback progress) {
-    SAPIL_LOGI("Starting slice operation...");
-    SliceResult result;
-    g_slice_cancel.store(false, std::memory_order_release);
-
+SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback progress, const std::string& requested_output_path) {
     if (!isModelLoaded()) {
+        SliceResult result;
         result.success = false;
         result.error_message = "No model loaded";
         return result;
     }
+    return sliceModel(config, progress, requested_output_path, getGlobalModel(), getModelConfig());
+}
+
+SliceResult SlicerEngine::sliceValidationModel(const SliceConfig& config, const std::string& model_path,
+                                              const std::string& output_path, float center_x, float center_y) {
+    Slic3r::DynamicPrintConfig model_config;
+    Slic3r::ConfigSubstitutionContext substitutions(Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
+    auto model = Slic3r::Model::read_from_file(model_path, &model_config, &substitutions,
+        Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::AddDefaultInstances);
+    if (model.objects.empty()) throw std::runtime_error("Empty profile validation model");
+    Slic3r::BoundingBoxf3 bounds;
+    for (const auto* object : model.objects) bounds.merge(object->bounding_box_exact());
+    const auto center = bounds.center();
+    for (auto* object : model.objects) {
+        for (auto* instance : object->instances) {
+            auto offset = instance->get_offset();
+            offset.x() += center_x - center.x();
+            offset.y() += center_y - center.y();
+            instance->set_offset(offset);
+        }
+        object->invalidate_bounding_box();
+    }
+    return sliceModel(config, nullptr, output_path, model, model_config);
+}
+
+SliceResult SlicerEngine::sliceModel(const SliceConfig& config, ProgressCallback progress,
+                                    const std::string& requested_output_path, Slic3r::Model& model,
+                                    Slic3r::DynamicPrintConfig& model_config) {
+    SAPIL_LOGI("Starting slice operation...");
+    SliceResult result;
+    g_slice_cancel.store(false, std::memory_order_release);
 
     try {
         diagnostics_clear_trace_buffer();
@@ -1102,7 +1133,6 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         // App-authored embeds carry an explicit marker. PRINT_START rescues
         // desktop U1 exports only when the active target is Snapmaker.
-        auto& model_config = getModelConfig();
         const bool authored = model_config.has("snapmaker_authored_profile");
         bool klipper_heuristic = false;
         if (!is_generic_target && !model_config.empty()) {
@@ -1158,7 +1188,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "prime_tower_brim_chamfer", "prime_tower_brim_chamfer_max_width",
                     "wipe_tower_x", "wipe_tower_y", "wipe_tower_rotation_angle",
                     "filament_colour", "filament_type", "filament_flow_ratio", "filament_density",
-                    "filament_cost", "filament_max_volumetric_speed", "nozzle_temperature",
+                    "filament_cost", "filament_max_volumetric_speed", "nozzle_temperature", "chamber_temperature",
                     "nozzle_temperature_initial_layer", "hot_plate_temp", "hot_plate_temp_initial_layer",
                     "cool_plate_temp", "cool_plate_temp_initial_layer", "textured_plate_temp",
                     "textured_plate_temp_initial_layer", "fan_min_speed", "fan_max_speed",
@@ -1651,7 +1681,6 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         Slic3r::Print print;
 
         // Apply model + config to the print
-        Slic3r::Model& model = getGlobalModel();
         if (is_generic_target) {
             // A source project's per-height macros are not part of the selected machine.
             model.plates_custom_gcodes.clear();
@@ -1873,7 +1902,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         // Generate G-code — use the same directory as the loaded model
         extern std::string getFilesDir();
-        std::string output_path = getFilesDir() + "/output.gcode";
+        std::string output_path = requested_output_path.empty() ? getFilesDir() + "/output.gcode" : requested_output_path;
         // OrcaSlicer dereferences result without null check, so provide a real object
         Slic3r::GCodeProcessorResult gcode_result;
         g_active_print.store(&print, std::memory_order_release);

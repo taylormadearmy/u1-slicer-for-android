@@ -13,12 +13,15 @@ import org.json.JSONObject
  * Process profiles are user-imported (Settings → Process Profiles → Import JSON). They are
  * not editable in-app — users re-import to update.
  */
+data class ProcessSourceVariant(val extruderId: Int, val variant: String)
+
 data class ProcessProfile(
     val id: String,
     val name: String,
     /** Original file/profile name, retained for display when the user has renamed the profile. */
     val sourceName: String?,
-    val keys: Map<String, Any>
+    val keys: Map<String, Any>,
+    val sourceVariant: ProcessSourceVariant? = null,
 )
 
 /**
@@ -62,6 +65,9 @@ data class ProcessProfilesConfig(
             obj.put("id", p.id)
             obj.put("name", p.name)
             p.sourceName?.let { obj.put("sourceName", it) }
+            p.sourceVariant?.let {
+                obj.put("sourceVariant", JSONObject().put("extruderId", it.extruderId).put("variant", it.variant))
+            }
             val keysObj = JSONObject()
             for ((k, v) in p.keys) {
                 when (v) {
@@ -94,7 +100,10 @@ data class ProcessProfilesConfig(
                     else -> keys[k] = v.toString()
                 }
             }
-            return ProcessProfile(id, name, sourceName, keys)
+            val variant = obj.optJSONObject("sourceVariant")?.let {
+                ProcessSourceVariant(it.getInt("extruderId"), it.getString("variant"))
+            }
+            return ProcessProfile(id, name, sourceName, keys, variant)
         }
     }
 }

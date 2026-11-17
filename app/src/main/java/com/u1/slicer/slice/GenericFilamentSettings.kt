@@ -12,6 +12,9 @@ internal fun buildGenericFilamentSettings(
     val bed = if (useLibraryBedTemp && libraryBedTemp != null) listOf(libraryBedTemp.toString())
         else checkNotNull(resolvedProfile["bed_temperature"])
     val initialBed = if (useLibraryBedTemp) librarySettings["hot_plate_temp_initial_layer"] ?: bed else bed
+    val chamber = librarySettings["chamber_temperature"]
+        ?: if (useSourceFilament) sourceSettings["chamber_temperature"] ?: resolvedProfile["chamber_temperature"] ?: listOf("0")
+        else resolvedProfile["chamber_temperature"] ?: listOf("0")
     val selected = resolvedProfile.filterKeys {
         it in setOf("filament_type", "filament_colour", "nozzle_temperature", "nozzle_temperature_initial_layer")
     } + librarySettings + mapOf(
@@ -21,6 +24,7 @@ internal fun buildGenericFilamentSettings(
         "textured_plate_temp_initial_layer" to initialBed,
         "cool_plate_temp" to bed,
         "cool_plate_temp_initial_layer" to initialBed,
+        "chamber_temperature" to chamber,
     )
     return selected + sourceSettings.filterKeys {
         (useSourceFilament && it in setOf("filament_type", "filament_colour", "nozzle_temperature", "nozzle_temperature_initial_layer")) ||

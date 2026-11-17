@@ -35,7 +35,12 @@ Invoke-CheckedAdb -AdbArgs @('install', '-r', '-d', (Resolve-Path -LiteralPath $
 Invoke-CheckedAdb -AdbArgs @('install', '-r', (Resolve-Path -LiteralPath $TestApk).Path)
 Run-Fixture 'seedPublished405DataAndGenericJob'
 Invoke-CheckedAdb -AdbArgs @('install', '-r', (Resolve-Path -LiteralPath $CandidateApk).Path)
-Invoke-CheckedAdb -AdbArgs @('shell', 'am', 'start', '-W', '-n', 'com.u1.slicer.orca/com.u1.slicer.MainActivity')
+if ($env:U1_AGENT_DEVICE_COMMAND) {
+    & $env:U1_AGENT_DEVICE_COMMAND open 'com.u1.slicer.orca' --relaunch | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'Device-panel candidate launch failed.' }
+} else {
+    Invoke-CheckedAdb -AdbArgs @('shell', 'am', 'start', '-W', '-n', 'com.u1.slicer.orca/com.u1.slicer.MainActivity')
+}
 Run-Fixture 'verifyPublished405PrintersAndSchema9JobAfterUpgrade'
 Invoke-CheckedAdb -AdbArgs @('install', '-r', (Resolve-Path -LiteralPath $CandidateApk).Path)
 Run-Fixture 'verifyPublished405PrintersAndSchema9JobAfterUpgrade'

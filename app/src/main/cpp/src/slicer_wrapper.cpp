@@ -2,6 +2,7 @@
 #include "sapil_diagnostics.h"
 #include <mutex>
 #include <unordered_set>
+#include <stdexcept>
 // =============================================================================
 // slicer_wrapper.cpp — Main JNI entry points
 // =============================================================================
@@ -255,6 +256,30 @@ Java_com_u1_slicer_NativeLibrary_nativeDumpBambuModel(JNIEnv* env, jobject, jstr
 }
 
 // ---- Multiple Copies ----
+JNIEXPORT jobject JNICALL
+Java_com_u1_slicer_NativeLibrary_validateMachineProfile(
+        JNIEnv* env, jobject, jstring jprofile, jstring jmodel, jstring joutput,
+        jfloat center_x, jfloat center_y, jobject jconfig) {
+    auto string_value = [env](jstring value) {
+        const char* chars = env->GetStringUTFChars(value, nullptr);
+        std::string result(chars);
+        env->ReleaseStringUTFChars(value, chars);
+        return result;
+    };
+    sapil::SliceResult result;
+    try {
+        sapil::SlicerEngine validation_engine;
+        if (!validation_engine.loadProfile(string_value(jprofile)))
+            throw std::runtime_error("Could not load selected machine profile");
+        result = validation_engine.sliceValidationModel(sapil::configFromJava(env, jconfig),
+            string_value(jmodel), string_value(joutput), center_x, center_y);
+    } catch (const std::exception& error) {
+        result.success = false;
+        result.error_message = error.what();
+    }
+    return sapil::sliceResultToJava(env, result);
+}
+
 // positions: flat float array [x0, y0, x1, y1, ...] in mm (bed-space)
 JNIEXPORT jboolean JNICALL
 Java_com_u1_slicer_NativeLibrary_setModelInstances(JNIEnv* env, jobject, jfloatArray jpositions) {

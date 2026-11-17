@@ -93,8 +93,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2333 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 555 independent device tests, uses Orchestrator
+./gradlew testDebugUnitTest                        # 2362 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 570 independent device tests, uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -123,7 +123,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2333 tests across 260 reported test suites
+### Unit tests (`app/src/test/`) - 2362 tests across 262 reported test suites
 - `ui/printer/PrintCompletionEstimateTest.kt` (12) — estimated finish calculation, inactive/invalid status, 12/24-hour formatting, overnight and multi-day labels, timezone and daylight-saving behavior.
 - Generic printer coverage includes imported machine-profile validation and identity, saved-job compatibility, filament temperature composition, CC1 and OctoPrint protocol handling, and draft connection/preset persistence.
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
@@ -226,16 +226,22 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 566 tests across 102 Kotlin source files
+### Instrumented tests (`app/src/androidTest/`) - 581 tests across 107 Kotlin source files
 
 - `slicing/BambuNozzleWorkflowTest.kt` (17) verifies P1S/H2D STL and imported-3MF slicing at all four nozzle sizes, actual `.gcode.3mf` project export and metadata, incompatible processes, and stale-nozzle export rejection.
 
-The default runner executes 555 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
+The default runner executes 570 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
+
+- `slicing/DiscordPresetNativeTest.kt` (5) covers the unrestricted picker contract, supplied machine/process presets, custom enclosure G-code, chamber migration, and excluded-origin rejection.
+- `slicing/CosmosDrawerRegressionTest.kt` (2) exercises the supplied drawer through the ViewModel: plate 5 slices on COSMOS; plate 4 still rejects its unavailable tool.
+- `slicing/GenericInsetPlacementTest.kt` (3) covers full-width inset placement, large-inset profile validation, and preservation of the open model, placement, and G-code during validation.
+- `slicing/BrushWasherRegressionTest.kt` (1) and `slicing/MaterialChamberRegressionTest.kt` (1) cover the supplied project's unused ASA and material changes that must clear an inherited chamber target.
+- `slicing/BambuImportedProfileNativeConfigTest.kt` (4) covers imported setting precedence and chamber heating for assigned versus unused filaments.
 
 - `ui/printer/PrintCompletionRowTest.kt` (2) and `ui/printer/PrinterCompletionScreenTest.kt` (2) — row visibility, real ViewModel polling against a local Moonraker mock, finish-time updates, pause/resume/completion/disconnect, and narrow-screen large-text layouts.
 
 - `slicing/GenericIndependentExtruderNativeTest.kt` has three checks for two- and four-tool Klipper and Marlin output, actual extrusion, selected offsets and heating, and numeric test-oracle correctness.
-- `ui/printer/PrinterEditDialogInstrumentedTest.kt` has 17 checks for the experimental add gate, stock/COSMOS CC1 routes, saved third-party editing, immutable Marlin snapshots, host credentials, installed nozzle settings, stale-binding removal, and refusal to save a generic machine without its profile.
+- `ui/printer/PrinterEditDialogInstrumentedTest.kt` has 18 checks for the experimental add gate, stock/COSMOS CC1 routes, saved third-party editing, immutable Marlin snapshots, host credentials, installed nozzle settings, stale-binding removal, and refusal to save a generic machine without its profile.
 - `slicing/CosmosNativeConfigTest.kt` has two checks for COSMOS macro expansion, default/selected first-layer temperatures, and exclusion of stock shutdown commands and U1 macros. This is offline coverage, not physical printer validation.
 - `slicing/LegacyMachineBindingIntegrationTest.kt` has two checks for cached-profile recovery, native slicing after printer switching, and persistence after cache loss.
 - `migration/V405UpgradeMigrationTest.kt` seeds the published schema-9 app and verifies printer identity, credentials, job fingerprints, files, upgrade, and reinstall.
@@ -246,7 +252,7 @@ The default runner executes 555 independent tests. Another 11 methods require th
 - `data/SessionStateRepositoryTest.kt` (4) — F89 DataStore round-trip: write_thenRead_returnsSameSessionState, read_emptyStore_returnsNull, clear_afterWrite_readReturnsNull, write_overwrites_prior
 - `SessionResumeIntegrationTest.kt` (3) — F89 ViewModel restore flow: init_savedSessionWithExistingFile_exposesResumeOffer, init_savedSessionMissingFile_emitsToastAndClears, dismissSessionResume_clearsOfferAndDataStore
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
-- `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
+- `native/NativeLibrarySymbolTest.kt` (8) — JNI symbol smoke tests, including isolated machine-profile validation
 - `native/NativeLibraryCorrectnessTest.kt` (18) — JNI correctness checks + Phase 1 sub-plan #1 accessors (`nativeGetObjectCount`, `nativeGetVolumeCount`, `nativeGetObjectModelId`, `nativeGetVolumeScalars`, `nativeGetPaintStateCounts` for both mmu and supports kinds) + sub-plan #5 accessor (`nativeGetProjectConfig` populated JSON + null on no-model) + sub-plan #2b `loadModelForPlate` smoke (single-plate match + plateIdx=-1 all-plates alias) + F85 re-add regression (`addModelForPlate_readdWithSamePlate_givesConsistentObjectCount`) + F77 `addModel` object count + bounding boxes (2 STLs) + F77 `setModelScale` bbox-invalidation regression + F85 `addModelForPlate(plateIdx=2)` non-zero-plate coverage
 - `native/NativePlateDataTest.kt` (5) — Phase 1 sub-plan #2 per-plate JNI accessors (`nativeGetPlateCount`, `nativeGetPlateData`): no-model null/zero, colored_3DBenchy single-plate shape, Buzz multi-plate positional sanity + OOR guard, flippy painted fixture customGcode non-empty
 - `native/NativeObjectExtruderMapTest.kt` (3) — Phase 1 sub-plan #4 full-objects JNI accessor (`nativeGetObjectExtruderMap`): no-model null, colored_3DBenchy merged component-ref objects, Flarewing array length matches `nativeGetObjectCount`

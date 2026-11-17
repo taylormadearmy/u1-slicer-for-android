@@ -16,7 +16,11 @@ class GenericMachineProfile private constructor(
     val nozzleDiameter: Float,
     val extruderCount: Int,
     val gcodeFlavor: String,
+    val bedMinX: Float,
+    val bedMinY: Float,
 ) {
+    val printableWidth: Float get() = bedSizeX - bedMinX
+    val printableDepth: Float get() = bedSizeY - bedMinY
     val settings: Map<String, Any> get() = readSettings(JSONObject(resolvedJson))
 
     override fun equals(other: Any?): Boolean = other is GenericMachineProfile && fingerprint == other.fingerprint
@@ -52,6 +56,8 @@ class GenericMachineProfile private constructor(
         source.orEmpty().filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = normalized(key, value) }
         overrides.filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = normalized(key, value) }
         config.entries.toList().forEach { (key, value) -> config[key] = normalized(key, value) }
+        // Orca's skirt envelope uses skirt_height even when zero loops generate no lines.
+        if (strings(config["skirt_loops"]).singleOrNull()?.toIntOrNull() == 0) config["skirt_height"] = "0"
         config["nozzle_diameter"] = strings(settings["nozzle_diameter"])
         config["extruder_offset"] = strings(settings["extruder_offset"]).ifEmpty { List(extruderCount) { "0x0" } }
         config["single_extruder_multi_material"] = "0"
@@ -212,7 +218,7 @@ class GenericMachineProfile private constructor(
                 values.toSortedMap().forEach { (key, value) -> put(key, if (value is List<*>) JSONArray(value) else value) }
             }.toString()
             val fingerprint = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-            return GenericMachineProfile(name, canonical, fingerprint, width, depth, height, nozzle, nozzles.size, requireNotNull(flavor))
+            return GenericMachineProfile(name, canonical, fingerprint, width, depth, height, nozzle, nozzles.size, requireNotNull(flavor), minX, minY)
         }
 
         fun centauriCarbon(): GenericMachineProfile = CC1

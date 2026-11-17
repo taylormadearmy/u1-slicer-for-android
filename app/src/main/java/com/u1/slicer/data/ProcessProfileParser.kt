@@ -29,7 +29,7 @@ object ProcessProfileParser {
         "compatible_printers_condition", "compatible_prints", "compatible_prints_condition",
         "is_custom_defined", "renamed_from", "different_settings_to_system",
         "printer_settings_id", "print_settings_id", "filament_settings_id",
-        "upward_compatible_machine"
+        "upward_compatible_machine", "print_extruder_id", "print_extruder_variant"
     )
 
     /**
@@ -72,6 +72,16 @@ object ProcessProfileParser {
         // Require either an explicit name OR at least one slicing key to consider this a profile.
         val rawName = obj.optString("name").trim()
         val name = rawName.ifBlank { fallbackName }
+        val ids = obj.optJSONArray("print_extruder_id")
+        val variants = obj.optJSONArray("print_extruder_variant")
+        val standardIndex = if (ids != null || variants != null) {
+            require(ids != null && variants != null && ids.length() == variants.length()) {
+                "Process extruder IDs and variants must match."
+            }
+            (0 until ids.length()).singleOrNull {
+                ids.optString(it) == "1" && variants.optString(it) == "Direct Drive Standard"
+            } ?: throw IllegalArgumentException("Process requires exactly one Tool 1 / Direct Drive Standard variant.")
+        } else null
 
         val keys = mutableMapOf<String, Any>()
         for (key in obj.keys()) {
@@ -81,7 +91,13 @@ object ProcessProfileParser {
                     val list = mutableListOf<String>()
                     for (i in 0 until v.length()) list.add(v.optString(i, ""))
                     if (key.endsWith("_speed") || key.endsWith("_acceleration") || key == "slowdown_for_curled_perimeters") {
-                        com.u1.slicer.machine.OrcaPresetCompatibility.processScalar(key, list)?.let { keys[key] = it }
+                        val scalar = if (standardIndex == null) {
+                            com.u1.slicer.machine.OrcaPresetCompatibility.processScalar(key, list)
+                        } else {
+                            require(standardIndex < list.size) { "Process setting '$key' has no selected Standard variant." }
+                            list[standardIndex].takeIf { it.isNotBlank() && it != "nil" }
+                        }
+                        scalar?.let { keys[key] = it }
                     } else keys[key] = list
                 }
                 is JSONObject -> {
@@ -101,7 +117,8 @@ object ProcessProfileParser {
             id = UUID.randomUUID().toString(),
             name = name,
             sourceName = rawName.takeIf { it.isNotBlank() },
-            keys = keys
+            keys = keys,
+            sourceVariant = standardIndex?.let { ProcessSourceVariant(1, "Direct Drive Standard") },
         )
     }
 }

@@ -58,7 +58,7 @@ class V405UpgradeMigrationTest {
         assertEquals(320f, profile.maxPrintHeight)
         assertEquals("published-fixture-key", actual.printers.single { it.id == "405-octo" }.host?.apiKey)
         val database = AppDatabase.getInstance(context)
-        assertEquals(9, database.openHelper.readableDatabase.version)
+        assertEquals(10, database.openHelper.readableDatabase.version)
         val job = database.sliceJobDao().getAll().first().single()
         assertEquals("GenericKlipper", job.sliceTarget)
         assertEquals(profile.fingerprint, job.machineProfileFingerprint)

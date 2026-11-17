@@ -20,37 +20,17 @@ class NativeMachineProfileValidator(context: Context) {
         }
         NativeLibrary.previewMutex.withLock {
             val native = NativeLibrary()
+            val selectedProfileFile = File.createTempFile("validation-machine-", ".json", appContext.cacheDir)
+            val outputFile = File.createTempFile("validation-machine-", ".gcode", appContext.cacheDir)
             try {
-                native.clearModel()
                 val snapshot = com.u1.slicer.slice.GenericMachineProfile.fromJson(profile.machineJson)
-                val selectedProfileFile = File.createTempFile("validation-machine-", ".json", appContext.cacheDir)
-                try {
-                    selectedProfileFile.writeText(profileJson(snapshot.compose()))
-                    check(native.loadProfile(selectedProfileFile.absolutePath)) { "Could not load selected machine profile" }
-                } finally {
-                    selectedProfileFile.delete()
-                }
-                val model = validationModel()
-                if (!native.loadModel(model.absolutePath)) {
-                    return@withLock MachineProfileValidationResult.failure(
-                        "Could not load the profile validation model.",
-                    )
-                }
-                val info = native.getModelInfo()
-                    ?: return@withLock MachineProfileValidationResult.failure(
-                        "Could not inspect the profile validation model.",
-                    )
-                val lowerLeftX = (profile.bedSizeX - info.sizeX) / 2f
-                val lowerLeftY = (profile.bedSizeY - info.sizeY) / 2f
-                if (!native.setModelInstances(floatArrayOf(lowerLeftX, lowerLeftY))) {
-                    return@withLock MachineProfileValidationResult.failure(
-                        "Could not place the profile validation model on the print bed.",
-                    )
-                }
-                val result = native.slice(validationConfig(profile))
-                    ?: return@withLock MachineProfileValidationResult.failure(
-                        "Native slicer returned no validation result.",
-                    )
+                selectedProfileFile.writeText(profileJson(snapshot.compose()))
+                val result = native.validateMachineProfile(
+                    selectedProfileFile.absolutePath, validationModel().absolutePath, outputFile.absolutePath,
+                    snapshot.bedMinX + snapshot.printableWidth / 2f,
+                    snapshot.bedMinY + snapshot.printableDepth / 2f,
+                    validationConfig(profile),
+                ) ?: return@withLock MachineProfileValidationResult.failure("Native slicer returned no validation result.")
                 if (!result.success) {
                     return@withLock MachineProfileValidationResult.failure(
                         result.errorMessage.ifBlank { "Native profile validation failed." },
@@ -86,7 +66,8 @@ class NativeMachineProfileValidator(context: Context) {
             } catch (error: Exception) {
                 MachineProfileValidationResult.failure(error.message ?: "Native profile validation failed.")
             } finally {
-                native.clearModel()
+                selectedProfileFile.delete()
+                outputFile.delete()
             }
         }
     }

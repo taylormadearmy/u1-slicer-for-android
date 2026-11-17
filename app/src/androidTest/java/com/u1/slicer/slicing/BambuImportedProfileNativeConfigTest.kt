@@ -23,6 +23,22 @@ import java.util.zip.ZipOutputStream
 
 @RunWith(AndroidJUnit4::class)
 class BambuImportedProfileNativeConfigTest {
+    @Test fun x1eUsesAssignedChamberTemperature() = verifyChamber(listOf("65", "0"), true)
+
+    @Test fun x1eDoesNotHeatForAnUnusedHotFilament() = verifyChamber(listOf("0", "65"), false)
+
+    private fun verifyChamber(chambers: List<String>, heating: Boolean) {
+        val composed = BambuImportedConfigComposer.compose(SlicerTarget.BambuX1E,
+            sourceConfig = mapOf("chamber_temperature" to chambers))
+        val threeMf = writeTetrahedronThreeMf(composed.config)
+        assertTrue(native.loadModel(threeMf.absolutePath))
+        assertTrue(native.setModelInstances(floatArrayOf(100f, 100f)))
+        val result = native.slice(resolveTargetedSliceConfig(SlicerTarget.BambuX1E, SliceConfig(extruderCount = 1)))
+        assertTrue(result?.errorMessage, result?.success == true)
+        val commands = File(result!!.gcodePath).readLines().map { it.substringBefore(';').trim() }
+        val heats = commands.any { Regex("^M(?:141|191)\\s+S65(?:\\s|$)").containsMatchIn(it) }
+        org.junit.Assert.assertEquals(heating, heats)
+    }
     private lateinit var native: NativeLibrary
     private lateinit var cacheDir: File
 
