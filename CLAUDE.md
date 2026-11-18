@@ -97,6 +97,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ./gradlew connectedDebugAndroidTest                # 570 independent device tests, uses Orchestrator
 ```
 
+For instrumentation against the release APK, build matching tests with `./gradlew -PinstrumentedBuildType=release assembleReleaseAndroidTest`. Pass that APK as `-ReleaseTestApk` and the normal debug test APK as `-DebugTestApk` to `scripts/run-release-native-regression.ps1`. Kotlin internal accessors include the build variant's module name, so a debug test APK cannot exercise every internal API in a release app. The driver restores both debug APKs after the release checks.
+
 For live progress during the long Windows instrumented sweep, use:
 ```powershell
 .\scripts\run-connected-with-progress.ps1 -Device <id>

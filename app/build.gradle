@@ -7,6 +7,10 @@ plugins {
 android {
     namespace 'com.u1.slicer'
     compileSdk 34
+    testBuildType = providers.gradleProperty('instrumentedBuildType').getOrElse('debug')
+    if (!(testBuildType in ['debug', 'release'])) {
+        throw new GradleException('instrumentedBuildType must be debug or release')
+    }
 
     defaultConfig {
         applicationId "com.u1.slicer.orca"

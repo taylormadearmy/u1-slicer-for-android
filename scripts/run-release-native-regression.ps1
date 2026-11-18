@@ -3,14 +3,15 @@ param(
     [Parameter(Mandatory)][string]$Device,
     [Parameter(Mandatory)][string]$ReleaseApk,
     [Parameter(Mandatory)][string]$DebugApk,
-    [Parameter(Mandatory)][string]$TestApk,
+    [Parameter(Mandatory)][string]$ReleaseTestApk,
+    [Parameter(Mandatory)][string]$DebugTestApk,
     [Parameter(Mandatory)][string]$BackupPath,
     [Parameter(Mandatory)][string]$BackupSha256,
     [Parameter(Mandatory)][string]$ResultsDir
 )
 $ErrorActionPreference = 'Stop'
 if ($Device -ne '5A101JEBF24790') { throw 'Only the approved regression Pixel may run these tests.' }
-foreach ($path in @($ReleaseApk, $DebugApk, $TestApk, $BackupPath)) {
+foreach ($path in @($ReleaseApk, $DebugApk, $ReleaseTestApk, $DebugTestApk, $BackupPath)) {
     if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing input: $path" }
 }
 if ((Get-FileHash -LiteralPath $BackupPath -Algorithm SHA256).Hash -ne $BackupSha256) {
@@ -25,7 +26,8 @@ New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
 $inputs = @{
     releaseSha256 = (Get-FileHash -LiteralPath $ReleaseApk).Hash
     debugSha256 = (Get-FileHash -LiteralPath $DebugApk).Hash
-    testSha256 = (Get-FileHash -LiteralPath $TestApk).Hash
+    testSha256 = (Get-FileHash -LiteralPath $ReleaseTestApk).Hash
+    debugTestSha256 = (Get-FileHash -LiteralPath $DebugTestApk).Hash
 }
 $inputs | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ResultsDir 'candidate-input.json')
 function Invoke-CheckedAdb([string[]]$Arguments) {
@@ -41,7 +43,7 @@ function Get-InstalledApkHash([string]$Package) {
 }
 try {
     Invoke-CheckedAdb @('install', '-r', $ReleaseApk)
-    Invoke-CheckedAdb @('install', '-r', $TestApk)
+    Invoke-CheckedAdb @('install', '-r', $ReleaseTestApk)
     $inputs.installedReleaseSha256 = Get-InstalledApkHash 'com.u1.slicer.orca'
     $inputs.installedTestSha256 = Get-InstalledApkHash 'com.u1.slicer.orca.test'
     if ($inputs.installedReleaseSha256 -ne $inputs.releaseSha256 -or $inputs.installedTestSha256 -ne $inputs.testSha256) {
@@ -84,6 +86,7 @@ try {
 } finally {
     try {
         Invoke-CheckedAdb @('install', '-r', $DebugApk)
+        Invoke-CheckedAdb @('install', '-r', $DebugTestApk)
     } finally {
         & "$PSScriptRoot/restore-reconciliation-device-data.ps1" -Device $Device -BackupPath $BackupPath `
             -ExpectedSha256 $BackupSha256 -EvidenceDir (Join-Path $ResultsDir 'restore')

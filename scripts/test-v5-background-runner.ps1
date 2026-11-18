@@ -20,7 +20,7 @@ try {
         try {
         $ErrorActionPreference = 'Continue'
         $output = & powershell.exe -NoProfile -File (Join-Path $scripts 'run-v5-reconciliation-background.ps1') `
-            -Device 5A101JEBF24790 -CandidateApk $inputFile -TestApk $inputFile -ReleaseApk $inputFile `
+            -Device 5A101JEBF24790 -CandidateApk $inputFile -TestApk $inputFile -ReleaseTestApk $inputFile -ReleaseApk $inputFile `
             -Published405Apk $inputFile -Published404Apk $inputFile -BackupPath $inputFile -BackupSha256 $inputHash -ResultsRoot $root 2>&1
         $exitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = 'Stop' }
@@ -46,7 +46,7 @@ try {
     try {
         $ErrorActionPreference = 'Continue'
         $output = & powershell.exe -NoProfile -File (Join-Path $scripts 'run-v5-reconciliation-background.ps1') `
-            -Device 5A101JEBF24790 -CandidateApk $inputFile -TestApk $inputFile -ReleaseApk $inputFile `
+            -Device 5A101JEBF24790 -CandidateApk $inputFile -TestApk $inputFile -ReleaseTestApk $inputFile -ReleaseApk $inputFile `
             -Published405Apk $inputFile -Published404Apk $inputFile -BackupPath $inputFile -BackupSha256 $inputHash -ResultsRoot $heldRoot 2>&1
         $heldExitCode = $LASTEXITCODE
         $ErrorActionPreference = 'Stop'
