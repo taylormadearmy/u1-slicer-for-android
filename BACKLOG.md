@@ -4,11 +4,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### Preset import and selected-plate tool validation — FIXED, unreleased v5.0.9 candidate
+### Preset import and selected-plate tool validation — FIXED, RELEASED v5.0.9 (released 2026-11-18)
 - **Preset import**: Android file pickers expose JSON and Orca bundles. Shared parsing resolves pinned parents, normalizes Standard tool variants, and preserves imported process settings and filament chamber temperature. Missing parents produce a specific error. The supplied printer and process JSON files import unchanged and persist after restart. The supplied ASA bundle lacks `Elegoo ASA @System`; a resolved snapshot was recovered from the supplied brush-washer project.
 - **Selected plate**: generic machines validate tools used by the selected plate. Plate 5 of the supplied `4x4_Drawer_ALL.3mf` slices with the single-slot COSMOS profile. Plates that actually require an unavailable tool remain rejected. Generic validation also preserves the active native model and respects inset bed coordinates and enabled skirts.
 - **Validation (2026-11-18)**: 2,362 JVM tests, all 570 independent device methods, all 11 external-fixture methods, 35 checks against the exact release APK, and all 37 E2E scenarios passed. A separate agent reviewed the source and final raw test evidence. Interrupted runs and the locked-screen UI failures remain recorded; all 26 affected UI methods passed unchanged after unlocking the approved Pixel 9a.
-- **Release state**: clean signed candidate prepared as `u1-slicer-orca-v5.0.9.apk`. No public tag or release has been created. Physical COSMOS printing and an actual 16 KB-page Android environment were outside this local validation.
+- **Release**: [v5.0.9](https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v5.0.9), with the clean signed `u1-slicer-orca-v5.0.9.apk` asset. The downloaded GitHub asset matches the exact release-tested APK SHA-256. Physical COSMOS printing and an actual 16 KB-page Android environment were outside this local validation.
 
 ### B151: Stock CC1 machine commands shut down COSMOS firmware — FIXED, RELEASED v5.0.5
 - **Report (2026-10-23)**: v5.0.4 slices and sends an STL, but COSMOS shows “Use COSMOS OrcaSlicer profile”. OpenCentauri documents that COSMOS 26.07+ deliberately emergency-stops on stock `M729`/`M8213`.
@@ -1184,6 +1184,8 @@ The following are candidate options for M5. We'll choose which to build next. Al
 - Useful for both routine Snapmaker Orca updates and the eventual FullSpectrum fork evaluation (F14)
 
 ## Closed (recent)
+
+- **v5.0.9 (2026-11-18)**: released preset-picker and import preservation fixes, filament chamber-temperature persistence, selected-plate tool validation, and native generic-validation isolation and bed-boundary fixes. All 2,943 unique automated tests, 37 E2E scenarios, and 35 exact-release checks passed. Separate source and evidence review completed. [Release and APK](https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v5.0.9).
 
 - **v5.0.7-rc1 withdrawn (2026-11-15):** The isolated Bambu prerelease and its APK assets were removed at user request. Its public source tag remains reserved and will not be reused. Cumulative v5.0.8 integrates the Bambu fixes with all v5.0.5/v5.0.6 changes. Fresh validation passed: 2,333 JVM tests; all 566 declared device methods (555 independent plus 11 external-fixture methods); 30 native checks against the exact release APK; all 37 U1/H2D E2E scenarios and add-ons; four PowerShell guards; 17 Python host tests; and four pinned vendor snapshots. Full release lint exposed a missing Media3 unstable-API opt-in in the RTSP view; the annotation was added and the clean build/lint/JVM cycle rerun successfully. Signature, JNI/library identity, native APK packaging, release startup, and final byte-verified phone restoration checks passed. Physical printer acceptance, actual 16 KB-page device operation, and manual SAF/share-sheet interaction remain untested. The cumulative candidate is local and unpublished; no replacement release has been published.
 
