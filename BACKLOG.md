@@ -4,6 +4,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### Preset import and selected-plate tool validation — FIXED, unreleased v5.0.9 candidate
+- **Preset import**: Android file pickers expose JSON and Orca bundles. Shared parsing resolves pinned parents, normalizes Standard tool variants, and preserves imported process settings and filament chamber temperature. Missing parents produce a specific error. The supplied printer and process JSON files import unchanged and persist after restart. The supplied ASA bundle lacks `Elegoo ASA @System`; a resolved snapshot was recovered from the supplied brush-washer project.
+- **Selected plate**: generic machines validate tools used by the selected plate. Plate 5 of the supplied `4x4_Drawer_ALL.3mf` slices with the single-slot COSMOS profile. Plates that actually require an unavailable tool remain rejected. Generic validation also preserves the active native model and respects inset bed coordinates and enabled skirts.
+- **Validation (2026-11-18)**: 2,362 JVM tests, all 570 independent device methods, all 11 external-fixture methods, 35 checks against the exact release APK, and all 37 E2E scenarios passed. A separate agent reviewed the source and final raw test evidence. Interrupted runs and the locked-screen UI failures remain recorded; all 26 affected UI methods passed unchanged after unlocking the approved Pixel 9a.
+- **Release state**: clean signed candidate prepared as `u1-slicer-orca-v5.0.9.apk`. No public tag or release has been created. Physical COSMOS printing and an actual 16 KB-page Android environment were outside this local validation.
+
 ### B151: Stock CC1 machine commands shut down COSMOS firmware — FIXED, RELEASED v5.0.5
 - **Report (2026-10-23)**: v5.0.4 slices and sends an STL, but COSMOS shows “Use COSMOS OrcaSlicer profile”. OpenCentauri documents that COSMOS 26.07+ deliberately emergency-stops on stock `M729`/`M8213`.
 - **Fix**: explicit COSMOS CC1 add route and existing-generic-printer profile choice, using a recorded official non-AFC 0.4 mm firmware-template delta over ECC geometry. The immutable generic Klipper snapshot uses Moonraker with an explicit default web port, preserving custom ports. Stock CC1 stays on its separate profile/transport. Profile fingerprints prevent sending old generic-profile jobs after switching; users must reslice.
