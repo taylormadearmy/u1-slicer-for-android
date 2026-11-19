@@ -48,6 +48,7 @@ data class SessionState(
     /** F101 recipe; raw profile points intentionally remain native/model-owned. */
     val adaptiveLayerHeight: AdaptiveLayerHeightState = AdaptiveLayerHeightState(),
     val canonicalColourRemaps: List<CanonicalColourRemap> = emptyList(),
+    val importedObjectsExposed: Boolean = false,
 ) {
     data class AdditionalFile(val path: String, val plateIdx: Int)
 
@@ -84,7 +85,8 @@ data class SessionState(
             gcodeToolSpace == other.gcodeToolSpace &&
             sliceTargetId == other.sliceTargetId &&
             adaptiveLayerHeight == other.adaptiveLayerHeight &&
-            canonicalColourRemaps == other.canonicalColourRemaps
+            canonicalColourRemaps == other.canonicalColourRemaps &&
+            importedObjectsExposed == other.importedObjectsExposed
     }
 
     override fun hashCode(): Int {
@@ -116,6 +118,7 @@ data class SessionState(
         result = 31 * result + (sliceTargetId?.hashCode() ?: 0)
         result = 31 * result + adaptiveLayerHeight.hashCode()
         result = 31 * result + canonicalColourRemaps.hashCode()
+        result = 31 * result + importedObjectsExposed.hashCode()
         return result
     }
 
@@ -164,6 +167,7 @@ data class SessionState(
             state.sliceJobId?.let { obj.put("sliceJobId", it) }
             state.gcodeToolSpace?.let { obj.put("gcodeToolSpace", it) }
             state.sliceTargetId?.let { obj.put("sliceTargetId", it) }
+            if (state.importedObjectsExposed) obj.put("importedObjectsExposed", true)
             obj.put("adaptiveLayerHeight", JSONObject().apply {
                 put("mode", state.adaptiveLayerHeight.mode.name)
                 put("preset", state.adaptiveLayerHeight.preset.name)
@@ -395,6 +399,7 @@ data class SessionState(
                     projectMixes = projectMixes,
                     adaptiveLayerHeight = adaptiveLayerHeight,
                     canonicalColourRemaps = canonicalColourRemaps,
+                    importedObjectsExposed = obj.optBoolean("importedObjectsExposed"),
                 )
             } catch (e: JSONException) {
                 null

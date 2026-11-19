@@ -94,7 +94,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 2362 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 570 independent device tests, uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 571 independent device tests, uses Orchestrator
 ```
 
 For instrumentation against the release APK, build matching tests with `./gradlew -PinstrumentedBuildType=release assembleReleaseAndroidTest`. Pass that APK as `-ReleaseTestApk` and the normal debug test APK as `-DebugTestApk` to `scripts/run-release-native-regression.ps1`. Kotlin internal accessors include the build variant's module name, so a debug test APK cannot exercise every internal API in a release app. The driver restores both debug APKs after the release checks.
@@ -228,11 +228,11 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 581 tests across 107 Kotlin source files
+### Instrumented tests (`app/src/androidTest/`) - 582 tests across 107 Kotlin source files
 
 - `slicing/BambuNozzleWorkflowTest.kt` (17) verifies P1S/H2D STL and imported-3MF slicing at all four nozzle sizes, actual `.gcode.3mf` project export and metadata, incompatible processes, and stale-nozzle export rejection.
 
-The default runner executes 570 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
+The default runner executes 571 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
 
 - `slicing/DiscordPresetNativeTest.kt` (5) covers the unrestricted picker contract, supplied machine/process presets, custom enclosure G-code, chamber migration, and excluded-origin rejection.
 - `slicing/CosmosDrawerRegressionTest.kt` (2) exercises the supplied drawer through the ViewModel: plate 5 slices on COSMOS; plate 4 still rejects its unavailable tool.

@@ -616,6 +616,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         sourceModelFile = null
         sourceModelInfo = null
         hasMultipleDistinctObjectsVar = false
+        importedObjectsExposed = false
         customObjectPositions = null
         _multiObjectPositions.value = null
         _importedMixRecipeState.value = null
@@ -894,6 +895,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Custom object positions set from PlacementViewer (null = use auto grid)
     // Flat array [x0,y0,x1,y1,...] in mm
     private var customObjectPositions: FloatArray? = null
+    private var importedObjectsExposed = false
     // Custom wipe tower position (null = use config defaults)
     private var customWipeTowerPos: Pair<Float, Float>? = null
 
@@ -1735,25 +1737,85 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * authored world positions and expose them to the renderer/picker instead
      * of requiring a meaningless additional split.
      */
-    private fun exposeImportedObjectsForSelection() {
-        if (hasMultipleDistinctObjectsVar || additionalModelFiles.isNotEmpty() ||
-            !rawInputFile?.extension.equals("3mf", ignoreCase = true)) return
-        val objectCount = native.nativeGetObjectCount()
-        if (objectCount <= 1) return
-        val boxes = native.getObjectBoundingBoxes()
-        val worldMins = native.nativeGetObjectWorldAABBMins()
-        if (boxes.size != objectCount * 3 || worldMins.size != objectCount * 2) {
-            Log.w("SlicerVM", "F100: refusing to expose malformed object layout " +
-                "(objects=$objectCount boxes=${boxes.size} mins=${worldMins.size})")
-            return
+    fun canEditImportedObjectsIndividually(): Boolean =
+        _state.value is SlicerState.ModelLoaded &&
+            !hasMultipleDistinctObjectsVar && additionalModelFiles.isEmpty() &&
+            rawInputFile?.extension.equals("3mf", ignoreCase = true) &&
+            native.nativeGetObjectCount() > 1
+
+    fun launchEditImportedObjectsIndividually() {
+        viewModelScope.launch { editImportedObjectsIndividually() }
+    }
+
+    internal suspend fun editImportedObjectsIndividually(): Boolean {
+        val file = currentModelFile
+        val generation = modelLoadGeneration.get()
+        return NativeLibrary.previewMutex.withLock {
+            if (file != currentModelFile || !isCurrentModelLoad(generation) ||
+                !canEditImportedObjectsIndividually()) return@withLock false
+
+            if (_copyCount.value != 1 || _modelScale.value != ModelScale() ||
+                _modelRotation.value != ModelRotation()) {
+                _toastEvents.tryEmit("Reset plate scale and rotation and use one copy to edit individual objects")
+                return@withLock false
+            }
+            val count = native.nativeGetObjectCount()
+            val boxes = native.getObjectBoundingBoxes()
+            val mins = native.nativeGetObjectWorldAABBMins()
+            val zMins = native.getInstanceWorldZMins()
+            val anchor = getPlacementPositions()
+            if (boxes.size != count * 3 || boxes.any { !it.isFinite() || it <= 0f } ||
+                mins.size != count * 2 || mins.any { !it.isFinite() } ||
+                zMins.size != count || zMins.any { !it.isFinite() || kotlin.math.abs(it) > 0.01f } ||
+                anchor.size != 2 || anchor.any { !it.isFinite() }) {
+                _toastEvents.tryEmit("Individual editing requires one bed-level instance of each object")
+                return@withLock false
+            }
+            val dx = anchor[0] - (0 until count).minOf { mins[it * 2] }
+            val dy = anchor[1] - (0 until count).minOf { mins[it * 2 + 1] }
+            val positions = FloatArray(mins.size) { mins[it] + if (it % 2 == 0) dx else dy }
+            if (!commitImportedObjectPlacement(positions, boxes, count)) {
+                _toastEvents.tryEmit("Couldn't place the individual objects")
+                return@withLock false
+            }
+            deselect()
+            _sliceStale.value = true
+            invalidatePrepareMeshCache()
+            markSessionDirty()
+            true
         }
-        hasMultipleDistinctObjectsVar = true
+    }
+
+    /** Caller holds previewMutex. Publish the layout only after native accepts it. */
+    private fun commitImportedObjectPlacement(positions: FloatArray, boxes: FloatArray, count: Int): Boolean {
+        if (count < 2 || positions.size != count * 2 || boxes.size != count * 3 ||
+            positions.any { !it.isFinite() } || boxes.any { !it.isFinite() || it <= 0f }) return false
+        val placed = runCatching { native.setObjectPositions(positions) }
+            .onFailure { Log.e("SlicerVM", "Individual object placement failed", it) }
+            .getOrDefault(false)
+        if (!placed) return false
+        customObjectPositions = positions
+        _multiObjectPositions.value = positions
         _objectBoundingBoxes.value = boxes
-        _loadTimeObjectBoundingBoxes.value = boxes.copyOf()
-        customObjectPositions = worldMins.copyOf()
-        _multiObjectPositions.value = worldMins.copyOf()
-        _modelAddVersion.value++
-        Log.i("SlicerVM", "F100: exposed $objectCount pre-separated 3MF objects")
+        importedObjectsExposed = true
+        hasMultipleDistinctObjectsVar = true
+        return true
+    }
+
+    private suspend fun restoreImportedObjectPlacement(saved: SessionState) {
+        val positions = saved.customObjectPositions ?: return
+        NativeLibrary.previewMutex.withLock {
+            val count = native.nativeGetObjectCount()
+            if (!commitImportedObjectPlacement(positions, native.getObjectBoundingBoxes(), count)) {
+                _toastEvents.tryEmit("Couldn't restore the individual object positions")
+                return@withLock
+            }
+            saved.customWipeTowerPos?.let { tower ->
+                customWipeTowerPos = tower
+                _config.value = _config.value.copy(wipeTowerX = tower.first, wipeTowerY = tower.second)
+            }
+            invalidatePrepareMeshCache()
+        }
     }
 
     /** F100: remove one selected object without leaving index-keyed state behind. */
@@ -1780,9 +1842,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 _sliceStale.value = true
                 if (native.nativeGetObjectCount() == 1) {
                     hasMultipleDistinctObjectsVar = false
-                    customObjectPositions = null
+                    if (!importedObjectsExposed) customObjectPositions = null
+                    importedObjectsExposed = false
                     _multiObjectPositions.value = null
                 }
+                markSessionDirty()
             }
             invalidatePrepareMeshCache()
         }
@@ -4219,6 +4283,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     embeddedPlateFile,
                     silent = silent,
                     postLoadStateProvider = {
+                        // The native load replaced the bed. Remove its old layout and
+                        // replay list before publishing the selected plate.
+                        NativeLibrary.previewMutex.withLock {
+                            if (additionalModelFiles.isNotEmpty()) currentModelName = _modelFileName.value
+                            additionalModelFiles.clear()
+                            hasMultipleDistinctObjectsVar = false
+                            importedObjectsExposed = false
+                            customObjectPositions = null
+                            _multiObjectPositions.value = null
+                            _copyCount.value = 1
+                            _copyBedWarning.value = null
+                        }
                         // --- Native-first state reading ---
                         // Read authoritative plate state from native's loaded model.
                         val nativeState = readPlateStateFromNative()
@@ -7954,6 +8030,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             modelRotation = _modelRotation.value.let { Triple(it.x, it.y, it.z) },
             copyCount = _copyCount.value,
             customObjectPositions = customObjectPositions?.copyOf(),
+            importedObjectsExposed = importedObjectsExposed,
             customWipeTowerPos = customWipeTowerPos,
             additionalFiles = additionalModelFiles.toList().map { (f, p) ->
                 SessionState.AdditionalFile(path = f.absolutePath, plateIdx = p)
@@ -8188,7 +8265,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
             val positions = saved.customObjectPositions
             val tower = saved.customWipeTowerPos
-            if (positions != null && tower != null) {
+            if (saved.importedObjectsExposed) {
+                restoreImportedObjectPlacement(saved)
+            } else if (positions != null && tower != null) {
                 applyPlacementPositions(positions, tower)
             }
             // F77 additional files NOT restored in silent mode (addModelFromFile
@@ -8302,7 +8381,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         applyAdaptiveLayerHeight(saved.adaptiveLayerHeight)
         val positions = saved.customObjectPositions
         val tower = saved.customWipeTowerPos
-        if (positions != null && tower != null) {
+        if (saved.importedObjectsExposed) {
+            restoreImportedObjectPlacement(saved)
+        } else if (positions != null && tower != null) {
             applyPlacementPositions(positions, tower)
         }
         // Selection — non-null even if the object is gone (defensive: clamp to current count).
@@ -8438,6 +8519,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _copyCount.value = 1
         customObjectPositions = null
         customWipeTowerPos = null
+        importedObjectsExposed = false
         additionalModelFiles.clear()
         hasMultipleDistinctObjectsVar = false
         _objectBoundingBoxes.value = floatArrayOf()

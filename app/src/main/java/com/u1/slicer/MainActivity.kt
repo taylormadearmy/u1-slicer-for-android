@@ -2350,6 +2350,12 @@ fun PrepareScreen(
                                     modelVersion = modelAddVersion,
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 )
+                            } else if (remember(modelAddVersion, state, hasMultipleDistinctObjects) {
+                                    viewModel.canEditImportedObjectsIndividually()
+                                }) {
+                                OutlinedButton(onClick = viewModel::launchEditImportedObjectsIndividually) {
+                                    Text("Edit objects individually")
+                                }
                             }
                             com.u1.slicer.ui.EditPanel(
                                 viewModel = viewModel,

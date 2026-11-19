@@ -115,10 +115,10 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 
 ```bash
 ./gradlew testDebugUnitTest              # 2362 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 570 independent device tests (ARM64 required)
+./gradlew connectedDebugAndroidTest      # 571 independent device tests (ARM64 required)
 ```
 
-**2943 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2362 JVM tests and 581 device tests. The default device run includes 570 tests; another 11 require upgrade or mock-host fixtures.
+**2944 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more. There are 2362 JVM tests and 582 device tests. The default device run includes 571 tests; another 11 require upgrade or mock-host fixtures.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

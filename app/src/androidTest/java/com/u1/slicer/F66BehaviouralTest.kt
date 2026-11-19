@@ -6,13 +6,17 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.data.PerObjectPose
 import com.u1.slicer.ui.ObjectSelection
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.Rule
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * F66 — end-to-end behavioural tests, written AFTER chasing four symptom
@@ -176,6 +180,76 @@ class F66BehaviouralTest {
     }
 
     // ---- Slice + plate-switch auto-deselect ---------------------------------
+
+    @Test
+    fun independent3mfObjects_editAfterGroupDrag_keepsPlacementAndClearsGroupSelection() = runBlocking {
+        val source = File(ctx.cacheDir, "independent-objects.3mf")
+        val mesh = """
+            <mesh><vertices>
+                <vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/>
+                <vertex x="0" y="10" z="0"/><vertex x="0" y="0" z="10"/>
+            </vertices><triangles>
+                <triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/>
+                <triangle v1="1" v2="2" v3="3"/><triangle v1="2" v2="0" v3="3"/>
+            </triangles></mesh>
+        """.trimIndent()
+        ZipOutputStream(source.outputStream()).use { zip ->
+            fun entry(name: String, xml: String) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(xml.toByteArray())
+                zip.closeEntry()
+            }
+            entry("[Content_Types].xml", """
+                <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+                    <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+                </Types>
+            """.trimIndent())
+            entry("_rels/.rels", """
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                    <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+                </Relationships>
+            """.trimIndent())
+            entry("3D/3dmodel.model", """
+                <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+                    <resources>
+                        <object id="1" type="model" name="A">$mesh</object>
+                        <object id="2" type="model" name="B">$mesh</object>
+                    </resources>
+                    <build>
+                        <item objectid="1" transform="1 0 0 0 1 0 0 0 1 25 40 0"/>
+                        <item objectid="2" transform="1 0 0 0 1 0 0 0 1 70 55 0"/>
+                    </build>
+                </model>
+            """.trimIndent())
+        }
+        withContext(Dispatchers.Main) { vm.loadModelFromFile(source) }
+        awaitLoaded()
+        val native = NativeLibrary()
+        assertEquals(2, native.nativeGetObjectCount())
+        assertFalse(vm.hasMultipleDistinctObjects.value)
+        assertFalse(vm.isObjectSplittable(0))
+        assertTrue(vm.canEditImportedObjectsIndividually())
+        val before = native.nativeGetObjectWorldAABBMins()
+
+        withContext(Dispatchers.Main) {
+            vm.setCopyCount(2)
+            assertFalse(vm.editImportedObjectsIndividually())
+            assertFalse(vm.hasMultipleDistinctObjects.value)
+            vm.setCopyCount(1)
+            vm.selectObject(0)
+            vm.applyPlacementPositions(floatArrayOf(95f, 115f), 180f to 80f)
+            assertTrue(vm.editImportedObjectsIndividually())
+        }
+        val expected = floatArrayOf(
+            95f, 115f, 95f + before[2] - before[0], 115f + before[3] - before[1],
+        )
+        assertTrue(vm.hasMultipleDistinctObjects.value)
+        assertNull(vm.selection.value.objectIndex)
+        assertEquals(2, native.nativeGetObjectCount())
+        assertArrayEquals(expected, vm.getPlacementPositions(), 0.01f)
+        assertArrayEquals(expected, native.nativeGetObjectWorldAABBMins(), 0.01f)
+    }
 
     @Test
     fun nativeGetObjectWorldAABBMins_matchesObjectCount_forMultiObjectFile() {

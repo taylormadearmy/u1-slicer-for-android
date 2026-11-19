@@ -1,6 +1,7 @@
 package com.u1.slicer.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -56,14 +57,17 @@ class SessionStateTest {
         assertEquals(src.copyCount, parsed.copyCount)
         assertEquals(src.savedAtEpochMs, parsed.savedAtEpochMs)
         assertEquals(src.appVersionCode, parsed.appVersionCode)
+        assertFalse(parsed.importedObjectsExposed)
     }
 
     @Test
     fun toJson_fromJson_roundTrip_customObjectPositions() {
         val src = sampleSession(customObjectPositions = floatArrayOf(1f, 2f, 3f, 4f, 5f, 6f))
+            .copy(importedObjectsExposed = true)
         val parsed = SessionState.fromJson(SessionState.toJson(src))!!
         assertNotNull(parsed.customObjectPositions)
         assertTrue(src.customObjectPositions!!.contentEquals(parsed.customObjectPositions!!))
+        assertTrue(parsed.importedObjectsExposed)
         assertEquals(170f to 140f, parsed.customWipeTowerPos)
     }
 
