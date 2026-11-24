@@ -1490,6 +1490,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * (single-island object — native returned null without mutating).
      */
     fun splitObject(objIdx: Int): Boolean {
+        // A 3MF plate whose objects are already independent (e.g. one
+        // single-part painted bead per letter) loads in single-mesh mode, and
+        // native split can't do anything for a single-part object. "Split to
+        // Objects" then means: separate the already-independent objects.
+        if (!native.nativeIsObjectSplittable(objIdx) && canSeparateImportedObjects()) {
+            return separateImportedObjects(objIdx)
+        }
         // v2.10.13: warn if the user is splitting AFTER having duplicated.
         // The slice-path replay applies splits BEFORE duplicates so dupes
         // inherit post-pose transforms, but a duplicate's recorded source
@@ -1749,6 +1756,61 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _multiObjectPositions.value = worldMins.copyOf()
         _modelAddVersion.value++
         Log.i("SlicerVM", "F100: exposed $objectCount pre-separated 3MF objects")
+    }
+
+    /**
+     * True when the loaded 3MF plate already holds several independent native
+     * objects but is still shown in single-mesh mode (load deliberately keeps
+     * it that way — see the B124 note in the state collector). Same gates as
+     * [exposeImportedObjectsForSelection].
+     */
+    private fun canSeparateImportedObjects(): Boolean =
+        !hasMultipleDistinctObjectsVar && additionalModelFiles.isEmpty() &&
+            rawInputFile?.extension.equals("3mf", ignoreCase = true) &&
+            runCatching { native.nativeGetObjectCount() }.getOrDefault(0) > 1
+
+    /**
+     * "Split to Objects" on a plate of already-independent 3MF objects: switch
+     * to multi-object mode without mutating the native model, keeping every
+     * object exactly where the combined mesh was drawn (same drawn-anchor shift
+     * [splitObject] applies), then keep [objIdx] selected.
+     */
+    private fun separateImportedObjects(objIdx: Int): Boolean {
+        val preMins = runCatching { native.nativeGetObjectWorldAABBMins() }
+            .getOrDefault(floatArrayOf())
+        val drawn = getPlacementPositions()
+        exposeImportedObjectsForSelection()
+        if (!hasMultipleDistinctObjectsVar) return false
+        var combMinX = Float.POSITIVE_INFINITY
+        var combMinY = Float.POSITIVE_INFINITY
+        var i = 0
+        while (i + 1 < preMins.size) {
+            if (preMins[i] < combMinX) combMinX = preMins[i]
+            if (preMins[i + 1] < combMinY) combMinY = preMins[i + 1]
+            i += 2
+        }
+        val anchorX = drawn.getOrNull(0)
+        val anchorY = drawn.getOrNull(1)
+        val positions = preMins.copyOf()
+        if (anchorX != null && anchorY != null && combMinX.isFinite() && combMinY.isFinite()) {
+            val shiftX = anchorX - combMinX
+            val shiftY = anchorY - combMinY
+            for (k in 0 until positions.size / 2) {
+                positions[k * 2] += shiftX
+                positions[k * 2 + 1] += shiftY
+            }
+        }
+        runCatching { native.setObjectPositions(positions) }
+        customObjectPositions = positions
+        _multiObjectPositions.value = positions.copyOf()
+        _copyCount.value = 1
+        _copyBedWarning.value = null
+        _selection.value = _selection.value.withObject(objIdx)
+        _sliceStale.value = true
+        invalidatePrepareMeshCache()
+        Log.i("SlicerVM", "Separated ${positions.size / 2} imported 3MF objects; " +
+            "positions=${positions.toList()}")
+        return true
     }
 
     /** F100: remove one selected object without leaving index-keyed state behind. */
@@ -2133,7 +2195,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun volumeName(objIdx: Int, volIdx: Int): String = native.nativeGetVolumeName(objIdx, volIdx) ?: ""
     fun volumeCount(objIdx: Int): Int = native.nativeGetVolumeCount(objIdx)
     fun volumeExtruder(objIdx: Int, volIdx: Int): Int = native.nativeGetVolumeExtruder(objIdx, volIdx)
-    fun isObjectSplittable(objIdx: Int): Boolean = native.nativeIsObjectSplittable(objIdx)
+    fun isObjectSplittable(objIdx: Int): Boolean =
+        native.nativeIsObjectSplittable(objIdx) || canSeparateImportedObjects()
     fun isVolumeSplittable(objIdx: Int, volIdx: Int): Boolean = native.nativeIsVolumeSplittable(objIdx, volIdx)
 
     // Filament library — StateFlow so .value is accessible synchronously (e.g. for nozzle temp lookup at slice time)
@@ -4077,6 +4140,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _splitVolumeOps.value = emptyList()
         _duplicateOps.value = emptyList()
         _modelOperations.value = emptyList()
+        // A split / separate on the previous plate switched to multi-object
+        // mode with that plate's object positions; the new plate starts in
+        // single-mesh mode like any fresh load (multi-file adds keep theirs).
+        if (additionalModelFiles.isEmpty()) {
+            hasMultipleDistinctObjectsVar = false
+            customObjectPositions = null
+            _multiObjectPositions.value = null
+        }
         // Always extract from the full processed multi-plate file so that switching plates
         // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
         // _multiPlateSourceFile is set once on load and never overwritten (B83 fix).
