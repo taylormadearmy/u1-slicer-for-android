@@ -3,8 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v5.0.10` (`versionCode 510`)
-Local candidate: `v5.0.11` (`versionCode 511`), validation complete; awaiting publication approval.
+Current release: [`v5.0.11`](https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v5.0.11) (`versionCode 511`)
 The withdrawn `v5.0.7-rc1` tag remains reserved.
 
 > **NEVER start a print on the user's physical printer without explicit permission.**

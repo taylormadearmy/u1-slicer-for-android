@@ -6,8 +6,8 @@ Native Android slicer for the **Snapmaker U1** and supported rectangular-bed FDM
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v5.0.10` (`versionCode 510`)
-Local candidate: `v5.0.11` (`versionCode 511`), adding single-filament source remapping for generic single-nozzle machines. The isolated v5.0.7-rc1 release was withdrawn; its tag is reserved and must not be reused.
+Current release: [`v5.0.11`](https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v5.0.11) (`versionCode 511`)
+v5.0.11 fixes single-filament source remapping for generic single-nozzle machines. The isolated v5.0.7-rc1 release was withdrawn; its tag is reserved and must not be reused.
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
