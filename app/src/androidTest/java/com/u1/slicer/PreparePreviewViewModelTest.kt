@@ -331,6 +331,107 @@ class PreparePreviewViewModelTest {
     }
 
     /**
+     * #192: a 3MF plate of independent single-part objects (Cube+v2 plate 1 has
+     * 2, plate 2 has 4) loads in single-mesh mode like any single file (B124),
+     * but native split is `parts_count() > 1`, so Split to Objects stayed
+     * disabled and per-object selection was unreachable.
+     *
+     * Contract after the fix:
+     * (a) load is unchanged: hasMultipleDistinctObjects stays false;
+     * (b) Split to Objects is enabled, and splitObject() separates the
+     *     already-independent objects without mutating the native model;
+     * (c) switching plates returns to single-mesh mode with a single
+     *     placement pair, and Split is available again on the new plate.
+     */
+    @Test
+    fun cubeV2_singlePartObjects_splitToObjectsSeparatesThem_andPlateSwitchResets() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val native = NativeLibrary()
+        val modelFile = copyAssetToCache("Cube+v2.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+            waitUntil("Cube+v2 plate selector visible") {
+                viewModel.showPlateSelector.value
+            }
+            viewModel.selectPlate(1)
+            waitUntil("Cube+v2 plate 1 loaded", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+
+            val objectCount = native.nativeGetObjectCount()
+            assertTrue(
+                "Cube+v2 plate 1 should load as >= 2 native objects, got $objectCount",
+                objectCount >= 2
+            )
+            assertFalse(
+                "Fixture precondition: Cube+v2 objects are single-part, so native split can't apply",
+                native.nativeIsObjectSplittable(0)
+            )
+            // (a)
+            assertFalse(
+                "B124: a single-file 3MF must still load in single-mesh mode",
+                viewModel.hasMultipleDistinctObjects.value
+            )
+            // (b)
+            assertTrue(
+                "#192: Split to Objects must be enabled for a plate of independent single-part objects",
+                viewModel.isObjectSplittable(0)
+            )
+            assertTrue(
+                "#192: splitObject must separate the already-independent objects",
+                viewModel.splitObject(0)
+            )
+            assertTrue(
+                "#192: after Split the plate must be in multi-object mode",
+                viewModel.hasMultipleDistinctObjects.value
+            )
+            assertEquals(
+                "Separating must not mutate the native model",
+                objectCount, native.nativeGetObjectCount()
+            )
+            assertEquals(
+                "One [x, y] placement pair per separated object",
+                objectCount * 2, viewModel.getPlacementPositions().size
+            )
+            assertEquals(
+                "The tapped object stays selected after Split",
+                0, viewModel.selection.value.objectIndex
+            )
+            assertFalse(
+                "Once separated, Split to Objects has nothing left to do",
+                viewModel.isObjectSplittable(0)
+            )
+
+            // (c)
+            viewModel.selectPlate(2)
+            assertFalse(
+                "#192: a plate switch must leave multi-object mode",
+                viewModel.hasMultipleDistinctObjects.value
+            )
+            waitUntil("Cube+v2 plate 2 loaded", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            assertFalse(
+                "#192: plate 2 must load in single-mesh mode, not inherit plate 1's split",
+                viewModel.hasMultipleDistinctObjects.value
+            )
+            assertEquals(
+                "#192: plate 2 must not inherit plate 1's per-object positions",
+                2, viewModel.getPlacementPositions().size
+            )
+            assertTrue(
+                "#192: Split to Objects must be available again on plate 2",
+                viewModel.isObjectSplittable(0)
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
      * B86: S-Buttons Prepare preview shows 3 colours instead of 4 (pink/E4 appears white).
      *
      * Root cause hypothesis: when the user has E2=white AND E4=pink, the auto colour-mapping
