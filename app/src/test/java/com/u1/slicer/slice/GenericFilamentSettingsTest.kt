@@ -4,6 +4,69 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class GenericFilamentSettingsTest {
+    @Test fun `source flow density and speed limits follow the remapped filament`() {
+        val source = mapOf<String, Any>("filament_flow_ratio" to listOf("0.96", "0.95"),
+            "filament_max_volumetric_speed" to listOf("12", "15"),
+            "filament_density" to listOf("1.24", "1.27"))
+        val machine = GenericMachineProfile.centauriCarbon()
+        val config = machine.compose(source, sourceFilamentIndex = 1)
+        assertEquals(listOf("0.95"), config["filament_flow_ratio"])
+        assertEquals(listOf("15"), config["filament_max_volumetric_speed"])
+        assertEquals(listOf("1.27"), config["filament_density"])
+        assertEquals(listOf("0.96"), machine.compose(source)["filament_flow_ratio"])
+        val overridden = machine.compose(source, mapOf("filament_flow_ratio" to listOf("1.02")), sourceFilamentIndex = 1)
+        assertEquals(listOf("1.02"), overridden["filament_flow_ratio"])
+    }
+
+    @Test fun `material and colour edits use the remapped source index in the composed machine`() {
+        val edited = resolved + mapOf("filament_type" to listOf("PLA", "PLA", "PETG"),
+            "filament_colour" to listOf("#000000", "#FFFFFF", "#123ABC"),
+            "nozzle_temperature" to listOf("220", "220", "235"),
+            "nozzle_temperature_initial_layer" to listOf("220", "220", "235"))
+        val tuning = buildGenericFilamentSettings(edited, emptyMap(),
+            sourceSettings = mapOf("filament_type" to listOf("PLA", "PLA", "PLA")),
+            useSourceFilament = false, sourceFilamentIndex = 2)
+        assertEquals(listOf("PETG"), tuning["filament_type"])
+        assertEquals(listOf("235"), tuning["nozzle_temperature"])
+        val config = GenericMachineProfile.centauriCarbon().compose(overrides = tuning +
+            selectSingleNozzleFilament(edited.filterKeys { it != "bed_temperature" }, 2))
+        assertEquals(listOf("PETG"), config["filament_type"])
+        assertEquals(listOf("#123ABC"), config["filament_colour"])
+        assertEquals(listOf("235"), config["nozzle_temperature"])
+        assertEquals(listOf("235"), config["nozzle_temperature_initial_layer"])
+    }
+
+    @Test fun `remapped source filament retains its own material colour and heating`() {
+        val source = mapOf<String, Any>("filament_type" to listOf("PLA", "PETG", "ASA"),
+            "filament_colour" to listOf("#111111", "#222222", "#333333"),
+            "nozzle_temperature" to listOf("210", "245", "260"),
+            "nozzle_temperature_initial_layer" to listOf("215", "250", "265"),
+            "hot_plate_temp" to listOf("55", "80", "100"),
+            "chamber_temperature" to listOf("0", "0", "65"))
+        val config = GenericMachineProfile.centauriCarbon().compose(overrides = buildGenericFilamentSettings(
+            resolved, emptyMap(), sourceSettings = source, sourceFilamentIndex = 2))
+        assertEquals(listOf("ASA"), config["filament_type"])
+        assertEquals(listOf("#333333"), config["filament_colour"])
+        assertEquals(listOf("260"), config["nozzle_temperature"])
+        assertEquals(listOf("265"), config["nozzle_temperature_initial_layer"])
+        assertEquals(listOf("100"), config["hot_plate_temp"])
+        assertEquals(listOf("65"), config["chamber_temperature"])
+    }
+
+    @Test fun `single shared source temperature applies to a higher filament index`() {
+        val config = buildGenericFilamentSettings(resolved, emptyMap(),
+            sourceSettings = mapOf("nozzle_temperature" to listOf("240")), sourceFilamentIndex = 2)
+        assertEquals(listOf("240"), config["nozzle_temperature"])
+    }
+
+    @Test fun `selected library material still overrides a remapped source filament`() {
+        val config = buildGenericFilamentSettings(resolved, emptyMap(), libraryBedTemp = 75,
+            sourceSettings = mapOf("filament_type" to listOf("PLA", "ASA"),
+                "nozzle_temperature" to listOf("210", "260")),
+            useSourceFilament = false, sourceFilamentIndex = 1)
+        assertEquals(listOf("PETG"), config["filament_type"])
+        assertEquals(listOf("245"), config["nozzle_temperature"])
+    }
     @Test fun `material changes clear only changed filament chamber targets`() {
         val source = mapOf<String, Any>("filament_type" to listOf("ASA", "ASA", "PLA"),
             "chamber_temperature" to listOf("65", "65", "0"))

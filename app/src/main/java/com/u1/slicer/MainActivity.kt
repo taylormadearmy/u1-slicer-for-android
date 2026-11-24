@@ -2420,6 +2420,14 @@ fun PrepareScreen(
                         // function the slice uses, so the chip strip shows the file's
                         // declared materials and never diverges from the slice.
                         val filamentMaterials by viewModel.displayedFilamentMaterials.collectAsState()
+                        val displayFileIndices = viewModel.displayedFilamentFileIndices()
+                        val hasDisplayRemap = displayFileIndices.withIndex().any { it.index != it.value }
+                        val displayOverrides = if (hasDisplayRemap) displayFileIndices.mapIndexedNotNull { row, fileIndex ->
+                            filamentOverrides[fileIndex]?.let { row to it }
+                        }.toMap() else filamentOverrides
+                        val displayMaterials = if (hasDisplayRemap) displayFileIndices.mapNotNull {
+                            filamentMaterials.getOrNull(it)
+                        } else filamentMaterials
                         if (effectiveSliceTarget == SlicerTarget.SnapmakerU1) {
                             com.u1.slicer.ui.printer.U1PrepareNozzleSettings(
                                 printer = activePrinter,
@@ -2447,7 +2455,7 @@ fun PrepareScreen(
                             syncFilamentPresets = prepareSyncPresets,
                             isBambuPrinter = activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN,
                             filaments = filaments,
-                            filamentMaterials = filamentMaterials,
+                            filamentMaterials = displayMaterials,
                             anyMixAssigned = anyMixAssigned,
                             onMappingChange = { newMapping ->
                                 viewModel.applyMultiColorAssignments(newMapping, extruderPresets, filaments)
@@ -2455,12 +2463,12 @@ fun PrepareScreen(
                             onAutoMap = {
                                 viewModel.reAutoMapColors(extruderPresets, filaments)
                             },
-                            filamentOverrides = filamentOverrides,
+                            filamentOverrides = displayOverrides,
                             onMaterialOverride = { idx, material ->
-                                viewModel.setFilamentMaterialOverride(idx, material)
+                                viewModel.setDisplayedFilamentMaterialOverride(idx, material)
                             },
                             onColorOverride = { idx, color ->
-                                viewModel.setFilamentColorOverride(idx, color)
+                                viewModel.setDisplayedFilamentColorOverride(idx, color)
                             },
                             importedMixRecipe = displayedMixRecipe,
                             mixRecipeSource = mixRecipeSource,

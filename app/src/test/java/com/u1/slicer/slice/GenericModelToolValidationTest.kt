@@ -22,9 +22,51 @@ class GenericModelToolValidationTest {
         objectExtruderMap = mapOf("a" to 1, "b" to 2),
     )
 
-    @Test fun `tool two remains unavailable on a one-tool machine`() {
-        val error = runCatching { validateGenericModelTools(twoPlates(), 1, 2) }.exceptionOrNull()
-        assertEquals("The model references tools not available on the selected machine.", error?.message)
+    @Test fun `sole source filament two maps to the physical nozzle`() {
+        assertEquals(mapOf(2 to 1), validateGenericModelTools(twoPlates(), 1, 2))
+    }
+
+    @Test fun `sole source filament three ignores the source printers physical mapping`() {
+        val info = twoPlates().copy(objectPartExtruders = mapOf("a" to setOf(3)),
+            plates = listOf(twoPlates().plates.first().copy(filamentMapSlots = setOf(1))))
+        assertEquals(mapOf(3 to 1), validateGenericModelTools(info, 1, 1))
+    }
+
+    @Test fun `unselected multi filament project is not collapsed`() {
+        assertThrows(IllegalArgumentException::class.java) { validateGenericModelTools(twoPlates(), 1) }
+    }
+
+    @Test fun `multiple physical nozzles retain tool bounds validation`() {
+        val info = twoPlates().copy(objectExtruderMap = mapOf("a" to 3))
+        assertThrows(IllegalArgumentException::class.java) { validateGenericModelTools(info, 2, 1) }
+        assertEquals(emptyMap<Int, Int>(), validateGenericModelTools(twoPlates(), 2, 2))
+    }
+
+    @Test fun `single filament without a plate also maps to the physical nozzle`() {
+        val info = twoPlates().copy(usedExtruderIndices = setOf(3), volumeExtruders = setOf(3))
+        assertEquals(mapOf(3 to 1), validateGenericModelTools(info, 1))
+    }
+
+    @Test fun `default tool zero resolves to the sole nozzle`() {
+        val info = twoPlates().copy(usedExtruderIndices = setOf(0), volumeExtruders = setOf(0))
+        assertEquals(mapOf(1 to 1), validateGenericModelTools(info, 1))
+    }
+
+    @Test fun `automatic part plus explicit second filament cannot be collapsed`() {
+        val info = twoPlates().copy(objectExtruderMap = mapOf("a" to 0),
+            objectPartExtruders = mapOf("a" to setOf(0, 2)))
+        assertThrows(IllegalArgumentException::class.java) { validateGenericModelTools(info, 1, 1) }
+    }
+
+    @Test fun `automatic parts inherit their explicit object filament`() {
+        val info = twoPlates().copy(objectExtruderMap = mapOf("a" to 2),
+            objectPartExtruders = mapOf("a" to setOf(0, 2)))
+        assertEquals(mapOf(2 to 1), validateGenericModelTools(info, 1, 1))
+    }
+
+    @Test fun `unscoped automatic and explicit filaments require more than one nozzle`() {
+        val info = twoPlates().copy(usedExtruderIndices = setOf(0, 2), volumeExtruders = setOf(0, 2))
+        assertThrows(IllegalArgumentException::class.java) { validateGenericModelTools(info, 1) }
     }
 
     @Test fun `implicit tool one does not inherit another plates tool two`() {
@@ -33,6 +75,11 @@ class GenericModelToolValidationTest {
 
     @Test fun `compound parts cannot hide their second tool`() {
         val info = twoPlates().copy(objectPartExtruders = mapOf("a" to setOf(1, 2)))
+        assertThrows(IllegalArgumentException::class.java) { validateGenericModelTools(info, 1, 1) }
+    }
+
+    @Test fun `multiple source physical slots are not silently collapsed`() {
+        val info = twoPlates().copy(plates = listOf(twoPlates().plates.first().copy(filamentMapSlots = setOf(1, 2))))
         assertThrows(IllegalArgumentException::class.java) { validateGenericModelTools(info, 1, 1) }
     }
 

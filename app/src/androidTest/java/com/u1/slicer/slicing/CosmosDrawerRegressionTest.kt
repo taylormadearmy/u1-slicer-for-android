@@ -20,11 +20,11 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class CosmosDrawerRegressionTest {
-    @Test fun drawerPlateFiveLoadsAndSlicesWithOnlyTheCosmosTool() = verifyPlate(5, true)
+    @Test fun drawerPlateFiveLoadsAndSlicesWithOnlyTheCosmosTool() = verifyPlate(5)
 
-    @Test fun drawerPlateFourStillRejectsUnavailableTools() = verifyPlate(4, false)
+    @Test fun drawerPlateFourRemapsItsSoleSourceFilament() = verifyPlate(4)
 
-    private fun verifyPlate(plateId: Int, shouldSlice: Boolean) = runBlocking {
+    private fun verifyPlate(plateId: Int) = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val app = instrumentation.targetContext.applicationContext as U1SlicerApplication
         val original = withTimeout(15_000) { app.container.printersRepository.config.first { it != null } }!!
@@ -45,11 +45,6 @@ class CosmosDrawerRegressionTest {
             val loaded = withTimeout(120_000) { vm.state.first {
                 it is SlicerViewModel.SlicerState.ModelLoaded || it is SlicerViewModel.SlicerState.Error
             } }
-            if (!shouldSlice) {
-                assertTrue(loaded.toString(), loaded is SlicerViewModel.SlicerState.Error)
-                assertTrue((loaded as SlicerViewModel.SlicerState.Error).message.contains("tools not available"))
-                return@runBlocking
-            }
             assertTrue(loaded.toString(), loaded is SlicerViewModel.SlicerState.ModelLoaded)
             vm.startSlicing()
             val sliced = withTimeout(240_000) { vm.state.first {

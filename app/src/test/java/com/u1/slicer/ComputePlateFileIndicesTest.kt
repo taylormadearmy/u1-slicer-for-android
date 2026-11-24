@@ -23,6 +23,23 @@ import org.junit.Test
  * single-plate files via `mergeThreeMfInfoForPlate`.
  */
 class ComputePlateFileIndicesTest {
+    @Test fun remappedPhysicalToolZeroKeepsItsOriginalSourceFilamentAndAmount() {
+        val usage = com.u1.slicer.slice.alignSingleNozzleFilamentUsage(listOf(100f), 2, 4)
+        assertEquals(listOf(0f, 0f, 100f, 0f), usage)
+        assertEquals(listOf(2), computePlateFileIndices(null, 1, 4, usage))
+    }
+
+    @Test fun singleNozzleUsageAcceptsUnusedPaddedTools() {
+        assertEquals(listOf(0f, 100f, 0f, 0f),
+            com.u1.slicer.slice.alignSingleNozzleFilamentUsage(listOf(100f, 0f, 0f, 0f), 1, 4))
+    }
+
+    @Test fun usageOutsideSingleNozzleMappingRemainsVisible() {
+        val multipleTools = listOf(100f, 50f)
+        assertEquals(multipleTools, com.u1.slicer.slice.alignSingleNozzleFilamentUsage(multipleTools, 2, 4))
+        assertEquals(listOf(100f), com.u1.slicer.slice.alignSingleNozzleFilamentUsage(listOf(100f), 4, 4))
+        assertEquals(emptyList<Float>(), com.u1.slicer.slice.alignSingleNozzleFilamentUsage(emptyList(), 2, 4))
+    }
 
     private fun info(
         plates: List<ThreeMfPlate> = emptyList(),

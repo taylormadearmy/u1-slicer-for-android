@@ -47,7 +47,9 @@ class PrintSetupSectionMaterialTest {
             "B128: the PrintSetupSection call site must feed " +
                 "viewModel.displayedFilamentMaterials so display == slice.",
             src.contains("viewModel.displayedFilamentMaterials") &&
-                src.contains("filamentMaterials = filamentMaterials"),
+                src.contains("filamentMaterials = displayMaterials") &&
+                src.contains("filamentMaterials.getOrNull(it)") &&
+                src.contains("} else filamentMaterials"),
         )
     }
 

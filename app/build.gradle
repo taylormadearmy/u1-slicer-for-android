@@ -16,8 +16,8 @@ android {
         applicationId "com.u1.slicer.orca"
         minSdk 26
         targetSdk 34
-        versionCode 510
-        versionName "5.0.10"
+        versionCode 511
+        versionName "5.0.11"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         if (!project.hasProperty('android.testInstrumentationRunnerArguments.listener')) {

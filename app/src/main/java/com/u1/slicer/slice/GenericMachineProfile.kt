@@ -47,13 +47,14 @@ class GenericMachineProfile private constructor(
     )
 
     /** Source projects contribute process/filament tuning, never machine commands or geometry. */
-    fun compose(source: Map<String, Any>? = null, overrides: Map<String, Any> = emptyMap()): Map<String, Any> {
+    fun compose(source: Map<String, Any>? = null, overrides: Map<String, Any> = emptyMap(), sourceFilamentIndex: Int = 0): Map<String, Any> {
         val config = DEFAULTS.toMutableMap()
         settings.filterKeys { it in MACHINE_KEYS || it in PROCESS_KEYS || it.startsWith("machine_max_") || it.startsWith("machine_min_") }.forEach { (key, value) ->
             config[key] = if (key in TEMPLATE_KEYS) template(value)
                 else if (key.startsWith("machine_max_") || key.startsWith("machine_min_")) value else normalized(key, value)
         }
-        source.orEmpty().filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = normalized(key, value) }
+        val selectedSource = if (extruderCount == 1) selectSingleNozzleFilament(source.orEmpty(), sourceFilamentIndex) else source.orEmpty()
+        selectedSource.filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = normalized(key, value) }
         overrides.filterKeys { it in PROCESS_KEYS }.forEach { (key, value) -> config[key] = normalized(key, value) }
         config.entries.toList().forEach { (key, value) -> config[key] = normalized(key, value) }
         // Orca's skirt envelope uses skirt_height even when zero loops generate no lines.

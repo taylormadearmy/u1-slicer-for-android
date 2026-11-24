@@ -27,7 +27,14 @@ function Write-Step($Message) {
 
 function Invoke-Adb {
     param([Parameter(Position = 0, ValueFromRemainingArguments = $true)][string[]]$Args)
-    & adb -s $Device @Args
+    # Windows PowerShell treats adb's successful progress output on stderr as an error.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & adb -s $Device @Args 2>&1 | ForEach-Object { $_.ToString() }
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
 }
 
 function Get-SafeName([string]$Name) {

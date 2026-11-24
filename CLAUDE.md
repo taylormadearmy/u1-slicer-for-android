@@ -4,6 +4,7 @@ Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
 Current release: `v5.0.10` (`versionCode 510`)
+Local candidate: `v5.0.11` (`versionCode 511`), validation complete; awaiting publication approval.
 The withdrawn `v5.0.7-rc1` tag remains reserved.
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
@@ -93,8 +94,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2362 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 571 independent device tests, uses Orchestrator
+./gradlew testDebugUnitTest                        # 2379 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 579 independent device tests, uses Orchestrator
 ```
 
 For instrumentation against the release APK, build matching tests with `./gradlew -PinstrumentedBuildType=release assembleReleaseAndroidTest`. Pass that APK as `-ReleaseTestApk` and the normal debug test APK as `-DebugTestApk` to `scripts/run-release-native-regression.ps1`. Kotlin internal accessors include the build variant's module name, so a debug test APK cannot exercise every internal API in a release app. The driver restores both debug APKs after the release checks.
@@ -125,7 +126,10 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2362 tests across 262 reported test suites
+### Unit tests (`app/src/test/`) - 2379 tests across 262 reported test suites
+
+- `slice/GenericModelToolValidationTest.kt` (15) covers plate-local single-filament remapping, inherited/automatic tool assignments, and rejection of unsupported mixed, painted or layer-tool models.
+- `slice/GenericFilamentSettingsTest.kt` (16) covers source-filament selection, material/colour edits, heating, flow/speed/density settings, and library/explicit override precedence.
 - `ui/printer/PrintCompletionEstimateTest.kt` (12) — estimated finish calculation, inactive/invalid status, 12/24-hour formatting, overnight and multi-day labels, timezone and daylight-saving behavior.
 - Generic printer coverage includes imported machine-profile validation and identity, saved-job compatibility, filament temperature composition, CC1 and OctoPrint protocol handling, and draft connection/preset persistence.
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
@@ -168,7 +172,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `printer/PrinterViewModelTest.kt` (4) — camera keepalive idempotency helper and LED-sync connection-edge helper
 - `AppEventNotifierTest.kt` (13) — notification title/body/channel/navigate-target for all event types
 - `PreviewSummaryMappingTest.kt` (7) — preview summary data class mapping, F65 resolveExtruderMaterialType by slot, F68 single-colour material label
-- `ComputePlateFileIndicesTest.kt` (25) — post-slice summary slot narrowing for Bambu/SEMM sparse canonical lists; B99 STL support/interface raw-G-code fallback; B121 buildWideGcodeMapping: single-STL+support, STL+support+interface, multi-STL+support, no-expansion guard, all-zero guard, sparse-active-slots guard; B120 filament_maps same-slot-assignment detects both file filaments
+- `ComputePlateFileIndicesTest.kt` (28) — post-slice summary slot narrowing for Bambu/SEMM sparse canonical lists; B99 STL support/interface raw-G-code fallback; B121 buildWideGcodeMapping: single-STL+support, STL+support+interface, multi-STL+support, no-expansion guard, all-zero guard, sparse-active-slots guard; B120 filament_maps same-slot-assignment detects both file filaments
 - `PreviewColorNormalizationTest.kt` (10) — preview colour normalization, B92 Buzz plate 8 slicer-tool-order palette alignment + identity + legacy paths
 - `PreparePreviewPlacementTest.kt` (5) — native 3MF wipe tower visibility, object-placement rules, and large-preview fallback state retention
 - `viewer/NativePreviewMeshTest.kt` (6) — preview budget guardrails, MAX_DECIMATED_TRIANGLES constant, F48 subsampled mesh vertex count, B88 toMeshData compaction contract, F95 toMeshData carries modifierBlockStartTriangle (set case + null-when-none case)
@@ -228,14 +232,17 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 582 tests across 107 Kotlin source files
+### Instrumented tests (`app/src/androidTest/`) - 590 tests across 108 Kotlin source files
+
+Compose component tests using `createComposeRule()` require the debug-only `ui-test-manifest` activity. Run those UI classes on the debug variant; use native/ViewModel suites for exact signed-release APK checks.
 
 - `slicing/BambuNozzleWorkflowTest.kt` (17) verifies P1S/H2D STL and imported-3MF slicing at all four nozzle sizes, actual `.gcode.3mf` project export and metadata, incompatible processes, and stale-nozzle export rejection.
 
-The default runner executes 571 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
+The default runner executes 579 independent tests. Another 11 methods require the drivers named by `@RequiresExternalFixture`, including actual published 4.0.4 and 4.0.5 APK upgrade checks and mock-host upload safety. `scripts/run-v5-reconciliation-regression.ps1` runs all groups and the full U1/Bambu E2E batch with automatic full-sandbox restoration on the approved regression Pixel.
 
 - `slicing/DiscordPresetNativeTest.kt` (5) covers the unrestricted picker contract, supplied machine/process presets, custom enclosure G-code, chamber migration, and excluded-origin rejection.
-- `slicing/CosmosDrawerRegressionTest.kt` (2) exercises the supplied drawer through the ViewModel: plate 5 slices on COSMOS; plate 4 still rejects its unavailable tool.
+- `slicing/CosmosSourceFilamentRegressionTest.kt` (8) covers both original 6x4 drawer and top-cover projects: load/slice, plate switching, fresh-ViewModel session restoration, and material/colour edits. Checks include the selected filament's temperatures, flow and volumetric-speed limit.
+- `slicing/CosmosDrawerRegressionTest.kt` (2) exercises the supplied drawer through the ViewModel: plates 4 and 5 slice on COSMOS with the selected source filament mapped to its sole nozzle.
 - `slicing/GenericInsetPlacementTest.kt` (3) covers full-width inset placement, large-inset profile validation, and preservation of the open model, placement, and G-code during validation.
 - `slicing/BrushWasherRegressionTest.kt` (1) and `slicing/MaterialChamberRegressionTest.kt` (1) cover the supplied project's unused ASA and material changes that must clear an inherited chamber target.
 - `slicing/BambuImportedProfileNativeConfigTest.kt` (4) covers imported setting precedence and chamber heating for assigned versus unused filaments.

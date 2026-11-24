@@ -494,7 +494,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val gcodePreview: StateFlow<String> = _gcodePreview.asStateFlow()
 
     private val _parsedGcode = MutableStateFlow<ParsedGcode?>(null)
-    val parsedGcode: StateFlow<ParsedGcode?> = _parsedGcode.asStateFlow()
 
     /**
      * B129 — the G-code preview's layer-range slider position (min..max layer
@@ -549,6 +548,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         MutableStateFlow<com.u1.slicer.data.CanonicalFilamentList?>(null)
     val canonicalFilamentList: StateFlow<com.u1.slicer.data.CanonicalFilamentList?> =
         _canonicalFilamentList.asStateFlow()
+
+    val parsedGcode: StateFlow<ParsedGcode?> = combine(
+        _parsedGcode, _canonicalFilamentList, _threeMfInfo, activePrinterForSlicing, effectiveSliceTarget,
+    ) { parsed, canonical, _, _, _ ->
+        val sourceIndex = genericSingleNozzleSourceFileIndex()
+        if (parsed != null && canonical != null && sourceIndex != null) {
+            parsed.copy(perExtruderFilamentMm = com.u1.slicer.slice.alignSingleNozzleFilamentUsage(
+                parsed.perExtruderFilamentMm, sourceIndex, canonical.size,
+            ))
+        } else parsed
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
      * Phase 2 (2026-04-28, post-adversarial-review) — identity tag for
@@ -804,6 +814,34 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     data class FilamentOverride(val color: String? = null, val materialType: String? = null)
     private val _filamentOverrides = MutableStateFlow<Map<Int, FilamentOverride>>(emptyMap())
     val filamentOverrides: StateFlow<Map<Int, FilamentOverride>> = _filamentOverrides.asStateFlow()
+
+    private fun genericSingleNozzleSourceFileIndex(): Int? {
+        if (effectiveSliceTarget.value.family != SliceTargetFamily.GENERIC || selectedGenericProfile()?.extruderCount != 1) return null
+        val source = _fileThreeMfInfo ?: sourceModelInfo ?: _threeMfInfo.value ?: return null
+        // A multi-plate import can be waiting for selection, or an unsupported file can still be loading.
+        return try {
+            com.u1.slicer.slice.validateGenericModelTools(source, 1, recoveryPlateId.takeIf { it >= 0 })
+                .keys.singleOrNull()?.minus(1)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
+
+    /** Prepare rows are compact; overrides remain keyed by the original file's filament index. */
+    fun displayedFilamentFileIndices(): List<Int> {
+        val count = _threeMfInfo.value?.detectedColors.orEmpty().size.coerceAtLeast(1)
+        val sourceIndex = genericSingleNozzleSourceFileIndex()
+        return if (count == 1 && sourceIndex != null) listOf(sourceIndex) else (0 until count).toList()
+    }
+
+
+    fun setDisplayedFilamentMaterialOverride(row: Int, materialType: String?) {
+        setFilamentMaterialOverride(displayedFilamentFileIndices().getOrElse(row) { row }, materialType)
+    }
+
+    fun setDisplayedFilamentColorOverride(row: Int, color: String?) {
+        setFilamentColorOverride(displayedFilamentFileIndices().getOrElse(row) { row }, color)
+    }
 
     fun setFilamentMaterialOverride(fileIndex: Int, materialType: String?) {
         val current = _filamentOverrides.value
@@ -2342,11 +2380,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val resolvedFilamentColors: StateFlow<List<String>> = combine(
         _threeMfInfo,
         _filamentOverrides,
-    ) { info, overrides ->
+        effectiveSliceTarget,
+        activePrinterForSlicing,
+    ) { info, overrides, _, _ ->
         val base = info?.detectedColors.orEmpty()
         if (base.isEmpty()) return@combine emptyList()
         if (overrides.isEmpty()) return@combine base
-        base.mapIndexed { i, color -> overrides[i]?.color ?: color }
+        val fileIndices = displayedFilamentFileIndices()
+        base.mapIndexed { i, color -> overrides[fileIndices.getOrElse(i) { i }]?.color ?: color }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
@@ -2472,14 +2513,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val canonicalFilamentColors: StateFlow<List<String>> = combine(
-        _canonicalFilamentList,
+        combine(_canonicalFilamentList, loadedModelMixColors) { canonical, mixes -> canonical to mixes },
         _filamentOverrides,
-        loadedModelMixColors,
-    ) { canonical, overrides, mixColors ->
+        _threeMfInfo,
+        activePrinterForSlicing,
+        effectiveSliceTarget,
+    ) { (canonical, mixColors), overrides, _, _, _ ->
         val list = canonical ?: return@combine emptyList()
         val base = if (overrides.isEmpty()) list.filaments.map { it.color }
         else list.filaments.map { entry ->
             overrides[entry.fileIndex]?.color ?: entry.color
+        }
+        // Generic single-nozzle G-code uses physical T0, regardless of its source filament number.
+        genericSingleNozzleSourceFileIndex()?.let { source ->
+            return@combine listOfNotNull(base.getOrNull(source))
         }
         // Append virtual mix colours so a painted mix region (paint state > physical count)
         // renders its blend instead of falling off the end of the palette (grey).
@@ -2586,6 +2633,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _activeExtruderColors,
         _perVolumeExtruders,
         _canonicalColourRemaps,
+        activePrinterForSlicing,
+        effectiveSliceTarget,
     ) { args ->
         val canonical = args[0] as com.u1.slicer.data.CanonicalFilamentList?
         val overrides = args[1] as Map<Int, FilamentOverride>
@@ -2626,6 +2675,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val fullPalette = if (overrides.isEmpty()) list.filaments.map { it.color }
         else list.filaments.map { entry ->
             overrides[entry.fileIndex]?.color ?: entry.color
+        }
+
+        genericSingleNozzleSourceFileIndex()?.let { source ->
+            return@combine listOfNotNull(fullPalette.getOrNull(source))
         }
 
         if (f99Remaps.isNotEmpty()) {
@@ -5390,16 +5443,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val cfg = nozzleDiameter?.let { U1NozzlePolicy.baseConfig(_config.value, it) } ?: _config.value
         if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC) {
             val machine = requireNotNull(selectedGenericProfile()) { "Import a Klipper machine profile before slicing" }
-            com.u1.slicer.slice.validateGenericModelTools(info, machine.extruderCount, plateId)
+            val extruderRemap = com.u1.slicer.slice.validateGenericModelTools(info, machine.extruderCount, plateId)
+            val sourceFilamentIndex = (extruderRemap.keys.singleOrNull() ?: 1) - 1
             val genericOverrides = buildExplicitBambuProfileOverrides(
-                buildProfileOverrides(cfg, machine.extruderCount, hasSourceConfig = _sourceConfig.value != null),
+                buildProfileOverrides(cfg, machine.extruderCount, hasSourceConfig = _sourceConfig.value != null,
+                    canonical = getCanonicalFilamentList()),
                 slicingOverrides.value,
                 hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
                 hasMaterialOverrides = _filamentOverrides.value.values.any { it.materialType != null },
             )
             val sourceTuning = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
-            val filamentTuning = genericFilamentTuning(machine.applyTo(cfg, effectiveSliceTarget.value))
-            return profileEmbedder.embed(file, machine.compose(sourceTuning, filamentTuning + genericOverrides), outputDir, info, plateId = plateId)
+            val filamentTuning = genericFilamentTuning(machine.applyTo(cfg, effectiveSliceTarget.value), sourceFilamentIndex)
+            val selectedOverrides = if (machine.extruderCount == 1)
+                com.u1.slicer.slice.selectSingleNozzleFilament(genericOverrides, sourceFilamentIndex) else genericOverrides
+            return profileEmbedder.embed(file, machine.compose(sourceTuning, filamentTuning + selectedOverrides, sourceFilamentIndex), outputDir, info,
+                extruderRemap = extruderRemap.takeIf { it.isNotEmpty() }, plateId = plateId)
         }
         val slotCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
@@ -5618,7 +5676,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         return profileEmbedder.embed(embedInput, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
     }
 
-    private fun genericFilamentTuning(cfg: SliceConfig): Map<String, Any> {
+    private fun genericFilamentTuning(cfg: SliceConfig, sourceFilamentIndex: Int = 0): Map<String, Any> {
         if (cfg.extruderCount > 1) {
             return buildProfileOverrides(cfg, cfg.extruderCount) +
                 buildFilamentLibrarySettings(cfg.extruderCount, null, extruderPresets.value, filaments.value)
@@ -5631,7 +5689,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             libraryBedTemp = profile?.bedTemp,
             useLibraryBedTemp = slicingOverrides.value.bedTemp.mode == OverrideMode.USE_FILE,
             sourceSettings = _sourceConfig.value.orEmpty(),
-            useSourceFilament = profile == null && _filamentOverrides.value[0]?.materialType == null,
+            useSourceFilament = profile == null && _filamentOverrides.value[sourceFilamentIndex]?.materialType == null,
+            sourceFilamentIndex = sourceFilamentIndex,
         )
     }
 
@@ -6233,8 +6292,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val machineForSlice = printerForSlice?.let(machineProfilesRepo::activeFor)
                     ?: machineProfilesRepo.builtInU1()
                 val genericSourceTuning = _sourceConfig.value.orEmpty() + activeProcessProfile.value?.keys.orEmpty()
+                val genericSourceInfo = _fileThreeMfInfo ?: sourceModelInfo ?: _threeMfInfo.value
+                val genericRemap = if (genericMachineForSlice != null && genericSourceInfo != null) {
+                    com.u1.slicer.slice.validateGenericModelTools(genericSourceInfo, genericMachineForSlice.extruderCount,
+                        recoveryPlateId.takeIf { it >= 0 })
+                } else emptyMap()
                 val genericFilamentTuning = genericFilamentTuning(
                     genericMachineForSlice?.applyTo(_config.value, target) ?: _config.value,
+                    sourceFilamentIndex = (genericRemap.keys.singleOrNull() ?: 1) - 1,
                 )
                 if (target.family == SliceTargetFamily.GENERIC) {
                     requireNotNull(genericMachineForSlice) { "Import a Klipper machine profile before slicing" }
@@ -6749,7 +6814,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     targetAwareSliceConfig,
                     targetAwareSliceConfig.extruderCount,
                     toolRemapSlots,
-                    hasSourceConfig = _sourceConfig.value != null
+                    hasSourceConfig = _sourceConfig.value != null,
+                    canonical = if (target.family == SliceTargetFamily.GENERIC) getCanonicalFilamentList() else null,
                 )
                 diagnostics.recordEvent(
                     "slice_started",
@@ -6918,7 +6984,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         hasMaterialOverrides = _filamentOverrides.value.values.any { it.materialType != null },
                     )
                     val selectedProfileFile = File(transientWorkspaceDir(), "selected-machine-profile.json")
-                    val genericConfigForSlice = genericMachineForSlice.compose(genericSourceTuning, genericFilamentTuning + explicit)
+                    val selectedOverrides = if (genericMachineForSlice.extruderCount == 1)
+                        com.u1.slicer.slice.selectSingleNozzleFilament(explicit, (genericRemap.keys.singleOrNull() ?: 1) - 1) else explicit
+                    val genericConfigForSlice = genericMachineForSlice.compose(genericSourceTuning, genericFilamentTuning + selectedOverrides,
+                        sourceFilamentIndex = (genericRemap.keys.singleOrNull() ?: 1) - 1)
                     selectedProfileFile.writeText(profileEmbedder.serializeConfig(genericConfigForSlice))
                     check(native.loadProfile(selectedProfileFile.absolutePath)) { "Native slicer could not load the selected machine profile" }
                 }
@@ -9119,6 +9188,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val usedExtruders = nativeState.usedExtruders
         val objExtruderMap = nativeState.buildObjectExtruderMap()
         val sourcePlate = fileInfo.plates.firstOrNull { it.plateId == plateId }
+        val sourceFilament = if (effectiveSliceTarget.value.family == SliceTargetFamily.GENERIC &&
+            selectedGenericProfile()?.extruderCount == 1) {
+            com.u1.slicer.slice.validateGenericModelTools(fileInfo, 1, plateId).keys.single()
+        } else null
 
         val plateHasPaintData = nativeState.hasPaintData
         val plateHasLayerToolChanges = sourcePlate?.hasLayerToolChanges ?: fileInfo.hasLayerToolChanges
@@ -9154,7 +9227,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         //      importer doesn't surface per-volume data for pure layer-tool
         //      plates with no painted regions (flippy plate 4 Hueforge). Fall
         //      back to layer-tool metadata when native is empty.
-        val enrichedExtruders = if (fileInfo.hasLayerToolChanges && sourcePlate != null) {
+        val enrichedExtruders = if (sourceFilament != null) {
+            usedExtruders
+        } else if (fileInfo.hasLayerToolChanges && sourcePlate != null) {
             // Layer-tool files: native (post-load BBS importer) is authoritative
             // when it has data because it processes the full layer-change
             // script and reports the actual extruders the slicer will emit.
@@ -9218,7 +9293,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // paintStateMap entries are equivalent to (state - 1) for currently-
         // declared states, so the simple `ext - 1` translation works for both
         // plain extruders and paint states.
-        val narrowedColors: List<String> = if (canonical != null && canonical.size > 0) {
+        val narrowedColors: List<String> = if (sourceFilament != null) {
+            listOfNotNull(canonical?.filaments?.getOrNull(sourceFilament - 1)?.color
+                ?: fileInfo.detectedColors.getOrNull(sourceFilament - 1))
+        } else if (canonical != null && canonical.size > 0) {
             val usedFileIndices = enrichedExtruders.mapNotNull { ext ->
                 val idx = canonical.paintStateMap[ext] ?: (ext - 1)
                 idx.takeIf { it in 0 until canonical.size }
@@ -9259,7 +9337,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // print-time slot constraints. UI chip display uses
         // `detectedColors.size` (= paletteColors.size, plate-narrowed)
         // independently.
-        val paletteCount = maxOf(
+        val paletteCount = if (sourceFilament != null) 1 else maxOf(
             paletteColors.size,
             fileInfo.detectedExtruderCount
         ).coerceAtLeast(1)
@@ -9270,7 +9348,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // semantic without relying on a stored boolean.
         val volumeExtrudersForPlate = (usedExtruders + objExtruderMap.values).filter { it > 0 }.toSet()
         return fileInfo.copy(
-            plates = listOfNotNull(sourcePlate),
+            plates = listOfNotNull(sourcePlate?.let { plate ->
+                if (sourceFilament != null) plate.copy(filamentIndices = setOf(sourceFilament)) else plate
+            }),
             detectedColors = paletteColors,
             usedExtruderIndices = enrichedExtruders,
             volumeExtruders = volumeExtrudersForPlate,
