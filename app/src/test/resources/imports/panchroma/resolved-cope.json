@@ -1,0 +1,94 @@
+{
+  "type": "filament",
+  "name": "Panchroma CoPE U1",
+  "filament_type": [
+    "PLA"
+  ],
+  "filament_settings_id": [
+    "Panchroma CoPE U1"
+  ],
+  "filament_colour": [
+    "#DBFF5E"
+  ],
+  "nozzle_temperature": [
+    "230"
+  ],
+  "nozzle_temperature_initial_layer": [
+    "230"
+  ],
+  "hot_plate_temp": [
+    "60"
+  ],
+  "hot_plate_temp_initial_layer": [
+    "65"
+  ],
+  "textured_plate_temp": [
+    "60"
+  ],
+  "textured_plate_temp_initial_layer": [
+    "60"
+  ],
+  "filament_retraction_length": [
+    "1.2"
+  ],
+  "filament_retraction_speed": [
+    "60"
+  ],
+  "filament_flow_ratio": [
+    "0.98"
+  ],
+  "filament_max_volumetric_speed": [
+    "20"
+  ],
+  "filament_cost": [
+    "19.99"
+  ],
+  "filament_density": [
+    "1.29"
+  ],
+  "fan_min_speed": [
+    "100"
+  ],
+  "fan_max_speed": [
+    "100"
+  ],
+  "overhang_fan_speed": [
+    "75"
+  ],
+  "additional_cooling_fan_speed": [
+    "70"
+  ],
+  "slow_down_layer_time": [
+    "4"
+  ],
+  "slow_down_min_speed": [
+    "5"
+  ],
+  "close_fan_the_first_x_layers": [
+    "1"
+  ],
+  "full_fan_speed_layer": [
+    "0"
+  ],
+  "enable_pressure_advance": [
+    "1"
+  ],
+  "pressure_advance": [
+    "0.02"
+  ],
+  "filament_minimal_purge_on_wipe_tower": [
+    "15"
+  ],
+  "chamber_temperature": [
+    "0"
+  ],
+  "filament_extruder_variant": [
+    "Direct Drive Standard"
+  ],
+  "filament_is_support": [
+    "1"
+  ],
+  "filament_retract_before_wipe": [
+    "85%"
+  ]
+}

@@ -93,7 +93,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 2379 JVM unit tests
+./gradlew testDebugUnitTest                        # 2397 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 579 independent device tests, uses Orchestrator
 ```
 
@@ -125,7 +125,9 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 2379 tests across 262 reported test suites
+### Unit tests (`app/src/test/`) - 2397 tests across 263 reported test suites
+
+- `machine/ProjectFilamentImporterTest.kt` (15) — resolved project imports, Standard variants, project colours, invalid temperatures, ZIP directory bounds, and temporary-file cleanup. `machine/OrcaProfileBundleImporterTest.kt` includes the supplied CoPE bundle, resolved export, and recorded Orca archive regression.
 
 - `slice/GenericModelToolValidationTest.kt` (15) covers plate-local single-filament remapping, inherited/automatic tool assignments, and rejection of unsupported mixed, painted or layer-tool models.
 - `slice/GenericFilamentSettingsTest.kt` (16) covers source-filament selection, material/colour edits, heating, flow/speed/density settings, and library/explicit override precedence.

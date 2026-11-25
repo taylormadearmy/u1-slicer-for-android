@@ -44,6 +44,7 @@ class AppContainer(context: Context) {
     val machineProfileValidator = NativeMachineProfileValidator(context.applicationContext)
     private val bundledFilamentParents = context.assets.list("bambu_profile_chain").orEmpty().toSet()
     val orcaProfileBundleImporter = OrcaProfileBundleImporter(
+        projectCacheDirectory = context.cacheDir,
         loadMissing = { vendor, type, name ->
             if (vendor == "BBL" && type == com.u1.slicer.machine.OrcaProfileType.FILAMENT &&
                 "$name.json" in bundledFilamentParents) {

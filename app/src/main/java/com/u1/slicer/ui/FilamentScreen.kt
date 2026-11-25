@@ -256,7 +256,7 @@ fun FilamentScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Add profiles manually or import a JSON file",
+                            "Add profiles manually or import JSON, an Orca bundle, or a project 3MF",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                         )

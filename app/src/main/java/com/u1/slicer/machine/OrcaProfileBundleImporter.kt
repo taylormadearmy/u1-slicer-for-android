@@ -4,6 +4,7 @@ import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.data.ProcessProfile
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.util.zip.ZipInputStream
@@ -26,6 +27,7 @@ class OrcaProfileBundleImporter(
     private val parseProcesses: (String, String) -> List<ProcessProfile>,
     private val maxEntryBytes: Int = DEFAULT_MAX_ENTRY_BYTES,
     private val maxTotalBytes: Int = DEFAULT_MAX_TOTAL_BYTES,
+    private val projectCacheDirectory: File? = null,
 ) {
     suspend fun import(
         input: InputStream,
@@ -37,6 +39,14 @@ class OrcaProfileBundleImporter(
         val signature = List(4) { buffered.read() }
         buffered.reset()
         val archive = signature == listOf(0x50, 0x4b, 3, 4)
+        if (archive && fileName.endsWith(".3mf", ignoreCase = true)) {
+            require(expectedType == null || expectedType == OrcaProfileType.FILAMENT) {
+                "Select a ${expectedType?.name?.lowercase()} preset. Project import is available in Filament Library."
+            }
+            val filaments = parseFilaments(ProjectFilamentImporter.read(buffered, maxEntryBytes, projectCacheDirectory))
+            require(filaments.isNotEmpty()) { "Project contains no usable filament profiles." }
+            return@withContext ImportedOrcaBundle(emptyList(), filaments, emptyList())
+        }
         val presets = if (archive) readBundle(buffered, fileName) else readJson(buffered, fileName, expectedType)
         require(expectedType == null || presets.any { it.type == expectedType }) {
             "Select a ${expectedType?.name?.lowercase()} preset."
@@ -143,7 +153,12 @@ class OrcaProfileBundleImporter(
                     ?: loadMissing(parentVendor, preset.type, parentName)
                     ?: throw IllegalArgumentException(
                         "Missing parent preset \"$parentName\" for \"${preset.json.optString("name")}\". " +
-                            "Export a bundle containing its parent presets, or a project 3MF with resolved settings.",
+                            if (preset.type == OrcaProfileType.FILAMENT) {
+                                "Export a bundle containing all parent presets, or use Import profile in Filament Library " +
+                                    "to select a project 3MF and save its resolved filaments instead."
+                            } else {
+                                "Export a bundle containing all parent presets."
+                            },
                     )
             } ?: throw IllegalArgumentException(
                 "Could not resolve ${preset.json.optString("name", preset.path)}.",

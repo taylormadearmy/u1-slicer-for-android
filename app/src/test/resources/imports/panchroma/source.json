@@ -1,0 +1,7 @@
+{
+  "project": "bone-cat_manual-supports.3mf",
+  "projectSha256": "2596c191bcc1fed9d44464536f9e69032a8c5bde7af9a043fcd75d5ef56d70e3",
+  "bundleSha256": "df51d74b1ee3dcf38ff791a4370545798b9ee9b09de35c8ca4a5e6fe0e5cb01b",
+  "note": "Metadata extracted unchanged from supplied project; per-filament metadata is stale.",
+  "archiveFixture": "project-with-orca-previews.3mf retains raw local records for Content_Types, one stored preview, project settings and stale per-filament settings; central offsets rebuilt. No mesh included."
+}

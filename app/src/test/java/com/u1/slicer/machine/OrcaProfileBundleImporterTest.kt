@@ -15,6 +15,59 @@ import org.junit.Test
 
 class OrcaProfileBundleImporterTest {
     @Test
+    fun `supplied CoPE bundle reports missing parent while resolved export imports child overrides`() = runTest {
+        val importer = importer(
+            loadMissing = { _, _, _ -> null },
+            validateMachine = { error("Filament import must not validate a machine") },
+        )
+        val bundle = requireNotNull(javaClass.classLoader?.getResourceAsStream("imports/panchroma/Panchroma CoPE.orca_filament"))
+        val error = bundle.use { runCatching { importer.import(it, "Panchroma CoPE.orca_filament", OrcaProfileType.FILAMENT) }.exceptionOrNull() }
+        assertTrue(error?.message.orEmpty().contains("Panchroma CoPE @Snapmaker U1"))
+        assertTrue(error?.message.orEmpty().contains("Filament Library"))
+        val flat = importer.import(ByteArrayInputStream(fixture("imports/panchroma/resolved-cope.json").toByteArray()),
+            "Resolved CoPE.json", OrcaProfileType.FILAMENT).filaments.single()
+        assertEquals("Panchroma CoPE U1", flat.name)
+        assertEquals(230, flat.nozzleTemp)
+        assertEquals(60, flat.bedTemp)
+        assertEquals(65, flat.bedTempInitialLayer)
+        assertEquals(0.98f, flat.flowRatio)
+        assertEquals(20f, flat.maxVolumetricSpeed)
+    }
+
+    @Test
+    fun `project import cannot be used as a printer or process preset`() = runTest {
+        for (type in listOf(OrcaProfileType.MACHINE, OrcaProfileType.PROCESS)) {
+            val error = runCatching { importer(
+                loadMissing = { _, _, _ -> null }, validateMachine = { error("Not a machine") },
+            ).import(ByteArrayInputStream(zipOf("Metadata/project_settings.config" to "{}")), "project.3mf", type) }.exceptionOrNull()
+            assertTrue(error?.message.orEmpty().contains("Select a ${type.name.lowercase()} preset"))
+        }
+    }
+
+    @Test
+    fun `supplied CoPE project imports resolved filaments instead of stale preset metadata`() = runTest {
+        val importer = importer(
+            loadMissing = { _, _, _ -> error("A resolved project must not fetch parents") },
+            validateMachine = { error("Filament import must not validate a machine") },
+        )
+        val project = requireNotNull(javaClass.classLoader?.getResourceAsStream("imports/panchroma/project-with-orca-previews.3mf"))
+        val result = project.use { importer.import(it, "bone-cat_manual-supports.3mf", OrcaProfileType.FILAMENT) }
+
+        assertTrue(result.machines.isEmpty())
+        assertTrue(result.processes.isEmpty())
+        assertEquals(4, result.filaments.size)
+        val cope = result.filaments[1]
+        assertEquals("Panchroma CoPE @Snapmaker U1", cope.name)
+        assertEquals(230, cope.nozzleTemp)
+        assertEquals(60, cope.bedTemp)
+        assertEquals(0.98f, cope.flowRatio)
+        assertEquals(20f, cope.maxVolumetricSpeed)
+        assertEquals(1.29f, cope.density)
+        assertEquals(0.93f, result.filaments[2].flowRatio)
+        assertEquals("Generic BVOH @System (project filament 4)", result.filaments[3].name)
+    }
+
+    @Test
     fun `recorded printer bundle fetches missing pinned base and passes validation gate`() = runTest {
         val ender = fixture("machine/catalogue/Creality/machine/Creality Ender-3 V3 SE 0.4 nozzle.json")
         val creality = fixture("machine/catalogue/Creality/machine/fdm_creality_common.json")
