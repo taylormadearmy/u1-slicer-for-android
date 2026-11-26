@@ -45,21 +45,17 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    git commit -m "bump: v1.4.11 - <short description>"
    git push
    ```
-4. **Build the release APK**:
-   ```bash
-   ./gradlew clean assembleRelease --no-daemon
+4. **Prepare the release through the gate** after committing the version and passing the required functional tests:
+   ```powershell
+   python scripts/release.py prepare --version 5.0.14
    ```
-5. **Rename the APK** with the app name and version number:
-   ```bash
-   cp app/build/outputs/apk/release/app-release.apk u1-slicer-orca-v1.4.11.apk
+   This clean-builds the APK and records its source SHA, signing certificate, version and hash in `.audit/releases/5.0.14/candidate.json`.
+5. **Check installation through Android's browser/Files installer**, with Play Protect enabled, on the approved test phone. Record the exact APK hash and completed-install evidence with `release.py record-install`. ADB installs do not satisfy this gate. A warning blocks publication. See [docs/release-checks.md](docs/release-checks.md) for the command and data-preservation procedure. Clean packaging is not a guarantee against a Play Protect warning.
+6. **Publish only after explicit authorization**, using:
+   ```powershell
+   python scripts/release.py publish --version 5.0.14 --notes <release-notes-file>
    ```
-6. **Upload the APK asset and create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
-   ```bash
-   gh release create v1.4.11 u1-slicer-orca-v1.4.11.apk \
-     --title "v1.4.11" \
-     --notes "Brief description of what changed."
-   ```
-   - The release is not complete until the APK asset is attached to the GitHub release and visible on the release page.
+   The gate creates a tag at the recorded source commit, verifies it remotely, creates a draft with `--verify-tag` and an explicit `--target`, downloads and hashes the branded APK, and only then makes the draft public. Never use bare `gh release create`: its default branch may differ from the APK source. If verification fails, inspect the failure and leave the draft unpublished; never retarget or reuse a public tag.
 7. **Post-release sync** — must happen in the same turn as the release, not deferred:
    1. **Flip statuses in [`BACKLOG.md`](BACKLOG.md)** for every bug/feature that shipped:
       - Bugs: `OPEN` / `FIXED v<earlier>` → `FIXED v<earlier>, RELEASED v1.4.11 (released YYYY-MM-DD)`.

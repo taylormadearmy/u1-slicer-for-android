@@ -11,7 +11,7 @@ Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders
 ```bash
 ./gradlew installDebug          # Build and install on connected device
 ./gradlew assembleDebug         # Build APK only
-./gradlew clean assembleRelease # Release APK (always clean to avoid Play Protect heuristic flags)
+./gradlew clean assembleRelease # Release APK (clean packaging; not a Play Protect guarantee)
 ```
 
 The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal builds do not require the NDK.
@@ -127,7 +127,7 @@ Claude is pre-authorised to rebuild the native `.so` whenever a fix genuinely re
 2. Update test counts in `CLAUDE.md` and `README.md`
 3. Commit, push, build the release APK, rename it to `u1-slicer-orca-v<version>.apk`, upload that APK to the GitHub release, create the release tag, then sync `BACKLOG.md` + close issues — see `CLAUDE.md §Release` for the full checklist.
 4. A release is not complete until the APK asset is attached to the GitHub release page under the branded `u1-slicer-orca-v<version>.apk` filename.
-5. **Play Protect Note**: Always use `clean` when building the release APK (`./gradlew clean assembleRelease`). Dirty builds or intermediate packaging caches can cause Google Play Protect to erroneously flag the APK as "Harmful" upon sideloading.
+5. **Release gate**: Use `python scripts/release.py prepare --version <version>`, record a warning-free browser/Files installation of the exact APK with Play Protect enabled, then use its `publish` action after explicit release authorization. See [docs/release-checks.md](docs/release-checks.md). The gate checks signing continuity, package/version, native packaging, the explicit source tag, and the downloaded asset hash before making a draft public. A clean build does not guarantee Play Protect acceptance; a warning blocks release even if ADB installation and functional tests pass.
 
 Never reuse or update a published release — always use a new tag.
 
