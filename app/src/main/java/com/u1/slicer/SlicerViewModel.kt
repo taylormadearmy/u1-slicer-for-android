@@ -476,15 +476,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         resolveDefaultSliceTarget(null),
     )
 
-    private fun selectedGenericProfile(): GenericMachineProfile? = when (effectiveSliceTarget.value) {
-        SlicerTarget.ElegooCentauriCarbon -> GenericMachineProfile.centauriCarbon()
-        SlicerTarget.GenericKlipper, SlicerTarget.GenericMarlin -> {
-            val printer = activePrinterForSlicing.value
-            printer?.machineProfile ?: printer?.let(machineProfilesRepo::activeFor)?.let {
-                GenericMachineProfile.fromJson(it.machineJson)
-            }
+    private fun selectedGenericProfile(): GenericMachineProfile? {
+        // Resolve the target and its profile from the same printer snapshot. The
+        // target and active-printer StateFlows update independently; pairing a
+        // new U1 printer with the previous generic target briefly parsed U1's
+        // centred bed coordinates as a generic rectangular bed and crashed.
+        val printer = activePrinterForSlicing.value ?: return null
+        return when (resolveDefaultSliceTarget(printer)) {
+            SlicerTarget.ElegooCentauriCarbon -> GenericMachineProfile.centauriCarbon()
+            SlicerTarget.GenericKlipper, SlicerTarget.GenericMarlin ->
+                printer.machineProfile ?: machineProfilesRepo.activeFor(printer).let {
+                    GenericMachineProfile.fromJson(it.machineJson)
+                }
+            else -> null
         }
-        else -> null
     }
 
     private val _latestSliceArtifact = MutableStateFlow<SliceArtifact?>(null)

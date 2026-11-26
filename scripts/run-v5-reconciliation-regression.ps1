@@ -186,6 +186,10 @@ try {
     Invoke-CheckedAdb shell pm clear com.u1.slicer.orca
     & "$PSScriptRoot/run-v4-upgrade-soak.ps1" -Device $Device -CandidateApk $CandidateApk `
         -V4Apk $Published404Apk -AndroidTestApk $TestApk -ResultsDir (Join-Path $results 'upgrade-404')
+    # The v4.0.4 soak restores printer/profile state into the candidate's schema-10 database.
+    # v4.0.5 must start from an empty sandbox so its schema-9 seed can be opened by the released APK.
+    Invoke-CheckedAdb shell am force-stop com.u1.slicer.orca
+    Invoke-CheckedAdb shell pm clear com.u1.slicer.orca
     & "$PSScriptRoot/run-v405-upgrade-soak.ps1" -Device $Device -CandidateApk $CandidateApk `
         -PublishedApk $Published405Apk -TestApk $TestApk -ResultsDir (Join-Path $results 'upgrade-405')
     & "$PSScriptRoot/run-batch-manual-e2e.ps1" -Device $Device -Suite Both -BambuTarget H2D `
